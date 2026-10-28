@@ -73,11 +73,13 @@ func Ping(c *gin.Context) {
 	c.JSON(http.StatusOK, scope)
 }
 
-// NewRouter 组装路由：资源一律挂在 /api/v1/farms/:farm_id/ 下并经 FarmAuth。
-func NewRouter(a Authenticator) *gin.Engine {
+// NewRouter 组装路由：资源一律挂在 /api/v1/farms/:farm_id/ 下并经 RequestID + FarmAuth。
+func NewRouter(a Authenticator, ask Asker) *gin.Engine {
 	r := gin.New()
 	r.Use(gin.Recovery())
-	farms := r.Group("/api/v1/farms/:farm_id", FarmAuth(a))
+	farms := r.Group("/api/v1/farms/:farm_id", RequestID(), FarmAuth(a))
 	farms.GET("/ping", Ping)
+	farms.POST("/ask", AskHandler(ask))
+	farms.GET("/runs/:run_id", RunHandler(ask))
 	return r
 }

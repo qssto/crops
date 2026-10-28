@@ -54,6 +54,11 @@ const (
 	RunCanceled    RunStatus = "CANCELED"
 )
 
+// IsTerminal 判断 run 是否已到终态（COMPLETED / FAILED / CANCELED）。
+func (s RunStatus) IsTerminal() bool {
+	return s == RunCompleted || s == RunFailed || s == RunCanceled
+}
+
 // InterruptType 是 agent_run.interrupt_type（P0 L6 三种中断）。
 type InterruptType string
 

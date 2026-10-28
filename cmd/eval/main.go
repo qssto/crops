@@ -17,11 +17,14 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"strings"
 
 	"agri-steward/internal/agent/knowledge"
 	"agri-steward/internal/clock"
 	"agri-steward/internal/evalkit"
+	"agri-steward/internal/evalkit/grader"
+	"agri-steward/internal/evalkit/grader/code"
 	"agri-steward/internal/evalkit/report"
 	"agri-steward/internal/evalkit/sample"
 	"agri-steward/internal/evalkit/store"
@@ -35,7 +38,9 @@ const (
 	defaultTax  = "eval/taxonomy.yaml"
 	defaultOut  = "eval/out"
 	defaultRepo = "."
-	usageString = "usage: eval <validate|run|kbdump> [flags]"
+	// contractsDir 是 --repo 下 L1 冻结契约目录（schema_valid 用）。
+	contractsDir = "contracts"
+	usageString  = "usage: eval <validate|run|kbdump> [flags]"
 )
 
 func main() {
@@ -89,18 +94,34 @@ func (f *sampleFlags) register(fs *flag.FlagSet) {
 	fs.StringVar(&f.repo, "repo", defaultRepo, "仓库根目录（其下 knowledge/ 为知识库；knowledge_ref 为 git ref 时在此仓库取）")
 }
 
-// loadValidSamples 加载并静态校验全部样本（含 L3 must_cite / product_in 知识库规则）。
-func (f *sampleFlags) loadValidSamples() ([]*sample.Sample, *knowledge.Taxonomy, *knowledge.Store, error) {
+// loadedSamples 是通过静态校验的样本及校验所用的 taxonomy / 知识库 / 打分器；refNotes 为参考解不判定维度说明。
+type loadedSamples struct {
+	samples  []*sample.Sample
+	tx       *knowledge.Taxonomy
+	kb       *knowledge.Store
+	graders  []grader.Grader
+	refNotes []string
+}
+
+// loadValidSamples 加载并静态校验全部样本（含 L3 must_cite / product_in 知识库规则、L4 参考解过全部打分器）。
+func (f *sampleFlags) loadValidSamples() (*loadedSamples, error) {
 	tx, err := knowledge.LoadTaxonomy(f.taxonomy)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, err
 	}
 	kb := knowledge.NewStore(knowledge.NewRepoReader(f.repo))
-	samples, err := sample.LoadAndValidate(f.dir, sample.NewValidator(sample.DefaultRules(tx, kb)...))
+	schema, err := code.NewSchemaValid(filepath.Join(f.repo, contractsDir))
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, err
 	}
-	return samples, tx, kb, nil
+	graders := code.All(schema)
+	ref := code.NewReferenceCheck(tx, kb, graders)
+	rules := append(sample.DefaultRules(tx, kb), ref)
+	samples, err := sample.LoadAndValidate(f.dir, sample.NewValidator(rules...))
+	if err != nil {
+		return nil, err
+	}
+	return &loadedSamples{samples: samples, tx: tx, kb: kb, graders: graders, refNotes: ref.Notes()}, nil
 }
 
 func cmdValidate(args []string, stdout io.Writer) error {
@@ -110,10 +131,11 @@ func cmdValidate(args []string, stdout io.Writer) error {
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	samples, _, _, err := sf.loadValidSamples()
+	ls, err := sf.loadValidSamples()
 	if err != nil {
 		return err
 	}
+	samples := ls.samples
 	refused := 0
 	for _, s := range samples {
 		if s.IsRefusal() {
@@ -122,6 +144,9 @@ func cmdValidate(args []string, stdout io.Writer) error {
 	}
 	fmt.Fprintf(stdout, "validate OK: %d samples, %d refused (%.0f%%)\n",
 		len(samples), refused, 100*float64(refused)/float64(len(samples)))
+	if len(ls.refNotes) > 0 {
+		fmt.Fprintf(stdout, "reference not judged: %s\n", strings.Join(ls.refNotes, "; "))
+	}
 	return nil
 }
 
@@ -142,21 +167,21 @@ func cmdRun(ctx context.Context, args []string, stdout, stderr io.Writer) error 
 		return fmt.Errorf("n must be >= 1, got %d", *n)
 	}
 
-	all, _, _, err := sf.loadValidSamples()
+	ls, err := sf.loadValidSamples()
 	if err != nil {
 		return err
 	}
 	opts := evalkit.Options{Suites: splitList(*suites), Tags: splitList(*tags), N: *n}
-	selected := evalkit.Select(all, opts.Suites, opts.Tags)
+	selected := evalkit.Select(ls.samples, opts.Suites, opts.Tags)
 	if len(selected) == 0 {
 		return fmt.Errorf("no sample matches suite=%v tags=%v", opts.Suites, opts.Tags)
 	}
 
-	in, err := inf.open(ctx, stderr)
+	in, err := inf.open(ctx, stderr, ls)
 	if err != nil {
 		return fmt.Errorf("eval infra unavailable (需先 docker compose up 并 make migrate migrate-eval): %w", err)
 	}
-	exp, err := runWithStore(ctx, in, selected, opts)
+	exp, err := runWithStore(ctx, in, ls, selected, opts)
 	if err := errors.Join(err, in.close()); err != nil {
 		return err
 	}
@@ -169,8 +194,8 @@ func cmdRun(ctx context.Context, args []string, stdout, stderr io.Writer) error 
 	return nil
 }
 
-// runWithStore 先在 agri_eval.experiment 建行，回放后同事务写 trial 并置 DONE。
-func runWithStore(ctx context.Context, in *infra, samples []*sample.Sample, opts evalkit.Options) (*evalkit.Experiment, error) {
+// runWithStore 先在 agri_eval.experiment 建行，回放并跑全部打分器后同事务写 trial 并置 DONE。
+func runWithStore(ctx context.Context, in *infra, ls *loadedSamples, samples []*sample.Sample, opts evalkit.Options) (*evalkit.Experiment, error) {
 	wall := clock.System{}
 	sha, err := gitSHA(ctx)
 	if err != nil {
@@ -182,7 +207,8 @@ func runWithStore(ctx context.Context, in *infra, samples []*sample.Sample, opts
 		return nil, err
 	}
 	opts.ExperimentID = store.FormatID(id)
-	runner, err := evalkit.NewRunner(evalkit.PoolEnv(in.pool, in.deps), wall.Now)
+	runner, err := evalkit.NewRunner(evalkit.PoolEnv(in.pool, in.deps), wall.Now,
+		evalkit.WithQuestion(in.question), evalkit.WithGraders(ls.kb, ls.graders...))
 	if err != nil {
 		return nil, err
 	}

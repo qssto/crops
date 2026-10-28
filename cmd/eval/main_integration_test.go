@@ -27,6 +27,7 @@ func TestRun_WritesExperiment_Integration(t *testing.T) {
 		"--taxonomy", filepath.Join(repoRoot, defaultTax), "--repo", repoRoot, "--out", t.TempDir(),
 		"--config", cfgFile, "--env-file", envFile,
 		"--migrations", filepath.Join(repoRoot, "migrations"), "--seed", filepath.Join(repoRoot, "configs/seed/fields.yaml"),
+		"--model", filepath.Join(repoRoot, "configs/model.yaml"), "--prompts", filepath.Join(repoRoot, "prompts"),
 		"--suite", "regression", "--n", strconv.Itoa(trialsPerSample), "--tags", "L5,irrigate.amount"}, &stdout, &stderr)
 	if code != exitOK {
 		t.Fatalf("code = %d stderr=%s", code, stderr.String())

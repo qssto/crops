@@ -10,18 +10,26 @@ import (
 
 // Question 是一次提问及其情境。FarmCode / FieldCode 在评测中是样本里的合成编码，
 // L1 起由 Scope（tenant_id / farm_id）与 field_profile 解析为 bigint。
+// L4 起主链路只认 Scope / FieldID / RunID：RunID 为 0 时 Ask 自建 agent_run（评测），
+// 非 0 时为 service.AskService 已插入的 RUNNING 行（HTTP 异步入口）。
 type Question struct {
 	Text      string
 	FarmCode  string
 	FieldCode string
 	Role      string
 	UserID    string
+	Scope     model.Scope
+	FieldID   uint64
+	RunID     uint64
 }
 
-// Answer 是结构化结果。L4 起扩展为携带 AdviceCard / WorkOrder 的引用。
+// Answer 是结构化结果。拒答也产出 Card（outcome=REFUSED）；作业类建议另带 WorkOrder(DRAFT)。
 type Answer struct {
 	Outcome      model.Outcome
 	RefuseReason string
+	RunID        uint64
+	Card         *model.AdviceCard
+	Order        *model.WorkOrder
 }
 
 // Agent 是建议主链路的最小接口：L0 为只拒答的空实现桩，L4 替换为 compose Graph 主链路。

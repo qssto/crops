@@ -28,11 +28,12 @@ func cmdKBDump(ctx context.Context, args []string, stdout io.Writer) error {
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	all, tx, kb, err := sf.loadValidSamples()
+	ls, err := sf.loadValidSamples()
 	if err != nil {
 		return err
 	}
-	selected := evalkit.Select(all, splitList(*suites), nil)
+	tx, kb := ls.tx, ls.kb
+	selected := evalkit.Select(ls.samples, splitList(*suites), nil)
 	if len(selected) == 0 {
 		return fmt.Errorf("no sample matches suite=%s", *suites)
 	}

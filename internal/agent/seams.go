@@ -18,12 +18,48 @@ type RawStore interface {
 	Put(ctx context.Context, p model.RawPut) (model.RawObject, error)
 }
 
+// RunMeta 是建 agent_run 时写入的版本信息（graph / prompt / 模型档位 / 知识版本）。
+type RunMeta struct {
+	GraphVersion  string
+	PromptVersion string
+	ModelTier     string
+	KnowledgeRef  string
+}
+
 // RunStateStore 读写 agent_run / run_step（RunState 契约的持久化）。
-// 实现：repository（L4 runner 落地时）。
+// 实现：repository（L4）。SaveStep 照抄 P0 §6.5 run_step 行别名 upsert。
 type RunStateStore interface {
-	CreateRun(ctx context.Context, s model.RunState, userID, fieldID uint64) (runID uint64, err error)
+	CreateRun(ctx context.Context, s model.RunState, userID, fieldID uint64, meta RunMeta) (runID uint64, err error)
 	LoadRun(ctx context.Context, scope model.Scope, runID uint64) (model.RunState, error)
 	SaveStep(ctx context.Context, scope model.Scope, runID uint64, step model.RunStep) error
+	// FinishRun 把 RUNNING 的 run 置为终态（COMPLETED / FAILED）；reasonCode 可空。
+	FinishRun(ctx context.Context, scope model.Scope, runID uint64, status model.RunStatus, reasonCode string) error
+	// Heartbeat 刷新 agent_run.updated_at（与 lock:run 续期同步）。
+	Heartbeat(ctx context.Context, scope model.Scope, runID uint64) error
+}
+
+// AdviceStore 在同一事务写 advice_card + advice_citation + episodic_memory(ADVICE)，
+// 均按业务唯一键幂等（uk_run / uk_advice_seq）：同一 run 重跑返回已有 advice_id。
+// 实现：repository（L4）。
+type AdviceStore interface {
+	SaveAdvice(ctx context.Context, scope model.Scope, card model.AdviceCard) (adviceID uint64, err error)
+}
+
+// OrderDraftStore 为作业类建议建 work_order(DRAFT)，uk_advice 保证一卡一单（重跑返回已有 order_id）。
+// 同事务写 work_order_transition（from 空 → DRAFT）。实现：repository（L4）。
+type OrderDraftStore interface {
+	CreateDraft(ctx context.Context, scope model.Scope, order model.WorkOrder) (orderID uint64, err error)
+}
+
+// Lease 是一次 run 锁持有（lock:run:{run_id}，token 锁）。
+type Lease interface {
+	Renew(ctx context.Context) error
+	Release(ctx context.Context) error
+}
+
+// RunLocker 取 run 锁；已被持有返回错误。实现：app 包装 repository.Locker（L4）。
+type RunLocker interface {
+	AcquireRun(ctx context.Context, runID uint64) (Lease, error)
 }
 
 // CheckpointStore 是 run_checkpoint 读写，承载 Eino compose.CheckPointStore（只在中断时写）。

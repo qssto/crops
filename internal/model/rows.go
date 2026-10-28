@@ -47,6 +47,17 @@ type OrderTransition struct {
 	CreatedAt  time.Time
 }
 
+// RunSummary 是 agent_run 的状态视图（GET /runs/{run_id}，L4）。
+type RunSummary struct {
+	RunID      uint64    `json:"run_id"`
+	FieldID    uint64    `json:"field_id"`
+	UserID     uint64    `json:"user_id"`
+	Status     RunStatus `json:"status"`
+	ReasonCode string    `json:"reason_code,omitempty"`
+	CreatedAt  time.Time `json:"created_at"`
+	UpdatedAt  time.Time `json:"updated_at"`
+}
+
 // AuditRecord 是 audit_log 一行（L7 由 run_event 投影写入）。
 type AuditRecord struct {
 	TenantID      uint64

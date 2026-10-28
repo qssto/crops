@@ -7,44 +7,45 @@ import (
 	"time"
 
 	"agri-steward/internal/evalkit"
-	"agri-steward/internal/model"
 )
 
-func TestStatus(t *testing.T) {
-	tests := []struct {
-		name      string
-		trial     evalkit.Trial
-		want      string
-		wantMatch bool
-	}{
-		{name: "pass", trial: evalkit.Trial{Expected: model.OutcomeRefused, Outcome: model.OutcomeRefused}, want: StatusPass, wantMatch: true},
-		{name: "fail", trial: evalkit.Trial{Expected: model.OutcomeAdvice, Outcome: model.OutcomeRefused}, want: StatusFail},
-		{name: "infra", trial: evalkit.Trial{Expected: model.OutcomeRefused, Outcome: model.OutcomeRefused, Error: "boom"}, want: StatusInfraError},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got, match := Status(tt.trial)
-			if got != tt.want || match != tt.wantMatch {
-				t.Fatalf("Status = %s,%v want %s,%v", got, match, tt.want, tt.wantMatch)
-			}
-		})
-	}
-}
-
 func TestTrialInsert(t *testing.T) {
+	pass := []evalkit.Score{{Name: "outcome_match", Pass: true, Value: 1}}
 	exp := &evalkit.Experiment{FinishedAt: time.Unix(0, 0).UTC(), Trials: []evalkit.Trial{
-		{SampleID: "a", Suite: "regression", Expected: model.OutcomeRefused, Outcome: model.OutcomeRefused},
+		{SampleID: "a", Suite: "regression", RunID: 42, Scores: pass},
 		{SampleID: "a", Suite: "regression", TrialIndex: 1, Error: "x"},
+		{SampleID: "a", Suite: "regression", TrialIndex: 2, Scores: []evalkit.Score{
+			{Name: "schema_valid", RedLine: true, Error: "grader schema_valid on a#2: boom"}}},
 	}}
 	q, args, err := trialInsert(7, exp)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Count(q, "(?, ?, ?, ?, NULL, ?, ?, ?, ?, ?)") != 2 || strings.Count(q, "?") != len(args) {
+	const cols = 10
+	if strings.Count(q, "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)") != len(exp.Trials) || strings.Count(q, "?") != len(args) {
 		t.Fatalf("query/args mismatch: %s (%d args)", q, len(args))
 	}
-	if args[4] != StatusPass || args[13] != StatusInfraError || args[6] != `{"outcome_match":true}` {
-		t.Fatalf("args = %v", args)
+	tests := []struct {
+		name string
+		got  any
+		want any
+	}{
+		{"run_id", args[4], uint64(42)},
+		{"status pass", args[5], StatusPass},
+		{"passed", args[6], true},
+		{"scores", args[7], `{"outcome_match":{"pass":true,"value":1}}`},
+		{"infra run_id null", args[cols+4], nil},
+		{"infra status", args[cols+5], StatusInfraError},
+		{"infra scores", args[cols+7], `{}`},
+		{"grader error status", args[2*cols+5], StatusGraderError},
+		{"grader error not passed", args[2*cols+6], false},
+		{"grader error scores", args[2*cols+7],
+			`{"schema_valid":{"pass":false,"value":0,"red_line":true,"error":"grader schema_valid on a#2: boom"}}`},
+	}
+	for _, tt := range tests {
+		if tt.got != tt.want {
+			t.Errorf("%s = %#v, want %#v", tt.name, tt.got, tt.want)
+		}
 	}
 }
 

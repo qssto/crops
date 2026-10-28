@@ -5,6 +5,7 @@ package app
 
 import (
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 
@@ -19,7 +20,7 @@ import (
 	"agri-steward/internal/service"
 )
 
-// Deps 是装配所需的依赖，全部必填。
+// Deps 是装配所需的依赖，全部必填（Agent 与 NewAgent 二选一）。
 type Deps struct {
 	Clock    clock.Clock
 	Logger   *slog.Logger
@@ -28,9 +29,20 @@ type Deps struct {
 	Keys     rediskey.Keys
 	RawStore agent.RawStore
 	Agent    agent.Agent
+	// NewAgent 在仓储（Runs / Advice / Drafts / RunLocker）装配好之后构造主链路；设置时忽略 Agent。
+	// 主链路依赖这些仓储，而仓储由 Build 创建，故以工厂注入（app 不依赖 graph 实现）。
+	NewAgent func(*App) (agent.Agent, error)
 	// Tools 是工具调用接缝：生产为 mcp gateway（包装 servers.Build 的四个 Server），评测为每个 trial 一个 FixtureMCP。
 	Tools agent.ToolProvider
+	// RunMeta 是 ask 入口建 agent_run 时写入的版本信息（可选；为空且主链路实现 Meta() 时取主链路的）。
+	RunMeta agent.RunMeta
 }
+
+// metaer 是能报告自身版本信息的主链路（graph.Agent）。
+type metaer interface{ Meta() agent.RunMeta }
+
+// AskPerMinute 是单农场每分钟提问上限（rl:farm:{farm_id}:ask）。
+const AskPerMinute = 20
 
 // App 是装配结果。
 type App struct {
@@ -44,11 +56,17 @@ type App struct {
 	Tools      agent.ToolProvider
 	Locker     *repository.Locker
 	WorkOrders *service.WorkOrderService
+	// L4 存储与入口：Runs / Advice / Drafts / RunLocker 供主链路注入，Ask 供 HTTP 入口。
+	Runs      *repository.RunRepo
+	Advice    *repository.AdviceRepo
+	Drafts    *repository.OrderDraftRepo
+	RunLocker *repository.RunLocker
+	Ask       *service.AskService
 }
 
 // 缺依赖时返回的错误。
 var (
-	ErrMissingAgent    = errors.New("app: deps.Agent is required")
+	ErrMissingAgent    = errors.New("app: deps.Agent or deps.NewAgent is required")
 	ErrMissingClock    = errors.New("app: deps.Clock is required")
 	ErrMissingLogger   = errors.New("app: deps.Logger is required")
 	ErrMissingDB       = errors.New("app: deps.DB is required")
@@ -66,7 +84,7 @@ func Build(deps Deps) (*App, error) {
 			errs = append(errs, err)
 		}
 	}
-	check(deps.Agent == nil, ErrMissingAgent)
+	check(deps.Agent == nil && deps.NewAgent == nil, ErrMissingAgent)
 	check(deps.Clock == nil, ErrMissingClock)
 	check(deps.Logger == nil, ErrMissingLogger)
 	check(deps.DB == nil, ErrMissingDB)
@@ -77,15 +95,39 @@ func Build(deps Deps) (*App, error) {
 	if err := errors.Join(errs...); err != nil {
 		return nil, err
 	}
-	return &App{
+	locker := repository.NewLocker(deps.Redis)
+	runs := repository.NewRunRepo(deps.DB, deps.Clock)
+	advice := repository.NewAdviceRepo(deps.DB, deps.Clock)
+	a := &App{
 		Clock: deps.Clock, Logger: deps.Logger, DB: deps.DB, Redis: deps.Redis, Keys: deps.Keys,
 		RawStore: deps.RawStore, Agent: deps.Agent, Tools: deps.Tools,
-		Locker:     repository.NewLocker(deps.Redis),
+		Locker:     locker,
 		WorkOrders: service.NewWorkOrderService(deps.Clock, repository.WorkOrderRepo{}, repository.EventRepo{}),
-	}, nil
+		Runs:       runs,
+		Advice:     advice,
+		Drafts:     repository.NewOrderDraftRepo(deps.DB, deps.Clock),
+		RunLocker:  repository.NewRunLocker(locker, deps.Keys),
+	}
+	if deps.NewAgent != nil {
+		ag, err := deps.NewAgent(a)
+		if err != nil {
+			return nil, fmt.Errorf("app: build agent: %w", err)
+		}
+		a.Agent = ag
+	}
+	meta := deps.RunMeta
+	if m, ok := a.Agent.(metaer); ok && meta == (agent.RunMeta{}) {
+		meta = m.Meta()
+	}
+	a.Ask = service.NewAskService(service.AskDeps{
+		Fields:  repository.FieldScope{DB: deps.DB},
+		Limiter: repository.NewAskLimiter(deps.Redis, deps.Keys, AskPerMinute),
+		Runs:    runs, Advice: advice, Agent: a.Agent, Meta: meta, Logger: deps.Logger,
+	})
+	return a, nil
 }
 
 // Handler 返回 HTTP 路由（gin），鉴权由 auth 提供。
 func (a *App) Handler(auth *service.AuthService) http.Handler {
-	return controller.NewRouter(auth)
+	return controller.NewRouter(auth, a.Ask)
 }

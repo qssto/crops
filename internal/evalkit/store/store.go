@@ -14,11 +14,12 @@ import (
 	"agri-steward/internal/repository"
 )
 
-// trial.status 取值。
+// trial.status 取值（判定见 evalkit.Trial.Status）。
 const (
-	StatusPass       = "PASS"
-	StatusFail       = "FAIL"
-	StatusInfraError = "INFRA_ERROR"
+	StatusPass        = evalkit.StatusPass
+	StatusFail        = evalkit.StatusFail
+	StatusInfraError  = evalkit.StatusInfraError
+	StatusGraderError = evalkit.StatusGraderError
 
 	experimentDone = "DONE"
 	// TriggerManual 是 make eval / 本地手动触发。
@@ -90,32 +91,40 @@ func (s *Experiments) Finish(ctx context.Context, id uint64, exp *evalkit.Experi
 
 const trialCols = "(experiment_id, sample_id, trial_index, suite, run_id, status, passed, scores, latency_ms, created_at)"
 
+// scoreJSON 是 trial.scores 中一个维度的取值；error 非空即 grader_error。
+type scoreJSON struct {
+	Pass     bool    `json:"pass"`
+	Value    float64 `json:"value"`
+	RedLine  bool    `json:"red_line,omitempty"`
+	Unknown  bool    `json:"unknown,omitempty"`
+	Evidence string  `json:"evidence,omitempty"`
+	Error    string  `json:"error,omitempty"`
+}
+
+// trialInsert 拼批量插入；scores 为维度名 → 结果，passed = status 为 PASS，run_id 为 0 时写 NULL。
 func trialInsert(id uint64, exp *evalkit.Experiment) (string, []any, error) {
 	rows := make([]string, 0, len(exp.Trials))
-	args := make([]any, 0, len(exp.Trials)*9)
+	args := make([]any, 0, len(exp.Trials)*10)
 	for _, t := range exp.Trials {
-		status, match := Status(t)
-		scores, err := json.Marshal(map[string]bool{"outcome_match": match})
+		scores := make(map[string]scoreJSON, len(t.Scores))
+		for _, sc := range t.Scores {
+			scores[sc.Name] = scoreJSON{Pass: sc.Pass, Value: sc.Value, RedLine: sc.RedLine,
+				Unknown: sc.Unknown, Evidence: sc.Evidence, Error: sc.Error}
+		}
+		b, err := json.Marshal(scores)
 		if err != nil {
 			return "", nil, fmt.Errorf("trial scores: %w", err)
 		}
-		rows = append(rows, "(?, ?, ?, ?, NULL, ?, ?, ?, ?, ?)")
-		args = append(args, id, t.SampleID, t.TrialIndex, t.Suite, status, status == StatusPass,
-			string(scores), t.Latency.Milliseconds(), exp.FinishedAt)
+		var runID any
+		if t.RunID != 0 {
+			runID = t.RunID
+		}
+		status := t.Status()
+		rows = append(rows, "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+		args = append(args, id, t.SampleID, t.TrialIndex, t.Suite, runID, status, status == StatusPass,
+			string(b), t.Latency.Milliseconds(), exp.FinishedAt)
 	}
 	return "INSERT INTO trial " + trialCols + " VALUES " + strings.Join(rows, ", "), args, nil
-}
-
-// Status 判定 trial 状态：有错误为 INFRA_ERROR，否则 outcome 与期望一致为 PASS。
-// L1 只比 outcome；L4 起由 grader 打分。
-func Status(t evalkit.Trial) (status string, outcomeMatch bool) {
-	if t.Error != "" {
-		return StatusInfraError, false
-	}
-	if t.Outcome == t.Expected {
-		return StatusPass, true
-	}
-	return StatusFail, false
 }
 
 // FormatID 把 experiment id 转为报告中的 exp_id。

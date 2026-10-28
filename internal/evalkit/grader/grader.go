@@ -15,12 +15,17 @@ type KnowledgeIndex interface {
 	Has(kbID, version string) bool
 }
 
-// Trial 是一个样本一次运行中打分器所需的部分。transcript、设备调用等在 L4/L5 追加。
+// Trial 是一个样本一次运行中打分器所需的部分。transcript 等在 L5 追加。
 type Trial struct {
 	Sample *sample.Sample
 	Index  int
-	Card   *model.AdviceCard // 智能体最终输出；未产出为 nil
-	KB     KnowledgeIndex    // 样本 knowledge_ref 对应的知识版本
+	// Outcome / RefuseReason 取自 agent.Answer；Card 为 nil 时 outcome_match 以此判定。
+	Outcome      model.Outcome
+	RefuseReason string
+	Card         *model.AdviceCard // 智能体最终输出；未产出为 nil
+	KB           KnowledgeIndex    // 样本 knowledge_ref 对应的知识版本
+	// ToolCalls 是工具全名 → 调用次数（含未声明调用），must_call / budget 使用；未记录为 nil。
+	ToolCalls map[string]int
 }
 
 // Grader 对 trial 的一个方面打分。Grade 返回 err 时运行器记为 grader_error，不得当作通过。

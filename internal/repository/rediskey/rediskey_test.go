@@ -14,6 +14,8 @@ func TestKeys(t *testing.T) {
 		{k.Prefix(), "as:dev:"},
 		{k.LockOrder(42), "as:dev:lock:order:42"},
 		{k.LockScan("field_sync"), "as:dev:lock:scan:field_sync"},
+		{k.LockRun(9), "as:dev:lock:run:9"},
+		{k.RateFarmAsk(1), "as:dev:rl:farm:1:ask"},
 		{k.Raw("sse:run:7"), "as:dev:sse:run:7"},
 		{k.IdemTool("abc"), "as:dev:idem:tool:abc"},
 		{k.CacheMCP("weather.forecast", "d1"), "as:dev:cache:mcp:weather.forecast:d1"},

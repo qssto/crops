@@ -13,7 +13,7 @@ import (
 	"syscall"
 	"time"
 
-	"agri-steward/internal/agent"
+	"agri-steward/internal/agent/knowledge"
 	"agri-steward/internal/app"
 	"agri-steward/internal/clock"
 	"agri-steward/internal/config"
@@ -38,6 +38,9 @@ func run() (err error) {
 	configFile := flag.String("config", "configs/app.yaml", "配置文件")
 	envFile := flag.String("env-file", "deploy/.env", "密钥文件（不存在则只读环境变量）")
 	toolsFile := flag.String("tools", "configs/tools.yaml", "MCP 工具 Server 配置（mock / real）")
+	modelFile := flag.String("model", "configs/model.yaml", "模型配置（provider: openai | stub，可用 AS_MODEL_PROVIDER 覆盖）")
+	repoRoot := flag.String("repo", ".", "仓库根目录（其下 knowledge/ 为知识库）")
+	taxonomyFile := flag.String("taxonomy", "eval/taxonomy.yaml", "question_taxonomy 文件（分类与知识加载共用）")
 	flag.Parse()
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -49,6 +52,19 @@ func run() (err error) {
 	}
 	if err := cfg.RequireSecrets("mysql.password", "redis.password", "minio.access_key", "minio.secret_key",
 		"auth.jwt_secret"); err != nil {
+		return err
+	}
+	// 模型在连库之前选定：openai 缺 ONEAPI_* 时直接报错退出。
+	mcfg, err := config.LoadModel(*modelFile)
+	if err != nil {
+		return err
+	}
+	chat, err := app.ChatModel(mcfg)
+	if err != nil {
+		return err
+	}
+	tx, err := knowledge.LoadTaxonomy(*taxonomyFile)
+	if err != nil {
 		return err
 	}
 	logger, err := app.NewLogger(os.Stderr, cfg.Log.Level)
@@ -92,11 +108,13 @@ func run() (err error) {
 		return err
 	}
 	a, err := app.Build(app.Deps{Clock: clk, Logger: logger, DB: db, Redis: rdb, Keys: keys, RawStore: raw,
-		// L4 前主链路未就绪，注入只拒答的占位实现。
-		Agent: agent.Placeholder{}, Tools: tools})
+		NewAgent: app.GraphAgent(ctx, app.GraphConfig{Model: mcfg, Chat: chat, Taxonomy: tx,
+			KB: knowledge.NewStore(knowledge.NewRepoReader(*repoRoot))}),
+		Tools: tools})
 	if err != nil {
 		return err
 	}
+	logger.Info("advice graph ready", "provider", mcfg.Provider, "tier", mcfg.DefaultTier, "prompt_version", mcfg.PromptVersion)
 	return serve(ctx, &http.Server{Addr: cfg.HTTP.Addr, Handler: a.Handler(auth), ReadHeaderTimeout: readHeaderTimeout}, a)
 }
 
@@ -120,5 +138,7 @@ func serve(ctx context.Context, srv *http.Server, a *app.App) error {
 	if err := <-errCh; !errors.Is(err, http.ErrServerClosed) {
 		return fmt.Errorf("listen %s: %w", srv.Addr, err)
 	}
+	// 等待已受理的异步主链路收尾（各自带 askRunTimeout 兜底）。
+	a.Ask.Wait()
 	return nil
 }

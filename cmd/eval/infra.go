@@ -25,6 +25,8 @@ type infraFlags struct {
 	envFile    string
 	migrations string
 	seedFile   string
+	modelFile  string
+	promptsDir string
 	poolSize   int
 }
 
@@ -33,6 +35,8 @@ func (f *infraFlags) register(fs *flag.FlagSet) {
 	fs.StringVar(&f.envFile, "env-file", "deploy/.env", "密钥文件（不存在则只读环境变量）")
 	fs.StringVar(&f.migrations, "migrations", "migrations", "trial schema 使用的业务库迁移目录")
 	fs.StringVar(&f.seedFile, "seed", "configs/seed/fields.yaml", "每个 trial 重灌的种子文件")
+	fs.StringVar(&f.modelFile, "model", "configs/model.yaml", "模型配置（提示词与档位；评测固定用桩模型）")
+	fs.StringVar(&f.promptsDir, "prompts", "", "提示词根目录（空则取模型配置的 prompts_dir）")
 	fs.IntVar(&f.poolSize, "pool", 1, "trial schema 槽位数（agri_eval_t_1..n）")
 }
 
@@ -42,15 +46,30 @@ type infra struct {
 	rdb    *redis.Client
 	pool   *env.Pool
 	deps   evalkit.DepsFunc
+	// question 把样本情境解析为种子农场下的 Scope / FieldID。
+	question evalkit.QuestionFunc
 }
 
 // open 依次连 agri_eval、Redis、trial 池；任一不可用都返回错误（不静默跳过）。
-func (f *infraFlags) open(ctx context.Context, logW io.Writer) (_ *infra, err error) {
+// 主链路用 ls 的知识库与 taxonomy，模型固定为确定性桩（评测可复现，不依赖外部模型）。
+func (f *infraFlags) open(ctx context.Context, logW io.Writer, ls *loadedSamples) (_ *infra, err error) {
 	cfg, err := config.Load(f.configFile, f.envFile)
 	if err != nil {
 		return nil, err
 	}
 	if err := cfg.RequireSecrets("mysql.password", "redis.password", "minio.access_key", "minio.secret_key"); err != nil {
+		return nil, err
+	}
+	mcfg, err := config.LoadModel(f.modelFile)
+	if err != nil {
+		return nil, err
+	}
+	mcfg.Provider = config.ModelProviderStub
+	if f.promptsDir != "" {
+		mcfg.PromptsDir = f.promptsDir
+	}
+	chat, err := app.ChatModel(mcfg)
+	if err != nil {
 		return nil, err
 	}
 	data, err := seed.Load(f.seedFile)
@@ -84,6 +103,7 @@ func (f *infraFlags) open(ctx context.Context, logW io.Writer) (_ *infra, err er
 	}
 	putter := repository.MinIOPutter{Client: mc}
 	tenantID, farmID := data.Farm.TenantID, data.Farm.FarmID
+	in.question = seedQuestion(tenantID, farmID)
 	in.deps = func(ctx context.Context, s *env.Slot, smp *sample.Sample) (app.Deps, error) {
 		// 样本 match.field 的 field-00x 按种子农场在本 trial schema 中解析为 field_profile.id。
 		resolve := func(ctx context.Context, code string) (uint64, error) {
@@ -95,8 +115,9 @@ func (f *infraFlags) open(ctx context.Context, logW io.Writer) (_ *infra, err er
 		}
 		return app.Deps{Clock: s.Clock, Logger: logger, DB: s.DB, Redis: in.rdb, Keys: s.Keys,
 			RawStore: repository.NewRawStore(s.DB, putter, cfg.MinIO.BucketRaw),
-			// L1 注入只拒答的空实现桩；L4 起换成真实主链路。Tools 为每 trial 一个 FixtureMCP。
-			Agent: evalkit.RefuseAllAgent{}, Tools: tools}, nil
+			// 主链路（桩模型）在 Build 内用本 trial 的 Runs / Advice / Drafts / RunLocker 装配；Tools 为每 trial 一个 FixtureMCP。
+			NewAgent: app.GraphAgent(ctx, app.GraphConfig{Model: mcfg, Chat: chat, KB: ls.kb, Taxonomy: ls.tx}),
+			Tools:    tools}, nil
 	}
 	return in, nil
 }

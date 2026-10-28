@@ -50,5 +50,15 @@ func (k Keys) CacheMCP(tool, argsDigest string) string {
 	return k.prefix + "cache:mcp:" + tool + ":" + argsDigest
 }
 
+// LockRun 是 lock:run:{run_id}（P0 L4，TTL 30s，执行期间按 ttl/3 续期）。
+func (k Keys) LockRun(runID uint64) string {
+	return k.prefix + "lock:run:" + strconv.FormatUint(runID, 10)
+}
+
+// RateFarmAsk 是 rl:farm:{farm_id}:ask（P0 L4，1 分钟固定窗口计数）。
+func (k Keys) RateFarmAsk(farmID uint64) string {
+	return k.prefix + "rl:farm:" + strconv.FormatUint(farmID, 10) + ":ask"
+}
+
 // Raw 拼接其他层文档中的键名（如 cache:mcp:...），各层落地时再补专用方法。
 func (k Keys) Raw(name string) string { return k.prefix + name }

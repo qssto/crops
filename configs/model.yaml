@@ -1,0 +1,18 @@
+# 模型配置（config.LoadModel 经 Viper 加载，环境变量覆盖，如 AS_MODEL_PROVIDER=stub）。
+# provider: openai | stub。openai 读 env ONEAPI_BASE_URL / ONEAPI_API_KEY / ONEAPI_MODEL，未设置时 server 启动报错；
+# stub 是确定性桩模型（关键词规则），只用于离线回归与开发，必须显式选择。密钥不得写在这里。
+model:
+  provider: openai
+  prompt_version: v1
+  prompts_dir: prompts
+  default_tier: standard
+  crop: rice
+  region: jiangsu
+  backoff: 200ms
+  tiers:
+    standard:
+      temperature: 0.1
+      max_tokens: 1024
+      timeout: 20s
+      max_retries: 1
+      rate_per_min: 60

@@ -81,7 +81,8 @@ func TestBuild(t *testing.T) {
 			if !errors.Is(err, tt.wantErr) {
 				t.Fatalf("err = %v, want %v", err, tt.wantErr)
 			}
-			if tt.wantErr == nil && (a.Agent == nil || a.Tools == nil || a.WorkOrders == nil || a.Locker == nil) {
+			if tt.wantErr == nil && (a.Agent == nil || a.Tools == nil || a.WorkOrders == nil || a.Locker == nil ||
+				a.Runs == nil || a.Advice == nil || a.Drafts == nil || a.RunLocker == nil || a.Ask == nil) {
 				t.Fatalf("incomplete app: %+v", a)
 			}
 		})

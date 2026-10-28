@@ -35,6 +35,17 @@ signed_at: 2026-10-28
 	if err := os.WriteFile(filepath.Join(badDir, "tmp-no-author.yaml"), []byte(noAuthor), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	// 参考解自相矛盾：must_call 与 must_not_call 冲突 → reference_passes_graders 违规
+	refDir := filepath.Join(t.TempDir(), "regression")
+	if err := os.MkdirAll(refDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	contra := strings.Replace(noAuthor, "tmp-no-author", "tmp-contra", 1) + "author: tester\n"
+	contra = strings.Replace(contra, "expect: {outcome: REFUSED, refuse_reason: KB_MISS}",
+		"expect: {outcome: REFUSED, refuse_reason: KB_MISS, trajectory: {must_call: [device.list], must_not_call: [device.*]}}", 1)
+	if err := os.WriteFile(filepath.Join(refDir, "tmp-contra.yaml"), []byte(contra), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	tax := filepath.Join(repoRoot, defaultTax)
 	suites := filepath.Join(repoRoot, defaultDir)
 	outDir := t.TempDir()
@@ -52,6 +63,8 @@ signed_at: 2026-10-28
 			args: []string{"validate", "--suites-dir", suites, "--taxonomy", tax, "--repo", repoRoot}},
 		{name: "validate rejects missing author", wantCode: exitFailed, wantStderr: "failed sample ids: tmp-no-author",
 			args: []string{"validate", "--suites-dir", filepath.Dir(badDir), "--taxonomy", tax, "--repo", repoRoot}},
+		{name: "validate rejects failing reference solution", wantCode: exitFailed, wantStderr: "reference_passes_graders",
+			args: []string{"validate", "--suites-dir", filepath.Dir(refDir), "--taxonomy", tax, "--repo", repoRoot}},
 		{name: "run fails loudly when mysql down", wantCode: exitFailed, wantStderr: "eval infra unavailable",
 			args: []string{"run", "--suites-dir", suites, "--taxonomy", tax, "--repo", repoRoot, "--out", outDir,
 				"--config", filepath.Join(repoRoot, "configs/app.yaml"), "--env-file", filepath.Join(outDir, "none.env"),

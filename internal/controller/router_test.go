@@ -41,7 +41,7 @@ func TestFarmAuth(t *testing.T) {
 		}
 		return tok
 	}
-	router := NewRouter(auth)
+	router := NewRouter(auth, &fakeAsker{})
 
 	tests := []struct {
 		name       string

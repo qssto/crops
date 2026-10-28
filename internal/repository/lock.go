@@ -9,6 +9,9 @@ import (
 	"time"
 
 	"github.com/redis/go-redis/v9"
+
+	"agri-steward/internal/agent"
+	"agri-steward/internal/repository/rediskey"
 )
 
 // 分布式锁：SET key {token} NX PX {ttl}，释放与续期用 Lua 比对 token（母文档 Redis 键约定 4）。
@@ -83,4 +86,27 @@ func (k *Lock) Release(ctx context.Context) error {
 		return fmt.Errorf("%w: %s", ErrLockLost, k.key)
 	}
 	return nil
+}
+
+// RunLockTTL 是 lock:run:{run_id} 的 TTL（P0 L4：30s，持有者每 10s 续期）。
+const RunLockTTL = 30 * time.Second
+
+// RunLocker 实现 agent.RunLocker：Locker + rediskey.LockRun。
+type RunLocker struct {
+	locker *Locker
+	keys   rediskey.Keys
+}
+
+var _ agent.RunLocker = (*RunLocker)(nil)
+
+// NewRunLocker 构造 RunLocker。
+func NewRunLocker(l *Locker, keys rediskey.Keys) *RunLocker { return &RunLocker{locker: l, keys: keys} }
+
+// AcquireRun 取 run 锁；已被持有返回 ErrLockHeld。
+func (r *RunLocker) AcquireRun(ctx context.Context, runID uint64) (agent.Lease, error) {
+	lk, err := r.locker.Acquire(ctx, r.keys.LockRun(runID), RunLockTTL)
+	if err != nil {
+		return nil, err
+	}
+	return lk, nil
 }

@@ -12,6 +12,7 @@ import (
 	"agri-steward/internal/app"
 	"agri-steward/internal/clock"
 	"agri-steward/internal/evalkit/env"
+	"agri-steward/internal/evalkit/grader"
 	"agri-steward/internal/evalkit/sample"
 	"agri-steward/internal/model"
 )
@@ -19,7 +20,7 @@ import (
 // DefaultTrials 是每个样本默认运行次数（P0 §6.1 技术实现 3）。
 const DefaultTrials = 3
 
-// Trial 是一个样本的一次运行结果。L4 起补充 run_id、transcript 与打分明细。
+// Trial 是一个样本的一次运行结果（transcript 在 L5 补充）。
 type Trial struct {
 	SampleID     string
 	Suite        string
@@ -28,8 +29,12 @@ type Trial struct {
 	Expected     model.Outcome
 	Outcome      model.Outcome
 	RefuseReason string
+	RunID        uint64
+	Card         *model.AdviceCard
 	Latency      time.Duration
 	Error        string
+	// Scores 按打分器顺序列出各维度结果；运行出错（Error 非空）时为空。
+	Scores []Score
 	// ToolCalls 是工具名 → 调用次数；UnexpectedCalls 是未在 fixtures.mcp 声明的调用（按顺序的工具名）。
 	// 仅当 App.Tools 实现 ToolRecorder（FixtureMCP）时填充。
 	ToolCalls       map[string]int
@@ -85,21 +90,50 @@ func StaticEnv(a *app.App) EnvFunc {
 	}
 }
 
+// QuestionFunc 由样本构造提问。评测环境据 slot 库把 farm / field 编码解析为 Scope / FieldID；
+// 默认只填编码字段。
+type QuestionFunc func(ctx context.Context, a *app.App, s *sample.Sample) (agent.Question, error)
+
 // Runner 调度样本运行。now 是墙钟（统计延迟用），与被测 App 内的 FrozenClock 无关。
 type Runner struct {
-	env EnvFunc
-	now func() time.Time
+	env      EnvFunc
+	now      func() time.Time
+	question QuestionFunc
+	grading  grading
 }
 
-// NewRunner 构造 Runner；now 为 nil 时用系统时钟。
-func NewRunner(env EnvFunc, now func() time.Time) (*Runner, error) {
+// RunnerOption 配置 Runner。
+type RunnerOption func(*Runner)
+
+// WithGraders 设置打分器（通常为 code.All）与样本知识版本 opener（citation_valid 需要）。
+func WithGraders(kb sample.KnowledgeOpener, graders ...grader.Grader) RunnerOption {
+	return func(r *Runner) { r.grading = grading{graders: graders, kb: kb} }
+}
+
+// WithQuestion 设置提问构造函数。
+func WithQuestion(fn QuestionFunc) RunnerOption {
+	return func(r *Runner) { r.question = fn }
+}
+
+// NewRunner 构造 Runner；now 为 nil 时用系统时钟；未配置打分器时只跑 outcome_match。
+func NewRunner(env EnvFunc, now func() time.Time, opts ...RunnerOption) (*Runner, error) {
 	if env == nil {
 		return nil, errors.New("evalkit: env is nil")
 	}
 	if now == nil {
 		now = clock.System{}.Now
 	}
-	return &Runner{env: env, now: now}, nil
+	r := &Runner{env: env, now: now, question: defaultQuestion, grading: grading{graders: defaultGraders()}}
+	for _, opt := range opts {
+		opt(r)
+	}
+	if r.question == nil {
+		return nil, errors.New("evalkit: question func is nil")
+	}
+	if len(r.grading.graders) == 0 {
+		return nil, errors.New("evalkit: no grader")
+	}
+	return r, nil
 }
 
 // Run 对 samples 中每个样本顺序跑 opts.N 次。单个 trial 的 agent 错误记入 Trial.Error，
@@ -120,33 +154,39 @@ func (r *Runner) Run(ctx context.Context, samples []*sample.Sample, opts Options
 	defer func() { exp.FinishedAt = r.now() }()
 
 	for _, s := range samples {
+		kb, kbErr := r.grading.openKB(ctx, s)
 		for i := 0; i < opts.N; i++ {
 			if err := ctx.Err(); err != nil {
 				return exp, fmt.Errorf("evalkit: stopped before %s#%d: %w", s.ID, i, err)
 			}
-			exp.Trials = append(exp.Trials, r.runTrial(ctx, s, i))
+			if kbErr != nil {
+				exp.Trials = append(exp.Trials, failedTrial(s, i, kbErr))
+				continue
+			}
+			exp.Trials = append(exp.Trials, r.runTrial(ctx, s, i, kb))
 		}
 	}
 	return exp, nil
 }
 
-func (r *Runner) runTrial(ctx context.Context, s *sample.Sample, index int) Trial {
-	t := Trial{
-		SampleID:   s.ID,
-		Suite:      s.Suite,
-		Tags:       s.Tags,
-		TrialIndex: index,
-		Expected:   s.Expect.Outcome,
-	}
+func newTrial(s *sample.Sample, index int) Trial {
+	return Trial{SampleID: s.ID, Suite: s.Suite, Tags: s.Tags, TrialIndex: index, Expected: s.Expect.Outcome}
+}
+
+// failedTrial 是未能运行的 trial（INFRA_ERROR）。
+func failedTrial(s *sample.Sample, index int, err error) Trial {
+	t := newTrial(s, index)
+	t.Error = fmt.Errorf("trial %s#%d: %w", s.ID, index, err).Error()
+	return t
+}
+
+func (r *Runner) runTrial(ctx context.Context, s *sample.Sample, index int, kb grader.KnowledgeIndex) Trial {
 	a, release, err := r.env(ctx, s, index)
 	if err != nil {
-		t.Error = fmt.Errorf("trial %s#%d: env: %w", s.ID, index, err).Error()
-		return t
+		return failedTrial(s, index, fmt.Errorf("env: %w", err))
 	}
-	start := r.now()
-	ans, askErr := a.Agent.Ask(ctx, questionOf(s))
-	t.Latency = r.now().Sub(start)
-	recordTools(&t, a.Tools)
+	t := newTrial(s, index)
+	ans, askErr := r.ask(ctx, &t, a, s)
 	if relErr := release(); relErr != nil {
 		askErr = errors.Join(askErr, fmt.Errorf("release env: %w", relErr))
 	}
@@ -154,12 +194,30 @@ func (r *Runner) runTrial(ctx context.Context, s *sample.Sample, index int) Tria
 		t.Error = fmt.Errorf("trial %s#%d: %w", s.ID, index, askErr).Error()
 		return t
 	}
-	t.Outcome = ans.Outcome
-	t.RefuseReason = ans.RefuseReason
+	t.Outcome, t.RefuseReason, t.RunID, t.Card = ans.Outcome, ans.RefuseReason, ans.RunID, ans.Card
+	r.grading.grade(ctx, &t, s, ans, kb)
 	return t
 }
 
-func questionOf(s *sample.Sample) agent.Question {
+// ask 构造提问并调用被测 agent，记录延迟与工具调用。
+func (r *Runner) ask(ctx context.Context, t *Trial, a *app.App, s *sample.Sample) (agent.Answer, error) {
+	q, err := r.question(ctx, a, s)
+	if err != nil {
+		return agent.Answer{}, fmt.Errorf("question: %w", err)
+	}
+	start := r.now()
+	ans, err := a.Agent.Ask(ctx, q)
+	t.Latency = r.now().Sub(start)
+	recordTools(t, a.Tools)
+	return ans, err
+}
+
+func defaultQuestion(_ context.Context, _ *app.App, s *sample.Sample) (agent.Question, error) {
+	return QuestionOf(s), nil
+}
+
+// QuestionOf 由样本情境填编码字段（Scope / FieldID 由 QuestionFunc 补）。
+func QuestionOf(s *sample.Sample) agent.Question {
 	return agent.Question{
 		Text:      s.Question,
 		FarmCode:  s.Context.Farm,
