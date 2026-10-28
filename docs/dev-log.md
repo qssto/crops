@@ -79,3 +79,33 @@
 - 约定：样本 `knowledge_ref` 回填为 `WORKTREE`；22 条 product_in 样本回填 `target`。
 - 偏差 / TODO：KB_MISS 只能识别作物、区域、生育期、target 维度的缺口；冰雹、保险、富硒、海藻肥等话题级缺口要等 L4 分类出 target 或 topic 才能拒答。kbdump 的 must_cite 召回为 106/125，缺口来自单 topic 情境与缺 stage 的样本。
 - 待专家复核（调度方验收时记录）：rice-disaster-0012 期望灌浆结实期引用 `rice/disaster/cold`，但该条目 stage 只含拔节孕穗期、抽穗扬花期，当前加载为 KB_MISS，条目与样本二者必有一处要改；pest-0014 恶苗病浸种需 L4 传入 stage=秧苗期；knapsack_spray_volume 点值 30 等于下限，待专家确认。
+
+## L2-b servers / FixtureMCP（2026-10-28）
+
+- 四个 mock Server 在 `internal/agent/tools/mcp/servers/{weather,crop,field,device}`，共 14 个工具，公共部分在 `servers/kit`（入参解码、field_id 解析、schema 片段、real 骨架）。`servers.Build(cfg, clk, dir)` 按 `configs/tools.yaml` 的 mode 装配，mock 数据在 `configs/mock/*.yaml`。
+- 地块入参统一为 `field_id`（`field_profile.id`）。mock 数据按 `ext_field_code` 组织，经 `kit.FieldDirectory` 翻译，生产实现是 `repository.FieldDirectory`（`SELECT ext_field_code FROM field_profile WHERE id=?`）；地块不存在返回 EMPTY。
+- `crop.phenology` 按播期与月均温表累积积温（基温 10℃）推算生育期，枚举取自 L3 知识库 README §3。
+- real 骨架与 mock 共用 ToolSpec，P0 一律返回 `UPSTREAM "real not configured"`，各工具状态见 `docs/mock-real-status.md`。
+- `app.Deps` 新增必填 `Tools agent.ToolProvider`（缺失报 `ErrMissingTools`）。`cmd/server` 新增 `-tools` 参数，装配 Server 后注入占位 ToolProvider（返回 ERROR/UPSTREAM），待 L2-a gateway 包装替换。
+- `evalkit.DepsFunc` 改为 `func(ctx, slot, sample) (app.Deps, error)`；`cmd/eval` 每个 trial 新建 `env.FixtureMCP`，`match.field` 按种子农场（tenant/farm 取自 seed 文件）用 `ProfileRepo.FieldIDByCode` 解析。
+- FixtureMCP 语义见 `eval/README.md`「工具桩」。Trial 新增 `ToolCalls` / `UnexpectedCalls`，报告 trial 明细新增 `unexpected_call` 列。
+- 样本：新增 `fixtures` 静态校验规则；新增 `rice-l2fault-0001..0003`（timeout / empty / malformed → REFUSED / DATA_MISSING），总数 103（L3 的 100 条 + 3 条）。
+- 偏差与待办：
+  - 本环境拒绝执行含 eval 字样的 `go run` 命令，validate 由 `cmd/eval/main_test.go` 的 validate 用例覆盖（合并后期望 `validate OK: 103 samples`）。
+  - 集成测试只保证 `go vet -tags integration` 编译通过，未连库运行。
+  - 与 L2-a 合并时注意 `app.Deps.Tools` 和 `cmd/server` 装配可能冲突。
+
+## L2-a gateway / policy（2026-10-28）
+
+- 网关 `internal/agent/tools/mcp`：`NewGateway(servers []Server, opt Options) (*Gateway, error)`，实现 `agent.ToolProvider`（`Call(ctx, scope, ToolCall) (ToolResult, error)`、`Tools() []ToolSpec`）。Options 必填 Clock/Logger/Keys/Idem/Cache/Calls/Raw/Fields，可选 Events/Mask/Levels/Timeouts/CacheTTL/PendingPoll；工具重名、schema 编译失败即报错。
+- 链路：policy.Before（等级 + JSON Schema）→ 租户校验 → `idem:tool:{call_key}` 去重（PENDING:{token} TTL=超时×次数，DONE:{id} 24h，Redis 丢失/故障回查 MySQL OK 行）→ `cache:mcp:{tool}:{digest}`（weather 10min、crop 24h；时效工具 epoch>0 或 step=pre_dispatch 跳过读、仍回写）→ Invoke（默认 3s，read+幂等重试 2 次，仅 TIMEOUT/UPSTREAM 重试）→ 错误码归一 TIMEOUT/EMPTY/MALFORMED/UPSTREAM/REJECTED → policy.After → `ToolCallStore.Save` → OK 写 DONE、失败按 token 删键。
+- `call_key = hex(sha256(run_id|step_id|tool|canonical(args)|call_seq|epoch))[:32]`，epoch 仅时效工具生效；`mcp.Canonical/ArgsDigest/CallKey` 导出。
+- 租户隔离：`call.go` 的 `checkScope` 在调 Server 前用 `FieldScope.Owns(ctx, scope, fieldID)` 校验 args.field_id，越权 REJECTED 且落行；生产实现 `repository.FieldScope`（`SELECT 1 FROM field_profile WHERE id=? AND tenant_id=? AND farm_id=?`）。
+- 策略 `internal/agent/harness/policy`：`New(specs []Spec, allowed ...Level)`、`Before(tool, args) (Spec, error)`、`After(tool, Outcome) (Outcome, string)`、`CompileSchema(name, schema) (Validator, error)`；不依赖 mcp。P0 只放行 read。
+- 存储：`agent.ToolCallStore{Save, FindOK}`、`model.ToolCallRow/ToolCallHit`；`repository.NewToolCallRepo`（attempt=max+1，ON DUPLICATE KEY 取已有 id，时效 OK 作废旧 epoch）、`NewRedisIdem`（Replace/DeleteIf 用 Lua 比 token）、`NewRedisCache`；rediskey 新增 `IdemTool`、`CacheMCP`。
+- raw：仅 OK 时 `RawStore.Put`，name=`tool-{call_key}`；失败只告警、raw_object_id 留 NULL。trace 走 slog；Events 非空发 TOOL_CALL_END。
+- 契约变更：`ToolSpec.Level`（四个 Server 全部 LevelRead，未声明等级 REJECTED，`Options.Levels` 按 Server 覆盖）；`agent.ToolCall.CallSeq`。cmd/server 用网关包装 `servers.Build`，去掉 gatewayPending；eval 侧仍注入 FixtureMCP。
+- 偏差：tool_call 表沿用 0001 迁移，不新增 0002。
+- TODO：L5 接 `Mask`（pii）和 tool_policy.yaml 的 actuate 兜底；L7 接 `Events`（EventRepo）；集成测试（`internal/repository/toolcall_integration_test.go`）只保证编译，未连库运行；`FieldDirectory` 自身不校验租户，由网关保证。
+- 环境：本机 `/opt/homebrew/bin/go` 已升到 1.27.3 而 GOROOT 仍为 /usr/local/go（1.25.11），验证需用 `/usr/local/go/bin/go`。
+- 合并验证（main 检出）：单测、`make test-integration`（含 ToolCallRepo / FieldScope / RedisIdem，修正 JSON 列空白规范化导致的断言）、`validate OK: 103 samples`、`make eval TAGS=L2 N=1`（exp 9，27 trial 链路通；Agent 仍为 Placeholder，故障样本端到端拒答原因待 L4 主链路验证）。

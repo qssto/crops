@@ -1,0 +1,95 @@
+# crop mock 数据（crop.LoadMock 严格解析）。生育期按「播种日 + 有效积温 + 当前日期」推算：
+# 每天积温 = max(0, 当月日均温气候值 − gdd_base_c)，累计到当前日期后落在 stages 的哪一段即为当前（子）期。
+# 积温节点按江苏单季中粳校准：5 月下旬播种 → 6 月中旬移栽 → 8 月下旬抽穗 → 10 月中下旬黄熟（抽穗至成熟约 50 天）。
+# 生育期枚举与 knowledge/README §3 一致。
+source: mock-agri-kb
+updated_at: 2026-05-01T00:00:00Z
+gdd_base_c: 10
+monthly_mean_temp_c: [3.0, 5.0, 10.0, 16.0, 21.0, 25.0, 28.5, 28.0, 23.5, 18.0, 11.0, 5.0]
+stages:
+  - {stage: 秧苗期, gdd_from: 0}
+  - {stage: 返青期, gdd_from: 340}
+  - {stage: 分蘖期, sub_stage: 分蘖初期, gdd_from: 445}
+  - {stage: 分蘖期, sub_stage: 分蘖盛期, gdd_from: 560}
+  - {stage: 分蘖期, sub_stage: 分蘖末期, gdd_from: 750}
+  - {stage: 拔节孕穗期, sub_stage: 拔节期, gdd_from: 930}
+  - {stage: 拔节孕穗期, sub_stage: 幼穗分化期, gdd_from: 1080}
+  - {stage: 拔节孕穗期, sub_stage: 孕穗期, gdd_from: 1300}
+  - {stage: 抽穗扬花期, sub_stage: 破口期, gdd_from: 1560}
+  - {stage: 抽穗扬花期, sub_stage: 始穗期, gdd_from: 1620}
+  - {stage: 抽穗扬花期, sub_stage: 齐穗期, gdd_from: 1700}
+  - {stage: 灌浆结实期, sub_stage: 乳熟期, gdd_from: 1800}
+  - {stage: 灌浆结实期, sub_stage: 蜡熟期, gdd_from: 2050}
+  - {stage: 成熟期, sub_stage: 黄熟期, gdd_from: 2250}
+  - {stage: 成熟期, sub_stage: 完熟期, gdd_from: 2350}
+varieties:
+  南粳9108:
+    type: 迟熟中粳
+    growth_days: 153
+    resistance: {稻瘟病: 中抗, 纹枯病: 中感, 条纹叶枯病: 抗}
+    notes: [食味优，适宜江苏苏中及宁镇扬丘陵地区种植, 后期注意防治稻曲病]
+  南粳5055:
+    type: 早熟晚粳
+    growth_days: 158
+    resistance: {稻瘟病: 中感, 纹枯病: 感, 条纹叶枯病: 中抗}
+    notes: [耐肥抗倒性较好, 破口期前 7-10 天预防稻曲病]
+# 地块种植信息：sowing_date 与 configs/seed/fields.yaml 一致。
+fields:
+  field-001: {crop: 水稻, variety: 南粳9108, sowing_date: "2026-05-20"}
+  field-002: {crop: 水稻, variety: 南粳9108, sowing_date: "2026-05-20"}
+  field-003: {crop: 水稻, variety: 南粳9108, sowing_date: "2026-05-22"}
+  field-004: {crop: 水稻, variety: 南粳5055, sowing_date: "2026-05-22"}
+  field-005: {crop: 水稻, variety: 南粳5055, sowing_date: "2026-05-25"}
+  field-006: {crop: 水稻, variety: 南粳5055, sowing_date: "2026-05-25"}
+# 病虫草害谱：risk 按生育期给出风险等级，未列出的生育期不关注。
+spectrum:
+  - {target: planthopper, name: 稻飞虱, kind: pest, risk: {分蘖期: 中, 拔节孕穗期: 高, 抽穗扬花期: 高, 灌浆结实期: 高}}
+  - {target: leaf_roller, name: 稻纵卷叶螟, kind: pest, risk: {分蘖期: 高, 拔节孕穗期: 高, 抽穗扬花期: 中}}
+  - {target: stem_borer, name: 二化螟, kind: pest, risk: {返青期: 中, 分蘖期: 高, 拔节孕穗期: 中, 抽穗扬花期: 中}}
+  - {target: sheath_blight, name: 纹枯病, kind: disease, risk: {分蘖期: 中, 拔节孕穗期: 高, 抽穗扬花期: 高}}
+  - {target: blast, name: 稻瘟病, kind: disease, risk: {秧苗期: 中, 分蘖期: 中, 抽穗扬花期: 高}}
+  - {target: false_smut, name: 稻曲病, kind: disease, risk: {拔节孕穗期: 高}}
+  - {target: bakanae, name: 恶苗病, kind: disease, risk: {秧苗期: 高}}
+  - {target: weeds, name: 稻田杂草, kind: weed, risk: {秧苗期: 中, 返青期: 高, 分蘖期: 高}}
+# 防治指标（与 knowledge 阈值条目一致；logic=any 表示任一指标达到即建议防治）。
+thresholds:
+  - target: planthopper
+    stages: [分蘖期, 拔节孕穗期]
+    logic: any
+    indicators: [{metric: density_per_100_hills, op: ">=", value: 1000, unit: 头/百丛}]
+  - target: planthopper
+    stages: [抽穗扬花期, 灌浆结实期]
+    logic: any
+    indicators: [{metric: density_per_100_hills, op: ">=", value: 1500, unit: 头/百丛}]
+  - target: leaf_roller
+    stages: [分蘖期]
+    logic: any
+    indicators: [{metric: larvae_per_100_hills, op: ">=", value: 60, unit: 头/百丛}]
+  - target: leaf_roller
+    stages: [拔节孕穗期, 抽穗扬花期]
+    logic: any
+    indicators: [{metric: larvae_per_100_hills, op: ">=", value: 40, unit: 头/百丛}]
+  - target: sheath_blight
+    stages: [分蘖期]
+    logic: any
+    indicators: [{metric: diseased_hill_rate, op: ">=", value: 0.2, unit: ratio}]
+  - target: sheath_blight
+    stages: [拔节孕穗期, 抽穗扬花期]
+    logic: any
+    indicators: [{metric: diseased_hill_rate, op: ">=", value: 0.3, unit: ratio}]
+  - target: stem_borer
+    stages: [分蘖期, 拔节孕穗期]
+    logic: any
+    indicators:
+      - {metric: dead_sheath_rate, op: ">=", value: 0.03, unit: ratio}
+      - {metric: egg_mass_per_mu, op: ">=", value: 100, unit: 块/亩}
+  - target: blast
+    stages: [分蘖期, 抽穗扬花期]
+    logic: all
+    indicators:
+      - {metric: blast_centers, op: ">=", value: 1, unit: 个}
+      - {metric: rain_days_7d, op: ">=", value: 4, unit: 天}
+  - target: false_smut
+    stages: [拔节孕穗期]
+    logic: any
+    indicators: [{metric: days_before_heading, op: "<=", value: 10, unit: 天}]

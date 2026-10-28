@@ -1,0 +1,91 @@
+# field mock 数据（field.LoadMock 严格解析）。按地块编码组织，面积 / 作物 / 播种日与 configs/seed/fields.yaml 一致。
+# operations / surveys 须按日期升序；晚于当前日期（clock.Clock）的记录视为尚未发生，不会返回。
+# field-005 没有病虫调查（field.pest_survey 返回 EMPTY，对应 DATA_MISSING 拒答场景）。
+source: mock-xgeo
+fields:
+  field-001:
+    profile: {updated_at: 2026-06-10T00:00:00Z, area_mu: 25.00, crop: 水稻, variety: 南粳9108, sowing_date: "2026-05-20",
+              transplant_date: "2026-06-08", soil_texture: 壤土, irrigation: 渠灌}
+    operations:
+      - {date: "2026-06-05", kind: fertilize, stage_tag: 基肥, product: 复合肥(15-15-15), amount: 25, unit: kg/亩}
+      - {date: "2026-06-08", kind: transplant, note: 机插}
+      - {date: "2026-06-15", kind: fertilize, stage_tag: 分蘖肥, product: 尿素, amount: 7.5, unit: kg/亩}
+      - {date: "2026-07-08", kind: drain, note: 够苗晒田}
+      - {date: "2026-07-25", kind: fertilize, stage_tag: 穗肥, product: 尿素, amount: 6, unit: kg/亩}
+    surveys:
+      - date: "2026-07-20"
+        method: 平行跳跃法 100 丛
+        observations:
+          - {target: planthopper, name: 稻飞虱, metric: density_per_100_hills, value: 420, unit: 头/百丛}
+          - {target: leaf_roller, name: 稻纵卷叶螟, metric: larvae_per_100_hills, value: 35, unit: 头/百丛}
+      - date: "2026-08-15"
+        method: 平行跳跃法 100 丛
+        observations:
+          - {target: planthopper, name: 稻飞虱, metric: density_per_100_hills, value: 1250, unit: 头/百丛}
+          - {target: sheath_blight, name: 纹枯病, metric: diseased_hill_rate, value: 0.18, unit: ratio}
+    soil: {sampled_at: "2026-04-20", ph: 6.8, organic_matter_g_kg: 24.5, alkali_n_mg_kg: 118, olsen_p_mg_kg: 16.2, available_k_mg_kg: 132, n_level: 中}
+  field-002:
+    profile: {updated_at: 2026-06-10T00:00:00Z, area_mu: 28.00, crop: 水稻, variety: 南粳9108, sowing_date: "2026-05-20",
+              transplant_date: "2026-06-09", soil_texture: 黏壤土, irrigation: 渠灌}
+    operations:
+      - {date: "2026-06-06", kind: fertilize, stage_tag: 基肥, product: 复合肥(15-15-15), amount: 25, unit: kg/亩}
+      - {date: "2026-06-09", kind: transplant, note: 机插}
+      - {date: "2026-06-18", kind: fertilize, stage_tag: 分蘖肥, product: 尿素, amount: 8, unit: kg/亩}
+      - {date: "2026-07-30", kind: spray, product: 噻呋酰胺, amount: 20, unit: mL/亩, note: 纹枯病}
+    surveys:
+      - date: "2026-08-04"
+        method: 平行跳跃法 100 丛
+        observations:
+          - {target: sheath_blight, name: 纹枯病, metric: diseased_hill_rate, value: 0.25, unit: ratio}
+          - {target: planthopper, name: 稻飞虱, metric: density_per_100_hills, value: 680, unit: 头/百丛}
+    soil: {sampled_at: "2026-04-20", ph: 7.1, organic_matter_g_kg: 27.0, alkali_n_mg_kg: 102, olsen_p_mg_kg: 14.8, available_k_mg_kg: 145, n_level: 中}
+  field-003:
+    profile: {updated_at: 2026-06-12T00:00:00Z, area_mu: 32.50, crop: 水稻, variety: 南粳9108, sowing_date: "2026-05-22",
+              transplant_date: "2026-06-11", soil_texture: 壤土, irrigation: 渠灌}
+    operations:
+      - {date: "2026-06-08", kind: fertilize, stage_tag: 基肥, product: 复合肥(15-15-15), amount: 25, unit: kg/亩}
+      - {date: "2026-06-11", kind: transplant, note: 机插}
+      - {date: "2026-06-20", kind: fertilize, stage_tag: 分蘖肥, product: 尿素, amount: 7.5, unit: kg/亩}
+      - {date: "2026-07-12", kind: irrigate, note: 复水}
+    surveys:
+      - date: "2026-07-15"
+        method: 平行跳跃法 100 丛
+        observations:
+          - {target: stem_borer, name: 二化螟, metric: dead_sheath_rate, value: 0.012, unit: ratio}
+          - {target: leaf_roller, name: 稻纵卷叶螟, metric: larvae_per_100_hills, value: 72, unit: 头/百丛}
+    soil: {sampled_at: "2026-04-21", ph: 6.5, organic_matter_g_kg: 22.1, alkali_n_mg_kg: 96, olsen_p_mg_kg: 12.5, available_k_mg_kg: 118, n_level: 低}
+  field-004:
+    profile: {updated_at: 2026-06-12T00:00:00Z, area_mu: 40.00, crop: 水稻, variety: 南粳5055, sowing_date: "2026-05-22",
+              transplant_date: "2026-06-12", soil_texture: 黏土, irrigation: 泵站灌溉}
+    operations:
+      - {date: "2026-06-01", kind: fertilize, stage_tag: 基肥, product: 复合肥(15-15-15), amount: 30, unit: kg/亩}
+      - {date: "2026-06-12", kind: transplant, note: 机插}
+      - {date: "2026-06-16", kind: weeding, product: 丙草胺, amount: 60, unit: mL/亩}
+    surveys:
+      - date: "2026-07-05"
+        method: 平行跳跃法 100 丛
+        observations:
+          - {target: planthopper, name: 稻飞虱, metric: density_per_100_hills, value: 260, unit: 头/百丛}
+    soil: {sampled_at: "2026-04-21", ph: 7.4, organic_matter_g_kg: 29.3, alkali_n_mg_kg: 135, olsen_p_mg_kg: 18.0, available_k_mg_kg: 160, n_level: 高}
+  field-005:
+    profile: {updated_at: 2026-06-14T00:00:00Z, area_mu: 30.00, crop: 水稻, variety: 南粳5055, sowing_date: "2026-05-25",
+              transplant_date: "2026-06-14", soil_texture: 壤土, irrigation: 渠灌}
+    operations:
+      - {date: "2026-06-10", kind: fertilize, stage_tag: 基肥, product: 复合肥(15-15-15), amount: 25, unit: kg/亩}
+      - {date: "2026-06-14", kind: transplant, note: 机插}
+      - {date: "2026-06-24", kind: fertilize, stage_tag: 分蘖肥, product: 尿素, amount: 7, unit: kg/亩}
+    surveys: []
+    soil: {sampled_at: "2026-04-22", ph: 6.9, organic_matter_g_kg: 25.6, alkali_n_mg_kg: 110, olsen_p_mg_kg: 15.1, available_k_mg_kg: 128, n_level: 中}
+  field-006:
+    profile: {updated_at: 2026-06-14T00:00:00Z, area_mu: 35.00, crop: 水稻, variety: 南粳5055, sowing_date: "2026-05-25",
+              transplant_date: "2026-06-15", soil_texture: 黏壤土, irrigation: 渠灌}
+    operations:
+      - {date: "2026-06-11", kind: fertilize, stage_tag: 基肥, product: 复合肥(15-15-15), amount: 25, unit: kg/亩}
+      - {date: "2026-06-15", kind: transplant, note: 机插}
+      - {date: "2026-07-05", kind: fertilize, stage_tag: 分蘖肥, product: 尿素, amount: 6, unit: kg/亩}
+    surveys:
+      - date: "2026-07-18"
+        method: 平行跳跃法 100 丛
+        observations:
+          - {target: blast, name: 稻瘟病, metric: blast_centers, value: 2, unit: 个}
+          - {target: sheath_blight, name: 纹枯病, metric: diseased_hill_rate, value: 0.08, unit: ratio}

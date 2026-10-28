@@ -14,6 +14,7 @@ import (
 	"agri-steward/internal/config"
 	"agri-steward/internal/evalkit"
 	"agri-steward/internal/evalkit/env"
+	"agri-steward/internal/evalkit/sample"
 	"agri-steward/internal/repository"
 	"agri-steward/internal/seed"
 )
@@ -82,11 +83,20 @@ func (f *infraFlags) open(ctx context.Context, logW io.Writer) (_ *infra, err er
 		return nil, err
 	}
 	putter := repository.MinIOPutter{Client: mc}
-	in.deps = func(s *env.Slot) app.Deps {
+	tenantID, farmID := data.Farm.TenantID, data.Farm.FarmID
+	in.deps = func(ctx context.Context, s *env.Slot, smp *sample.Sample) (app.Deps, error) {
+		// 样本 match.field 的 field-00x 按种子农场在本 trial schema 中解析为 field_profile.id。
+		resolve := func(ctx context.Context, code string) (uint64, error) {
+			return repository.ProfileRepo{}.FieldIDByCode(ctx, s.DB, tenantID, farmID, code)
+		}
+		tools, err := env.NewFixtureMCP(ctx, smp.Fixtures.MCP, resolve, s.Clock)
+		if err != nil {
+			return app.Deps{}, err
+		}
 		return app.Deps{Clock: s.Clock, Logger: logger, DB: s.DB, Redis: in.rdb, Keys: s.Keys,
 			RawStore: repository.NewRawStore(s.DB, putter, cfg.MinIO.BucketRaw),
-			// L1 注入只拒答的空实现桩；L4 起换成真实主链路 + FixtureMCP 等评测接缝。
-			Agent: evalkit.RefuseAllAgent{}}
+			// L1 注入只拒答的空实现桩；L4 起换成真实主链路。Tools 为每 trial 一个 FixtureMCP。
+			Agent: evalkit.RefuseAllAgent{}, Tools: tools}, nil
 	}
 	return in, nil
 }

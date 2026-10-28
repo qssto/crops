@@ -110,6 +110,47 @@ func TestValidator_DefaultRules(t *testing.T) {
 				s[1].Fixtures.MCP = map[string][]ToolFixture{"weather.forecast": {{Error: "boom"}}}
 				return s
 			}},
+		{name: "valid fixtures", mutate: func(s []*Sample) []*Sample {
+			s[1].Fixtures.MCP = map[string][]ToolFixture{
+				"weather.forecast":  {{Match: map[string]any{"field": "field-002"}, Returns: []any{map[string]any{"a": 1}, "x"}}},
+				"field.pest_survey": {{Match: map[string]any{"field": "field-002"}, Error: FaultMalformed}},
+				"crop.phenology":    {{Return: map[string]any{"stage": "分蘖期"}}},
+			}
+			return s
+		}},
+		{name: "fixture without outcome", wantRule: RuleFixtures, wantID: "s-1",
+			mutate: func(s []*Sample) []*Sample {
+				s[1].Fixtures.MCP = map[string][]ToolFixture{"crop.phenology": {{Match: map[string]any{"field": "field-001"}}}}
+				return s
+			}},
+		{name: "fixture with return and error", wantRule: RuleFixtures, wantID: "s-1",
+			mutate: func(s []*Sample) []*Sample {
+				s[1].Fixtures.MCP = map[string][]ToolFixture{"crop.phenology": {{Return: map[string]any{}, Error: FaultEmpty}}}
+				return s
+			}},
+		{name: "null in returns", wantRule: RuleFixtures, wantID: "s-1",
+			mutate: func(s []*Sample) []*Sample {
+				s[1].Fixtures.MCP = map[string][]ToolFixture{"crop.phenology": {{Returns: []any{map[string]any{}, nil}}}}
+				return s
+			}},
+		{name: "bad match.field", wantRule: RuleFixtures, wantID: "s-1",
+			mutate: func(s []*Sample) []*Sample {
+				s[1].Fixtures.MCP = map[string][]ToolFixture{"crop.phenology": {{Match: map[string]any{"field": 3}, Error: FaultEmpty}}}
+				return s
+			}},
+		{name: "match field and field_id", wantRule: RuleFixtures, wantID: "s-1",
+			mutate: func(s []*Sample) []*Sample {
+				s[1].Fixtures.MCP = map[string][]ToolFixture{"crop.phenology": {{
+					Match: map[string]any{"field": "field-001", "field_id": 1}, Error: FaultEmpty}}}
+				return s
+			}},
+		{name: "bad tool name", wantRule: RuleFixtures, wantID: "s-1",
+			mutate: func(s []*Sample) []*Sample {
+				s[1].Fixtures.MCP = map[string][]ToolFixture{"phenology": {{Error: FaultEmpty}}}
+				return s
+			}},
+		{name: "bad context.field", wantRule: RuleFixtures, wantID: "s-1",
+			mutate: func(s []*Sample) []*Sample { s[1].Context.Field = "地块3"; return s }},
 		{name: "refusal without reason", wantRule: RuleExpect, wantID: "s-0",
 			mutate: func(s []*Sample) []*Sample { s[0].Expect.RefuseReason = ""; return s }},
 		{name: "refusal with advice", wantRule: RuleExpect, wantID: "s-0",
@@ -333,7 +374,7 @@ func TestLoadAndValidate_MissingAuthorListsID(t *testing.T) {
 	}
 }
 
-// 仓库内的样本（L3 扩充至 100 条）必须通过静态校验。
+// 仓库内的样本（L3 的 100 条 + 3 条 L2 故障注入）必须通过静态校验。
 func TestRepoSamplesValid(t *testing.T) {
 	_, file, _, ok := runtime.Caller(0)
 	if !ok {
@@ -348,7 +389,7 @@ func TestRepoSamplesValid(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(samples) < 100 {
-		t.Fatalf("got %d samples, want >= 100", len(samples))
+	if len(samples) < 103 {
+		t.Fatalf("got %d samples, want >= 103", len(samples))
 	}
 }

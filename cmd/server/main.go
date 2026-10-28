@@ -37,6 +37,7 @@ func main() {
 func run() (err error) {
 	configFile := flag.String("config", "configs/app.yaml", "配置文件")
 	envFile := flag.String("env-file", "deploy/.env", "密钥文件（不存在则只读环境变量）")
+	toolsFile := flag.String("tools", "configs/tools.yaml", "MCP 工具 Server 配置（mock / real）")
 	flag.Parse()
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -85,10 +86,14 @@ func run() (err error) {
 	if err != nil {
 		return err
 	}
-	a, err := app.Build(app.Deps{Clock: clk, Logger: logger, DB: db, Redis: rdb, Keys: keys,
-		RawStore: repository.NewRawStore(db, repository.MinIOPutter{Client: mc}, cfg.MinIO.BucketRaw),
+	raw := repository.NewRawStore(db, repository.MinIOPutter{Client: mc}, cfg.MinIO.BucketRaw)
+	tools, err := buildTools(*toolsFile, toolDeps{clk: clk, logger: logger, db: db, rdb: rdb, keys: keys, raw: raw})
+	if err != nil {
+		return err
+	}
+	a, err := app.Build(app.Deps{Clock: clk, Logger: logger, DB: db, Redis: rdb, Keys: keys, RawStore: raw,
 		// L4 前主链路未就绪，注入只拒答的占位实现。
-		Agent: agent.Placeholder{}})
+		Agent: agent.Placeholder{}, Tools: tools})
 	if err != nil {
 		return err
 	}

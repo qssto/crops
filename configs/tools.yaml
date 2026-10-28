@@ -1,0 +1,26 @@
+# MCP 工具 Server 配置（config.LoadTools 经 Viper 加载，环境变量覆盖，如 AS_TOOLS_WEATHER_MODE=real）。
+# mode: mock | real。mock 读 mock_dir/{server}.yaml；real 目前只有 HTTP 客户端骨架，调用一律返回
+# UPSTREAM "real not configured"（D6：不调用外网）。对接清单见 docs/mock-real-status.md。
+# real.api_key 是密钥，不得写在这里，只从 AS_TOOLS_{SERVER}_REAL_API_KEY 读取。
+tools:
+  mock_dir: configs/mock
+  weather:
+    mode: mock
+    timeout: 3s
+    level: read
+    real: {base_url: ""}   # 待对接：气象源 D6
+  crop:
+    mode: mock
+    timeout: 3s
+    level: read
+    real: {base_url: ""}   # 待对接：极飞 XGEO / 农技知识服务
+  field:
+    mode: mock
+    timeout: 3s
+    level: read
+    real: {base_url: ""}   # 待对接：极飞 XGEO
+  device:
+    mode: mock
+    timeout: 3s
+    level: read
+    real: {base_url: ""}   # 待对接：极飞 XGEO

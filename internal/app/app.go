@@ -28,6 +28,8 @@ type Deps struct {
 	Keys     rediskey.Keys
 	RawStore agent.RawStore
 	Agent    agent.Agent
+	// Tools 是工具调用接缝：生产为 mcp gateway（包装 servers.Build 的四个 Server），评测为每个 trial 一个 FixtureMCP。
+	Tools agent.ToolProvider
 }
 
 // App 是装配结果。
@@ -39,6 +41,7 @@ type App struct {
 	Keys       rediskey.Keys
 	RawStore   agent.RawStore
 	Agent      agent.Agent
+	Tools      agent.ToolProvider
 	Locker     *repository.Locker
 	WorkOrders *service.WorkOrderService
 }
@@ -52,6 +55,7 @@ var (
 	ErrMissingRedis    = errors.New("app: deps.Redis is required")
 	ErrMissingKeys     = errors.New("app: deps.Keys is required (rediskey.New)")
 	ErrMissingRawStore = errors.New("app: deps.RawStore is required")
+	ErrMissingTools    = errors.New("app: deps.Tools is required")
 )
 
 // Build 校验依赖并装配 App；缺多个依赖时一次列全。
@@ -69,12 +73,13 @@ func Build(deps Deps) (*App, error) {
 	check(deps.Redis == nil, ErrMissingRedis)
 	check(deps.Keys.Prefix() == "", ErrMissingKeys)
 	check(deps.RawStore == nil, ErrMissingRawStore)
+	check(deps.Tools == nil, ErrMissingTools)
 	if err := errors.Join(errs...); err != nil {
 		return nil, err
 	}
 	return &App{
 		Clock: deps.Clock, Logger: deps.Logger, DB: deps.DB, Redis: deps.Redis, Keys: deps.Keys,
-		RawStore: deps.RawStore, Agent: deps.Agent,
+		RawStore: deps.RawStore, Agent: deps.Agent, Tools: deps.Tools,
 		Locker:     repository.NewLocker(deps.Redis),
 		WorkOrders: service.NewWorkOrderService(deps.Clock, repository.WorkOrderRepo{}, repository.EventRepo{}),
 	}, nil

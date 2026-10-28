@@ -100,6 +100,14 @@ func TestSeedIdempotent_Integration(t *testing.T) {
 	if err != nil || id == 0 {
 		t.Fatalf("FieldIDByCode = %d, %v", id, err)
 	}
+	// FieldDirectory 是反查：id → field-003；不存在的 id 返回 ErrNotFound。
+	dir := repository.FieldDirectory{DB: slot.DB}
+	if code, err := dir.FieldCode(t.Context(), id); err != nil || code != "field-003" {
+		t.Fatalf("FieldCode(%d) = %q, %v", id, code, err)
+	}
+	if _, err := dir.FieldCode(t.Context(), 1<<40); !errors.Is(err, model.ErrNotFound) {
+		t.Fatalf("FieldCode(missing) err = %v, want ErrNotFound", err)
+	}
 }
 
 // memPutter 代替 MinIO（本机 MinIO 镜像不可用，见 dev-log），只验证 raw_object 落库与幂等。

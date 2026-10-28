@@ -11,6 +11,7 @@ import (
 	"agri-steward/internal/agent"
 	"agri-steward/internal/app"
 	"agri-steward/internal/clock"
+	"agri-steward/internal/evalkit/env"
 	"agri-steward/internal/evalkit/sample"
 	"agri-steward/internal/model"
 )
@@ -29,6 +30,28 @@ type Trial struct {
 	RefuseReason string
 	Latency      time.Duration
 	Error        string
+	// ToolCalls 是工具名 → 调用次数；UnexpectedCalls 是未在 fixtures.mcp 声明的调用（按顺序的工具名）。
+	// 仅当 App.Tools 实现 ToolRecorder（FixtureMCP）时填充。
+	ToolCalls       map[string]int
+	UnexpectedCalls []string
+}
+
+// ToolRecorder 是评测工具接缝的调用记录（env.FixtureMCP 实现）。
+type ToolRecorder interface {
+	CallCounts() map[string]int
+	UnexpectedCalls() []env.ToolCallRecord
+}
+
+// recordTools 把 trial 的工具调用记录写入 t（Tools 不记录时不动）。
+func recordTools(t *Trial, tools agent.ToolProvider) {
+	rec, ok := tools.(ToolRecorder)
+	if !ok {
+		return
+	}
+	t.ToolCalls = rec.CallCounts()
+	for _, c := range rec.UnexpectedCalls() {
+		t.UnexpectedCalls = append(t.UnexpectedCalls, c.Tool)
+	}
 }
 
 // Experiment 是一次评测的全部 trial。
@@ -123,6 +146,7 @@ func (r *Runner) runTrial(ctx context.Context, s *sample.Sample, index int) Tria
 	start := r.now()
 	ans, askErr := a.Agent.Ask(ctx, questionOf(s))
 	t.Latency = r.now().Sub(start)
+	recordTools(&t, a.Tools)
 	if relErr := release(); relErr != nil {
 		askErr = errors.Join(askErr, fmt.Errorf("release env: %w", relErr))
 	}

@@ -1,0 +1,29 @@
+# device mock 数据（device.LoadMock 严格解析）。fields 是设备可服务的地块编码；
+# status.heartbeat_lag 是最近心跳距当前时刻（clock.Clock）的时长，决定 last_seen_at 与 data_freshness_sec。
+source: mock-xgeo
+updated_at: 2026-06-01T00:00:00Z
+devices:
+  - device_id: uav-p100-01
+    kind: drone
+    model: 极飞 P100 Pro
+    capabilities: [spray, spread]
+    fields: [field-001, field-002, field-003]
+    status: {online: true, state: idle, battery_pct: 92, tank_l: 0, heartbeat_lag: 30s}
+  - device_id: uav-p100-02
+    kind: drone
+    model: 极飞 P100 Pro
+    capabilities: [spray, spread]
+    fields: [field-004, field-005, field-006]
+    status: {online: true, state: charging, battery_pct: 41, tank_l: 0, heartbeat_lag: 45s}
+  - device_id: pump-01
+    kind: pump
+    model: 智能灌溉泵站 IP-30
+    capabilities: [irrigate, drain]
+    fields: [field-001, field-002, field-003, field-004, field-005, field-006]
+    status: {online: false, state: offline, heartbeat_lag: 6h}
+  - device_id: sensor-soil-03
+    kind: sensor
+    model: 土壤墒情传感器 SM-4
+    capabilities: [soil_moisture, water_level]
+    fields: [field-003]
+    status: {online: true, state: working, battery_pct: 67, heartbeat_lag: 5m}

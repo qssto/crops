@@ -11,8 +11,9 @@ import (
 	"agri-steward/internal/evalkit/sample"
 )
 
-// DepsFunc 按槽位组装 app.Deps：Clock / DB / Keys 必须取自 slot，其余（Agent、Redis、RawStore 等）由调用方决定。
-type DepsFunc func(slot *env.Slot) app.Deps
+// DepsFunc 按槽位与样本组装 app.Deps：Clock / DB / Keys 必须取自 slot，其余（Agent、Redis、RawStore 等）由调用方决定；
+// 样本用于构造每 trial 一个的 FixtureMCP（Tools）。返回错误时槽位由 PoolEnv 归还。
+type DepsFunc func(ctx context.Context, slot *env.Slot, s *sample.Sample) (app.Deps, error)
 
 // PoolEnv 是基于 trial schema 池的 EnvFunc：每个 trial 取一个槽位，按样本 fixtures.clock 重置，
 // 经 app.Build 装配；release 归还槽位。
@@ -26,7 +27,11 @@ func PoolEnv(pool *env.Pool, deps DepsFunc) EnvFunc {
 		if err != nil {
 			return nil, nil, err
 		}
-		d := deps(slot)
+		d, err := deps(ctx, slot, s)
+		if err != nil {
+			pool.Release(slot)
+			return nil, nil, fmt.Errorf("sample %s: deps: %w", s.ID, err)
+		}
 		if d.Clock != slot.Clock || d.DB != slot.DB || d.Keys != slot.Keys {
 			pool.Release(slot)
 			return nil, nil, errors.New("evalkit: DepsFunc must use slot Clock, DB and Keys")

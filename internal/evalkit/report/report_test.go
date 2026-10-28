@@ -20,7 +20,7 @@ func testExperiment() *evalkit.Experiment {
 			{SampleID: "s-1", Tags: []string{"L4", "protect.timing"}, TrialIndex: 0, Expected: model.OutcomeRefused,
 				Outcome: model.OutcomeRefused, RefuseReason: "KB_MISS", Latency: 2 * time.Millisecond},
 			{SampleID: "s-1", Tags: []string{"L4", "protect.timing"}, TrialIndex: 1, Expected: model.OutcomeRefused,
-				Outcome: model.OutcomeAdvice, Latency: 4 * time.Millisecond},
+				Outcome: model.OutcomeAdvice, Latency: 4 * time.Millisecond, UnexpectedCalls: []string{"device.list", "weather.alert"}},
 			{SampleID: "s-2", Tags: []string{"L2"}, TrialIndex: 0, Expected: model.OutcomeAdvice,
 				Error: "trial s-2#0: a|b\nc", Latency: time.Millisecond},
 		},
@@ -42,8 +42,9 @@ func TestRender(t *testing.T) {
 		{name: "matched", want: "| outcome 与期望一致 | 1 / 3 |"},
 		{name: "tag L4", want: "| L4 | 1 | 2 | 1 | 1 | 0 | 1 | 3.000ms |"},
 		{name: "tag L2", want: "| L2 | 1 | 1 | 0 | 0 | 1 | 0 | 1.000ms |"},
-		{name: "trial row", want: "| s-1 | 0 | REFUSED | REFUSED | KB_MISS | 2.000ms | - |"},
-		{name: "error escaped", want: `| s-2 | 0 | ADVICE | - | - | 1.000ms | trial s-2#0: a\|b c |`},
+		{name: "trial row", want: "| s-1 | 0 | REFUSED | REFUSED | KB_MISS | 2.000ms | - | - |"},
+		{name: "unexpected calls", want: "| s-1 | 1 | REFUSED | ADVICE | - | 4.000ms | device.list, weather.alert | - |"},
+		{name: "error escaped", want: `| s-2 | 0 | ADVICE | - | - | 1.000ms | - | trial s-2#0: a\|b c |`},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

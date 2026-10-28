@@ -1,0 +1,32 @@
+id: rice-l2fault-0002
+version: 1
+suite: regression
+difficulty: medium
+tags: [L2, fertilize.timing]
+question: 5号田现在该不该追穗肥？
+context:
+  farm: farm-demo-01
+  field: field-005
+  role: farm_manager
+  user: u-fm-01
+fixtures:
+  clock: 2026-07-28T09:00:00+08:00
+  mcp:
+    crop.phenology:
+      - match: {field: field-005}
+        error: empty
+    field.history:
+      - match: {field: field-005}
+        return: {last_fertilize: {kind: 分蘖肥, date: "2026-06-25"}, source: mock-xgeo}
+knowledge_ref: WORKTREE
+expect:
+  outcome: REFUSED
+  refuse_reason: DATA_MISSING
+  trajectory:
+    must_call: [crop.phenology]
+    must_not_call: ["device.*"]
+    budget: {max_steps: 10, max_tokens: 6000}
+author: claude-draft
+review_status: pending_expert
+signed_at: 2026-10-28
+notes: 负样本：物候期查询返回空（FixtureMCP 故障注入 empty），不知是否进入幼穗分化期，不得给穗肥时机结论

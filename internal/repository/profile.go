@@ -61,3 +61,22 @@ func (ProfileRepo) FieldIDByCode(ctx context.Context, db *gorm.DB, tenantID, far
 	}
 	return id, nil
 }
+
+// FieldDirectory 按 field_profile.id 查外部地块编码，满足 mcp servers 的 kit.FieldDirectory
+// （mock 数据按 ext_field_code 组织）。租户 / 农场越权由 gateway 的 scope 校验负责，这里只按主键查。
+type FieldDirectory struct {
+	DB *gorm.DB
+}
+
+// FieldCode 返回地块编码；不存在返回 model.ErrNotFound。
+func (d FieldDirectory) FieldCode(ctx context.Context, fieldID uint64) (string, error) {
+	var code string
+	res := d.DB.WithContext(ctx).Raw(`SELECT ext_field_code FROM field_profile WHERE id=?`, fieldID).Scan(&code)
+	if res.Error != nil {
+		return "", fmt.Errorf("repository: field_profile %d: %w", fieldID, res.Error)
+	}
+	if res.RowsAffected == 0 {
+		return "", fmt.Errorf("repository: field_profile %d: %w", fieldID, model.ErrNotFound)
+	}
+	return code, nil
+}

@@ -10,6 +10,7 @@ import (
 
 	"agri-steward/internal/agent"
 	"agri-steward/internal/app"
+	"agri-steward/internal/evalkit/env"
 	"agri-steward/internal/evalkit/sample"
 	"agri-steward/internal/model"
 )
@@ -113,6 +114,43 @@ func TestRunner_Run_Invalid(t *testing.T) {
 				t.Fatal("want error")
 			}
 		})
+	}
+}
+
+// toolAgent 依次调用给定工具后拒答，用来验证 trial 记录 FixtureMCP 的调用。
+type toolAgent struct {
+	tools agent.ToolProvider
+	calls []string
+}
+
+func (a toolAgent) Ask(ctx context.Context, _ agent.Question) (agent.Answer, error) {
+	for _, tool := range a.calls {
+		if _, err := a.tools.Call(ctx, model.Scope{}, agent.ToolCall{Tool: tool}); err != nil {
+			return agent.Answer{}, err
+		}
+	}
+	return agent.Answer{Outcome: model.OutcomeRefused, RefuseReason: "DATA_MISSING"}, nil
+}
+
+func TestRunner_RecordsToolCalls(t *testing.T) {
+	fx := map[string][]sample.ToolFixture{"weather.forecast": {{Error: sample.FaultTimeout}}}
+	f, err := env.NewFixtureMCP(context.Background(), fx, nil, env.NewFrozenClock(time.Time{}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ag := toolAgent{tools: f, calls: []string{"weather.forecast", "device.list"}}
+	r, err := NewRunner(StaticEnv(&app.App{Agent: ag, Tools: f}), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	exp, err := r.Run(context.Background(), []*sample.Sample{mkSample("a", "regression")}, Options{N: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tr := exp.Trials[0]
+	if tr.ToolCalls["weather.forecast"] != 1 || tr.ToolCalls["device.list"] != 1 ||
+		strings.Join(tr.UnexpectedCalls, ",") != "device.list" {
+		t.Fatalf("trial = %+v", tr)
 	}
 }
 

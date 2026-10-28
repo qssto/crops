@@ -15,6 +15,8 @@ func TestKeys(t *testing.T) {
 		{k.LockOrder(42), "as:dev:lock:order:42"},
 		{k.LockScan("field_sync"), "as:dev:lock:scan:field_sync"},
 		{k.Raw("sse:run:7"), "as:dev:sse:run:7"},
+		{k.IdemTool("abc"), "as:dev:idem:tool:abc"},
+		{k.CacheMCP("weather.forecast", "d1"), "as:dev:cache:mcp:weather.forecast:d1"},
 		{EvalTrialEnv(3), "eval-t3"},
 	}
 	for _, tt := range tests {

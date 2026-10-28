@@ -45,13 +45,24 @@ type AuditStore interface {
 	Append(ctx context.Context, r model.AuditRecord) error
 }
 
-// ToolCall 是一次工具调用请求。
+// ToolCall 是一次工具调用请求。CallSeq 是同一 step 内同工具同入参的第几次调用（参与 call_key），
+// Epoch 取 agent_run.resume_epoch（只对时效工具参与 call_key）。
 type ToolCall struct {
-	RunID  uint64
-	StepID string
-	Tool   string
-	Args   json.RawMessage
-	Epoch  int
+	RunID   uint64
+	StepID  string
+	Tool    string
+	Args    json.RawMessage
+	CallSeq int
+	Epoch   int
+}
+
+// ToolCallStore 是 tool_call 读写（P0 §6.3 流程 2、4），各方法自管事务。
+// 实现：repository.ToolCallRepo（L2）。
+type ToolCallStore interface {
+	// Save 落一行：attempt 取该 call_key 已有最大值 + 1；OK 且时效时同事务作废同 run、同工具的旧 epoch 结果。
+	Save(ctx context.Context, row model.ToolCallRow) (toolCallID uint64, err error)
+	// FindOK 取该 call_key 最新的 OK 行（去重回查），没有返回 false。
+	FindOK(ctx context.Context, scope model.Scope, callKey string) (model.ToolCallHit, bool, error)
 }
 
 // ToolResult 是工具调用结果；Status 取 tool_call.status（OK / TIMEOUT / EMPTY / ERROR / REJECTED）。

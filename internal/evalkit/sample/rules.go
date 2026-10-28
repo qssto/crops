@@ -21,6 +21,7 @@ const (
 	RuleTags        = "tags"
 	RuleUniqueID    = "unique_id"
 	RuleRefuseRatio = "refuse_ratio"
+	RuleFixtures    = "fixtures"
 )
 
 // MinRefuseRatio 是每个套件中应拒答样本的最低占比（P0 §6.1）。
@@ -48,8 +49,12 @@ var (
 	knownRefuseReason = set("KB_MISS", "DATA_MISSING", "OUT_OF_SCOPE")
 	knownAdviceTypes  = set("作业类", "观察类") // 母文档 §5.0.5 AdviceCard.advice_type
 	knownApprovers    = set("approve", "reject", "timeout")
-	knownToolErrors   = set("timeout", "empty", "malformed")
-	knownPIIKinds     = set("phone", "id_card", "coordinate")
+	knownToolErrors   = set(FaultTimeout, FaultEmpty, FaultMalformed)
+	// fieldCodePattern 是合成地块编码（context.field 与 match.field），L1 起写入 field_profile.ext_field_code。
+	fieldCodePattern = regexp.MustCompile(`^field-[0-9]{3}$`)
+	// toolNamePattern 是工具全名 {server}.{tool}。
+	toolNamePattern = regexp.MustCompile(`^[a-z]+\.[a-z_]+$`)
+	knownPIIKinds   = set("phone", "id_card", "coordinate")
 	// WorkOrder 状态（P0 §2.3-2），L1 冻结后改为引用 internal/model 常量
 	knownOrderStatus = set("DRAFT", "PENDING_APPROVAL", "APPROVED", "DISPATCHED", "EXECUTING", "DONE",
 		"REJECTED", "EXPIRED", "FAILED", "CANCELED", "PARTIALLY_DONE")
@@ -72,6 +77,7 @@ func DefaultRules(tx *knowledge.Taxonomy, kb KnowledgeOpener) []Rule {
 		PerSample(RuleEnums, checkEnums),
 		PerSample(RuleExpect, checkExpectShape),
 		PerSample(RuleTags, tagsCheck(tx)),
+		PerSample(RuleFixtures, checkFixtures),
 		uniqueIDRule{},
 		refuseRatioRule{min: MinRefuseRatio},
 		PerSample(RuleMustCiteKB, mustCiteKBCheck(kb)),
@@ -152,12 +158,7 @@ func checkEnums(s *Sample) []string {
 	for i, p := range s.Expect.PII {
 		enum(p.Kind, knownPIIKinds, fmt.Sprintf("expect.pii[%d].kind", i))
 	}
-	tools := make([]string, 0, len(s.Fixtures.MCP))
-	for tool := range s.Fixtures.MCP {
-		tools = append(tools, tool)
-	}
-	sort.Strings(tools) // 输出顺序稳定
-	for _, tool := range tools {
+	for _, tool := range fixtureTools(s) {
 		for i, f := range s.Fixtures.MCP[tool] {
 			enum(f.Error, knownToolErrors, fmt.Sprintf("fixtures.mcp.%s[%d].error", tool, i))
 		}
@@ -166,6 +167,47 @@ func checkEnums(s *Sample) []string {
 	if s.Path != "" && s.Suite != "" {
 		if dir := filepath.Base(filepath.Dir(s.Path)); dir != s.Suite {
 			msgs = append(msgs, fmt.Sprintf("suite %q does not match directory %q", s.Suite, dir))
+		}
+	}
+	return msgs
+}
+
+// fixtureTools 返回 fixtures.mcp 的工具名（排序，输出顺序稳定）。
+func fixtureTools(s *Sample) []string {
+	tools := make([]string, 0, len(s.Fixtures.MCP))
+	for tool := range s.Fixtures.MCP {
+		tools = append(tools, tool)
+	}
+	sort.Strings(tools)
+	return tools
+}
+
+// checkFixtures 检查 FixtureMCP 能装配的桩结构：工具名形如 server.tool，return / returns / error 恰好一个，
+// match.field 是合成地块编码且不与 field_id 同时出现。
+func checkFixtures(s *Sample) []string {
+	var msgs []string
+	if s.Context.Field != "" && !fieldCodePattern.MatchString(s.Context.Field) {
+		msgs = append(msgs, fmt.Sprintf("context.field %q must look like field-001", s.Context.Field))
+	}
+	for _, tool := range fixtureTools(s) {
+		if !toolNamePattern.MatchString(tool) {
+			msgs = append(msgs, fmt.Sprintf("fixtures.mcp key %q must be {server}.{tool}", tool))
+		}
+		for i, f := range s.Fixtures.MCP[tool] {
+			where := fmt.Sprintf("fixtures.mcp.%s[%d]", tool, i)
+			if p := f.Problem(); p != "" {
+				msgs = append(msgs, where+": "+p)
+			}
+			code, has := f.Match[MatchKeyField]
+			if !has {
+				continue
+			}
+			if str, ok := code.(string); !ok || !fieldCodePattern.MatchString(str) {
+				msgs = append(msgs, fmt.Sprintf("%s.match.field %v must look like field-001", where, code))
+			}
+			if _, dup := f.Match["field_id"]; dup {
+				msgs = append(msgs, where+".match must not set both field and field_id")
+			}
 		}
 	}
 	return msgs

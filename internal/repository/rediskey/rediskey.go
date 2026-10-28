@@ -42,5 +42,13 @@ func (k Keys) LockOrder(orderID uint64) string {
 // LockScan 是 lock:scan:{task}（P0 L1，TTL 60s）。
 func (k Keys) LockScan(task string) string { return k.prefix + "lock:scan:" + task }
 
+// IdemTool 是 idem:tool:{call_key}（P0 L2，PENDING 9s / DONE 24h）。
+func (k Keys) IdemTool(callKey string) string { return k.prefix + "idem:tool:" + callKey }
+
+// CacheMCP 是 cache:mcp:{tool}:{args_digest}（P0 L2，weather 10min / crop 24h）。
+func (k Keys) CacheMCP(tool, argsDigest string) string {
+	return k.prefix + "cache:mcp:" + tool + ":" + argsDigest
+}
+
 // Raw 拼接其他层文档中的键名（如 cache:mcp:...），各层落地时再补专用方法。
 func (k Keys) Raw(name string) string { return k.prefix + name }

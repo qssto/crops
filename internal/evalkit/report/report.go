@@ -131,11 +131,12 @@ func Render(w io.Writer, exp *evalkit.Experiment) error {
 	}
 
 	ew.printf("\n## trial 明细\n\n")
-	ew.printf("| sample_id | trial | 期望 | outcome | refuse_reason | latency | error |\n")
-	ew.printf("|-----------|-------|------|---------|---------------|---------|-------|\n")
+	ew.printf("| sample_id | trial | 期望 | outcome | refuse_reason | latency | unexpected_call | error |\n")
+	ew.printf("|-----------|-------|------|---------|---------------|---------|-----------------|-------|\n")
 	for _, t := range exp.Trials {
-		ew.printf("| %s | %d | %s | %s | %s | %s | %s |\n", t.SampleID, t.TrialIndex, t.Expected,
-			dash(string(t.Outcome)), dash(t.RefuseReason), fmtLatency(t.Latency), dash(escapeCell(t.Error)))
+		ew.printf("| %s | %d | %s | %s | %s | %s | %s | %s |\n", t.SampleID, t.TrialIndex, t.Expected,
+			dash(string(t.Outcome)), dash(t.RefuseReason), fmtLatency(t.Latency),
+			dash(strings.Join(t.UnexpectedCalls, ", ")), dash(escapeCell(t.Error)))
 	}
 	if ew.err != nil {
 		return fmt.Errorf("report: render: %w", ew.err)

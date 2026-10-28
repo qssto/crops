@@ -22,7 +22,7 @@ make eval TAGS=L2 N=1              # 只回放带 L2 tag 的样本，每样本 1
 | `context.role` | 是 | `farm_manager` / `agronomist` / `operator` |
 | `context.user` | 是 | 角色用户编码，如 `u-fm-01`（静态身份配置，L1） |
 | `fixtures.clock` | 是 | RFC3339，`FrozenClock` 冻结时刻（L1） |
-| `fixtures.mcp` | 否 | `工具名 → [桩返回]`，`FixtureMCP` 使用（L2）。每条可写 `match`（入参匹配）、`return`（单次返回）、`returns`（按调用次序返回）、`error`（`timeout` / `empty` / `malformed` 故障注入）；未声明的调用记 `unexpected_call` |
+| `fixtures.mcp` | 否 | `工具名 → [桩返回]`，`FixtureMCP` 使用（L2），语义见下文「工具桩（fixtures.mcp）」 |
 | `fixtures.memory` | 否 | 记忆注入（L6） |
 | `fixtures.approver` | 否 | 脚本审批人：`approve` / `reject` / `timeout`（L5 / L6） |
 | `knowledge_ref` | 是 | 知识库版本：`WORKTREE`（读当前工作区 `knowledge/`，开发期约定）或 `kb@<sha>` / git ref（经 git 读取该提交）；`kb@TBD` 等无法解析的值被 `must_cite_kb` 拒收 |
@@ -38,6 +38,17 @@ make eval TAGS=L2 N=1              # 只回放带 L2 tag 的样本，每样本 1
 | `signed_at` | 是 | `YYYY-MM-DD` |
 | `notes` | 否 | 样本意图、负样本原因等 |
 
+## 工具桩（fixtures.mcp）
+
+评测时 `app.Deps.Tools` 是每个 trial 新建的 `FixtureMCP`（`internal/evalkit/env/fixturemcp.go`），替代生产 gateway。键是工具全名 `{server}.{tool}`，值是按声明顺序的条目列表：
+
+- `match`（可省）：入参子集匹配。每个顶层键都须出现在调用入参中且值相等（嵌套值整体比较，数字按 JSON 数值比较，多余入参忽略）；省略即兜底。按声明顺序取第一条命中的条目。
+- `match.field: field-00x`：构造时按种子农场在本 trial schema 中解析为 `field_profile.id`，改写为 `field_id`（工具真实入参）。不能同时写 `field` 与 `field_id`；编码不存在则构造失败。
+- 三选一：`return`（每次命中都返回同一对象）、`returns`（按命中次序依次返回，不得含 null，用完后再次调用视为未声明）、`error`（故障注入）。
+- `error` 映射为 `tool_call.status` / `error_code`：`timeout` → `TIMEOUT/TIMEOUT`，`empty` → `EMPTY/EMPTY`，`malformed` → `ERROR/MALFORMED`。
+- 返回对象里的 `source` 作为数据源（缺省 `fixture`）；`collected_at`（RFC3339 或 `YYYY-MM-DD`）相对 `fixtures.clock` 计算 `data_freshness_sec`。
+- 未声明的工具、无条目命中、`returns` 用完、入参不是 JSON 对象：返回 `REJECTED/UNEXPECTED_CALL`，记入 `UnexpectedCalls()`，报告 trial 明细的 `unexpected_call` 列按顺序列出；`CallCounts()` 记录每个工具调用次数（含未声明调用），供 `must_call` 与恢复次数断言。
+
 ## 静态校验（`cmd/eval validate`）
 
 规则列表在 `internal/evalkit/sample/rules.go`，失败时列出全部违规并在最后一行输出 `failed sample ids: ...`，退出码 1。
@@ -51,6 +62,7 @@ make eval TAGS=L2 N=1              # 只回放带 L2 tag 的样本，每样本 1
 7. `refuse_ratio`：每个套件应拒答样本 ≥ 20%。
 8. `must_cite_kb`（L3）：`knowledge_ref` 能打开（`--repo` 指定仓库根，默认 `.`）；每条 `must_cite` 在该版本中存在且未废弃。
 9. `product_in_candidates`（L3）：写 `product_in` 须带 `target`；`product_in` ⊆ `calc.Candidates(taxonomy.crop, target, taxonomy.region)`；`target` 与 `must_cite` 中植保条目的 `target` 一致。
+10. `fixtures`（L2）：`context.field` 为 `field-NNN`；工具名为 `{server}.{tool}`；每条桩恰好一个 `return` / `returns` / `error`，`returns` 不含 null；`match.field` 为 `field-NNN` 且不与 `match.field_id` 同时出现。
 
 `cmd/eval kbdump --suite regression` 按样本情境（crop / region 取 taxonomy，stage 取 `crop.phenology` fixture，topic 取首个 taxonomy tag，target 取 `expect.advice.target` 或所引植保条目）跑 progressive_loader，逐样本打印命中的 `kb_id@version` 或 `KB_MISS`，并列出未被加载的 `must_cite`。
 
@@ -61,7 +73,7 @@ make eval TAGS=L2 N=1              # 只回放带 L2 tag 的样本，每样本 1
 
 ## 占位与回填
 
-当前 100 条样本全部为 `claude-draft / pending_expert`。L3 已回填：
+当前 103 条样本（含 L2 故障注入 `rice-l2fault-0001..0003`：timeout / empty / malformed）全部为 `claude-draft / pending_expert`。L3 已回填：
 
 - `must_cite` 全部为 `kb:<kb_id>@v1`，`kb_id` 必须存在于 `knowledge/index.yaml`。
 - `product_in` 全部为 `knowledge/common/pesticide_registry.yaml` 的产品 id，且属于 `target` 的水稻登记候选集合（`product_in_candidates` 规则校验）。登记表只收农药，肥料类样本不写 `product_in`。

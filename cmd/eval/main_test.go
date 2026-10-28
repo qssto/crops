@@ -48,7 +48,7 @@ signed_at: 2026-10-28
 	}{
 		{name: "no args", args: nil, wantCode: exitUsage},
 		{name: "unknown subcommand", args: []string{"foo"}, wantCode: exitUsage},
-		{name: "validate repo samples", wantCode: exitOK, wantStdout: "validate OK: 100 samples",
+		{name: "validate repo samples", wantCode: exitOK, wantStdout: "validate OK: 103 samples",
 			args: []string{"validate", "--suites-dir", suites, "--taxonomy", tax, "--repo", repoRoot}},
 		{name: "validate rejects missing author", wantCode: exitFailed, wantStderr: "failed sample ids: tmp-no-author",
 			args: []string{"validate", "--suites-dir", filepath.Dir(badDir), "--taxonomy", tax, "--repo", repoRoot}},
@@ -60,7 +60,7 @@ signed_at: 2026-10-28
 			args: []string{"run", "--suites-dir", suites, "--taxonomy", tax, "--repo", repoRoot, "--out", outDir, "--tags", "nope"}},
 		{name: "run n=0", wantCode: exitFailed, wantStderr: "n must be >= 1",
 			args: []string{"run", "--suites-dir", suites, "--taxonomy", tax, "--repo", repoRoot, "--out", outDir, "--n", "0"}},
-		{name: "kbdump regression", wantCode: exitOK, wantStdout: "kbdump: 100 samples",
+		{name: "kbdump regression", wantCode: exitOK, wantStdout: "kbdump: 103 samples",
 			args: []string{"kbdump", "--suites-dir", suites, "--taxonomy", tax, "--repo", repoRoot, "--suite", "regression"}},
 		{name: "kbdump unknown suite", wantCode: exitFailed, wantStderr: "no sample matches",
 			args: []string{"kbdump", "--suites-dir", suites, "--taxonomy", tax, "--repo", repoRoot, "--suite", "nope"}},

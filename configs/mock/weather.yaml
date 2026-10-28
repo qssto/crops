@@ -1,0 +1,20 @@
+# weather mock 数据（weather.LoadMock 严格解析，未知字段报错）。
+# 示范农场1 共用一个虚拟站点；daily 是 10 天循环序列，按日期（UTC 天序号 mod 10）投影到任意日期，结果确定。
+# realtime 是实况；observation_lag 是实况/预报的数据滞后，决定 data_freshness_sec。
+source: mock-station
+observation_lag: 20m
+fields: [field-001, field-002, field-003, field-004, field-005, field-006]
+realtime: {temp_c: 29.5, humidity_pct: 78, wind_speed_ms: 2.6, rain_mm: 0}
+daily:
+  - {temp_c: 28.4, humidity_pct: 76, wind_speed_ms: 2.4, rain_mm: 0, rain_prob_pct: 10}
+  - {temp_c: 29.1, humidity_pct: 74, wind_speed_ms: 2.1, rain_mm: 0, rain_prob_pct: 5}
+  - {temp_c: 30.2, humidity_pct: 72, wind_speed_ms: 3.2, rain_mm: 0, rain_prob_pct: 10,
+     alert: {type: 高温, level: 黄色, title: 高温黄色预警：最高气温将达 35℃ 以上}}
+  - {temp_c: 27.6, humidity_pct: 85, wind_speed_ms: 4.1, rain_mm: 6.5, rain_prob_pct: 70}
+  - {temp_c: 25.8, humidity_pct: 92, wind_speed_ms: 6.3, rain_mm: 32.0, rain_prob_pct: 90,
+     alert: {type: 暴雨, level: 蓝色, title: 暴雨蓝色预警：12 小时降雨量将达 50mm 以上}}
+  - {temp_c: 26.3, humidity_pct: 90, wind_speed_ms: 3.8, rain_mm: 12.4, rain_prob_pct: 80}
+  - {temp_c: 27.0, humidity_pct: 86, wind_speed_ms: 2.9, rain_mm: 1.2, rain_prob_pct: 40}
+  - {temp_c: 28.2, humidity_pct: 80, wind_speed_ms: 2.2, rain_mm: 0, rain_prob_pct: 20}
+  - {temp_c: 28.8, humidity_pct: 77, wind_speed_ms: 1.8, rain_mm: 0, rain_prob_pct: 10}
+  - {temp_c: 29.4, humidity_pct: 75, wind_speed_ms: 2.0, rain_mm: 0, rain_prob_pct: 15}

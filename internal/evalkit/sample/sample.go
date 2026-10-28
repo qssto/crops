@@ -2,7 +2,11 @@
 // 负责加载 eval/suites/**.yaml 与静态校验。格式说明见 eval/README.md。
 package sample
 
-import "agri-steward/internal/model"
+import (
+	"fmt"
+
+	"agri-steward/internal/model"
+)
 
 // Sample 是一条评测任务：问题 + 情境 + fixture + 期望，带署名。一个文件一个样本。
 type Sample struct {
@@ -42,13 +46,43 @@ type Fixtures struct {
 	Approver string                   `yaml:"approver,omitempty"`
 }
 
-// ToolFixture 是某个工具的一条桩返回：按 match 匹配入参，return 单次返回，
-// returns 按调用次序返回，error 注入故障。
+// ToolFixture 是某个工具的一条桩返回：按 match 子集匹配入参；return / returns / error 三选一：
+// return 对每次命中都返回同一值，returns 按调用次序逐个返回（用完后再调用记 unexpected_call），
+// error 对每次命中都注入同一故障。
 type ToolFixture struct {
 	Match   map[string]any `yaml:"match,omitempty"`
 	Return  any            `yaml:"return,omitempty"`
 	Returns []any          `yaml:"returns,omitempty"`
 	Error   string         `yaml:"error,omitempty"`
+}
+
+// 故障注入类型（fixtures.mcp.*.error），FixtureMCP 映射为 ToolResult.Status / ErrorCode。
+const (
+	FaultTimeout   = "timeout"
+	FaultEmpty     = "empty"
+	FaultMalformed = "malformed"
+)
+
+// MatchKeyField 是 match 中的地块合成编码键（field: field-003），FixtureMCP 装配时解析为 field_id。
+const MatchKeyField = "field"
+
+// Problem 返回 fixture 的结构问题，空串表示合法：return / returns / error 必须恰好写一个，returns 不得含空值。
+func (f ToolFixture) Problem() string {
+	set := 0
+	for _, has := range []bool{f.Return != nil, len(f.Returns) > 0, f.Error != ""} {
+		if has {
+			set++
+		}
+	}
+	if set != 1 {
+		return "exactly one of return / returns / error is required"
+	}
+	for i, r := range f.Returns {
+		if r == nil {
+			return fmt.Sprintf("returns[%d] is null", i)
+		}
+	}
+	return ""
 }
 
 // Expect 是期望结果。

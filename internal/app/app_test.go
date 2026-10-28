@@ -31,6 +31,12 @@ func (nopRaw) Put(context.Context, model.RawPut) (model.RawObject, error) {
 	return model.RawObject{}, nil
 }
 
+type nopTools struct{}
+
+func (nopTools) Call(context.Context, model.Scope, agent.ToolCall) (agent.ToolResult, error) {
+	return agent.ToolResult{}, nil
+}
+
 func fullDeps(t *testing.T) Deps {
 	t.Helper()
 	keys, err := rediskey.New("test")
@@ -48,7 +54,7 @@ func fullDeps(t *testing.T) Deps {
 		}
 	})
 	return Deps{Clock: fixedClock{}, Logger: logger, DB: &gorm.DB{}, Redis: rdb, Keys: keys,
-		RawStore: nopRaw{}, Agent: refuseAgent{}}
+		RawStore: nopRaw{}, Agent: refuseAgent{}, Tools: nopTools{}}
 }
 
 func TestBuild(t *testing.T) {
@@ -65,6 +71,7 @@ func TestBuild(t *testing.T) {
 		{name: "zero keys", mutate: func(d *Deps) { d.Keys = rediskey.Keys{} }, wantErr: ErrMissingKeys},
 		{name: "missing raw store", mutate: func(d *Deps) { d.RawStore = nil }, wantErr: ErrMissingRawStore},
 		{name: "missing logger", mutate: func(d *Deps) { d.Logger = nil }, wantErr: ErrMissingLogger},
+		{name: "missing tools", mutate: func(d *Deps) { d.Tools = nil }, wantErr: ErrMissingTools},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -74,7 +81,7 @@ func TestBuild(t *testing.T) {
 			if !errors.Is(err, tt.wantErr) {
 				t.Fatalf("err = %v, want %v", err, tt.wantErr)
 			}
-			if tt.wantErr == nil && (a.Agent == nil || a.WorkOrders == nil || a.Locker == nil) {
+			if tt.wantErr == nil && (a.Agent == nil || a.Tools == nil || a.WorkOrders == nil || a.Locker == nil) {
 				t.Fatalf("incomplete app: %+v", a)
 			}
 		})
@@ -83,7 +90,7 @@ func TestBuild(t *testing.T) {
 
 func TestBuild_ListsAllMissing(t *testing.T) {
 	_, err := Build(Deps{})
-	for _, want := range []error{ErrMissingAgent, ErrMissingClock, ErrMissingDB, ErrMissingRawStore} {
+	for _, want := range []error{ErrMissingAgent, ErrMissingClock, ErrMissingDB, ErrMissingRawStore, ErrMissingTools} {
 		if !errors.Is(err, want) {
 			t.Errorf("err %v does not include %v", err, want)
 		}
