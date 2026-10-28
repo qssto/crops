@@ -1,0 +1,15 @@
+.DS_Store
+.idea/
+.vscode/
+
+# 本地部署数据与密钥
+deploy/data/
+deploy/.env
+
+# 用户要求：迁移 SQL 与 amis 页面 JSON 不入库
+migrations/**/*.sql
+web/amis/**/*.json
+
+# 构建与评测产物
+/bin/
+eval/out/
