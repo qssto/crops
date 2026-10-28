@@ -1,0 +1,15 @@
+# P0 静态「用户 → 农场 → 角色」表（母文档 §4.6.2-1），Phase 1 起改查 user_role。
+# 键为 user_id（token 的 sub），值为该用户的授权列表；平台角色记为 (tenant_id=0, farm_id=0, platform_admin)，
+# 平台授权不覆盖农场路径（/api/v1/farms/{farm_id}/... 只认精确匹配的农场授权）。
+# 评测样本中的 u-fm-01 / u-agro-01 / u-op-01 依次对应 1001 / 1002 / 1003。
+users:
+  "1001":   # u-fm-01 农场主
+    - {tenant_id: 1, farm_id: 1, roles: [farm_manager]}
+  "1002":   # u-agro-01 农技员
+    - {tenant_id: 1, farm_id: 1, roles: [agronomist]}
+  "1003":   # u-op-01 机手
+    - {tenant_id: 1, farm_id: 1, roles: [operator]}
+  "1004":   # 第二农技员：HIGH 风险二次确认人
+    - {tenant_id: 1, farm_id: 1, roles: [agronomist]}
+  "9001":   # 平台管理员
+    - {tenant_id: 0, farm_id: 0, roles: [platform_admin]}

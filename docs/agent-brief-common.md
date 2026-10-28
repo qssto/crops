@@ -10,6 +10,13 @@
 - 模型：oneapi（OpenAI 兼容），从环境变量 `ONEAPI_BASE_URL`、`ONEAPI_API_KEY`、`ONEAPI_MODEL` 读取，绝不写进文件；未设置时用桩模型测试。
 - D2 占位：作物水稻、区域江苏、示范农场「示范农场1」（tenant_id=1, farm_id=1）。D6：天气只做 mock（real 实现留接口 + 配置开关，不调用外网）。
 
+## 技术栈（用户指定）
+- HTTP：gin（鉴权等写成 gin 中间件；Scope 放 `c.Request.Context()`，service 只依赖 context.Context，不 import gin）。
+- MySQL：GORM（gorm.io/driver/mysql）。事务参数用 `*gorm.DB`；文档定版 SQL（row_ver 乐观锁、`AS new ON DUPLICATE KEY UPDATE`、`LAST_INSERT_ID(...)`、`FOR UPDATE SKIP LOCKED`）用 `tx.Exec/Raw` 照抄执行，看 `RowsAffected`；`LAST_INSERT_ID` 必须与前句同事务同连接。建表只用 golang-migrate 跑 `migrations/*.sql`，禁止 AutoMigrate。只有 repository / app / cmd 可 import gorm；`internal/model` 只写 struct tag，json 列用 `json.RawMessage`。
+- 配置：Viper，读 `configs/*.yaml` + env 覆盖（前缀 `AS_`），解析为 `internal/config` 的强类型 struct，业务包不 import viper；密钥只来自 env / `deploy/.env`。
+- 日志：标准库 log/slog（JSON），L5 用自定义 `slog.Handler` 做脱敏出口；GORM logger 接 slog。
+- Redis：go-redis/v9；MinIO：minio-go/v7；JWT：golang-jwt/v5（HS256）。
+
 ## 必须遵守
 1. 写代码前先读 `~/.claude/skills/coding-fundamentals/SKILL.md` 并照做：SOLID、DRY/KISS/YAGNI、小接口、err 必查、禁止 `_` 吞错、`fmt.Errorf("...: %w", err)` 包装、命名见意图、表驱动测试（含应失败用例）、避免 N+1 / 热路径 O(n²)、魔法数提常量。
 2. 代码分层（母文档 §4.6）：`cmd/{server,eval,migrate}`、`internal/{controller,service,repository,model,agent/{llm,harness,graph,tools/mcp,knowledge,calc,guardrail},adapter,app,evalkit}`、`migrations/`、`configs/ policy/ prompts/ knowledge/ eval/ deploy/`。

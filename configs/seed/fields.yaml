@@ -1,0 +1,16 @@
+# 示范农场地块种子（cmd/migrate seed --file configs/seed/fields.yaml），按 uk_farm / uk_ext upsert，可重复执行。
+# ext_field_code 与评测样本 context.field 一致；面积与播种日为占位，L2 起由 mcp-field 同步覆盖。
+farm:
+  tenant_id: 1
+  farm_id: 1
+  name: 示范农场1
+  region: 江苏
+  timezone: Asia/Shanghai
+  main_crops: [水稻]
+fields:
+  - {ext_field_code: field-001, crop: 水稻, sowing_date: "2026-05-20", area_mu: 25.00}
+  - {ext_field_code: field-002, crop: 水稻, sowing_date: "2026-05-20", area_mu: 28.00}
+  - {ext_field_code: field-003, crop: 水稻, sowing_date: "2026-05-22", area_mu: 32.50}
+  - {ext_field_code: field-004, crop: 水稻, sowing_date: "2026-05-22", area_mu: 40.00}
+  - {ext_field_code: field-005, crop: 水稻, sowing_date: "2026-05-25", area_mu: 30.00}
+  - {ext_field_code: field-006, crop: 水稻, sowing_date: "2026-05-25", area_mu: 35.00}

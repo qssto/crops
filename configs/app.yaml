@@ -1,0 +1,26 @@
+# 应用配置（Viper 加载，环境变量 AS_<KEY> 覆盖，如 AS_MYSQL_HOST、AS_HTTP_ADDR）。
+# 密码与密钥不得写在这里：只从环境变量或 deploy/.env 读取（见 internal/config 的 secret 列表），
+# 本文件出现 mysql.password / redis.password / minio.access_key / minio.secret_key / auth.jwt_secret 会直接报错。
+env: dev
+http:
+  addr: ":8080"
+mysql:
+  host: 127.0.0.1
+  port: 3306
+  user: root
+  database: agri_steward
+  eval_database: agri_eval
+  max_open_conns: 20
+redis:
+  addr: 127.0.0.1:6379
+  db: 0
+minio:
+  endpoint: 127.0.0.1:9000
+  use_ssl: false
+  bucket_raw: agri-steward-raw
+  bucket_eval: agri-steward-eval
+auth:
+  file: configs/auth.yaml
+  token_ttl: 24h
+log:
+  level: info

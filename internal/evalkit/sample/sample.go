@@ -2,7 +2,7 @@
 // 负责加载 eval/suites/**.yaml 与静态校验。格式说明见 eval/README.md。
 package sample
 
-import "agri-steward/internal/agent"
+import "agri-steward/internal/model"
 
 // Sample 是一条评测任务：问题 + 情境 + fixture + 期望，带署名。一个文件一个样本。
 type Sample struct {
@@ -53,7 +53,7 @@ type ToolFixture struct {
 
 // Expect 是期望结果。
 type Expect struct {
-	Outcome      agent.Outcome    `yaml:"outcome"`
+	Outcome      model.Outcome    `yaml:"outcome"`
 	RefuseReason string           `yaml:"refuse_reason,omitempty"`
 	Advice       *AdviceExpect    `yaml:"advice,omitempty"`
 	WorkOrder    *WorkOrderExpect `yaml:"work_order,omitempty"`
@@ -99,7 +99,7 @@ type Budget struct {
 
 // IsRefusal 判断样本是否为应拒答样本。
 func (s *Sample) IsRefusal() bool {
-	return s.Expect.Outcome == agent.OutcomeRefused
+	return s.Expect.Outcome == model.OutcomeRefused
 }
 
 // HasAnyTag 判断样本是否带有任一给定 tag；tags 为空视为不过滤。

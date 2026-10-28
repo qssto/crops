@@ -11,6 +11,7 @@ import (
 	"agri-steward/internal/agent"
 	"agri-steward/internal/app"
 	"agri-steward/internal/evalkit/sample"
+	"agri-steward/internal/model"
 )
 
 // fakeClock 每次调用前进 step，用来得到确定的延迟。
@@ -35,21 +36,17 @@ func (a *scriptedAgent) Ask(_ context.Context, q agent.Question) (agent.Answer, 
 	if q.Text == a.failOn {
 		return agent.Answer{}, errors.New("boom")
 	}
-	return agent.Answer{Outcome: agent.OutcomeAdvice}, nil
+	return agent.Answer{Outcome: model.OutcomeAdvice}, nil
 }
 
 func mkSample(id, suite string, tags ...string) *sample.Sample {
 	return &sample.Sample{ID: id, Suite: suite, Tags: tags, Question: "q-" + id,
-		Expect: sample.Expect{Outcome: agent.OutcomeRefused}}
+		Expect: sample.Expect{Outcome: model.OutcomeRefused}}
 }
 
 func mustRunner(t *testing.T, a agent.Agent, now func() time.Time) *Runner {
 	t.Helper()
-	built, err := app.Build(app.Deps{Agent: a})
-	if err != nil {
-		t.Fatal(err)
-	}
-	r, err := NewRunner(built, now)
+	r, err := NewRunner(StaticEnv(&app.App{Agent: a}), now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -80,12 +77,12 @@ func TestRunner_Run(t *testing.T) {
 		if tr.Latency != time.Millisecond {
 			t.Errorf("trial %d latency = %v, want 1ms", i, tr.Latency)
 		}
-		if tr.Expected != agent.OutcomeRefused {
+		if tr.Expected != model.OutcomeRefused {
 			t.Errorf("trial %d expected = %s", i, tr.Expected)
 		}
 		switch tr.SampleID {
 		case "a":
-			if tr.Outcome != agent.OutcomeAdvice || tr.Error != "" {
+			if tr.Outcome != model.OutcomeAdvice || tr.Error != "" {
 				t.Errorf("trial %d = %+v, want ADVICE without error", i, tr)
 			}
 		case "b":
@@ -119,6 +116,23 @@ func TestRunner_Run_Invalid(t *testing.T) {
 	}
 }
 
+func TestRunner_EnvError(t *testing.T) {
+	failing := func(context.Context, *sample.Sample, int) (*app.App, func() error, error) {
+		return nil, nil, errors.New("schema pool exhausted")
+	}
+	r, err := NewRunner(failing, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	exp, err := r.Run(context.Background(), []*sample.Sample{mkSample("a", "regression")}, Options{N: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tr := exp.Trials[0]; !strings.Contains(tr.Error, "env: schema pool exhausted") {
+		t.Fatalf("trial = %+v", tr)
+	}
+}
+
 func TestNewRunner_NilApp(t *testing.T) {
 	if _, err := NewRunner(nil, nil); err == nil {
 		t.Fatal("want error")
@@ -127,7 +141,7 @@ func TestNewRunner_NilApp(t *testing.T) {
 
 func TestRefuseAllAgent(t *testing.T) {
 	ans, err := RefuseAllAgent{}.Ask(context.Background(), agent.Question{Text: "x"})
-	if err != nil || ans.Outcome != agent.OutcomeRefused || ans.RefuseReason != RefuseReasonStub {
+	if err != nil || ans.Outcome != model.OutcomeRefused || ans.RefuseReason != RefuseReasonStub {
 		t.Fatalf("got %+v, %v", ans, err)
 	}
 }

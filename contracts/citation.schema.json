@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agri-steward.local/contracts/v1/citation.schema.json",
+  "x-contract-version": 1,
+  "title": "Citation",
+  "description": "依据引用：知识条目（kb_id + kb_version）或实测数据（data_source + collected_at + value，必带 tool_call_id）。",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["tenant_id", "farm_id", "type"],
+  "properties": {
+    "tenant_id": {"type": "integer", "minimum": 1},
+    "farm_id": {"type": "integer", "minimum": 1},
+    "type": {"enum": ["kb", "measured"]},
+    "claim_path": {"type": "string", "maxLength": 64},
+    "kb_id": {"type": "string", "minLength": 1, "maxLength": 96},
+    "kb_version": {"type": "string", "minLength": 1, "maxLength": 16},
+    "data_source": {"type": "string", "minLength": 1},
+    "collected_at": {"type": "string", "format": "date-time"},
+    "value": {},
+    "tool_call_id": {"type": "integer", "minimum": 1}
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"type": {"const": "kb"}}},
+      "then": {"required": ["kb_id", "kb_version"]}
+    },
+    {
+      "if": {"properties": {"type": {"const": "measured"}}},
+      "then": {"required": ["data_source", "collected_at", "value", "tool_call_id"]}
+    }
+  ]
+}

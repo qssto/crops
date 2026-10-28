@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"agri-steward/internal/agent"
 	"agri-steward/internal/evalkit"
+	"agri-steward/internal/model"
 )
 
 func testExperiment() *evalkit.Experiment {
@@ -17,11 +17,11 @@ func testExperiment() *evalkit.Experiment {
 		ID: "20261028T010000-abcdef", Suites: []string{"regression"}, N: 2, Samples: 2,
 		StartedAt: start, FinishedAt: start.Add(time.Second),
 		Trials: []evalkit.Trial{
-			{SampleID: "s-1", Tags: []string{"L4", "protect.timing"}, TrialIndex: 0, Expected: agent.OutcomeRefused,
-				Outcome: agent.OutcomeRefused, RefuseReason: "KB_MISS", Latency: 2 * time.Millisecond},
-			{SampleID: "s-1", Tags: []string{"L4", "protect.timing"}, TrialIndex: 1, Expected: agent.OutcomeRefused,
-				Outcome: agent.OutcomeAdvice, Latency: 4 * time.Millisecond},
-			{SampleID: "s-2", Tags: []string{"L2"}, TrialIndex: 0, Expected: agent.OutcomeAdvice,
+			{SampleID: "s-1", Tags: []string{"L4", "protect.timing"}, TrialIndex: 0, Expected: model.OutcomeRefused,
+				Outcome: model.OutcomeRefused, RefuseReason: "KB_MISS", Latency: 2 * time.Millisecond},
+			{SampleID: "s-1", Tags: []string{"L4", "protect.timing"}, TrialIndex: 1, Expected: model.OutcomeRefused,
+				Outcome: model.OutcomeAdvice, Latency: 4 * time.Millisecond},
+			{SampleID: "s-2", Tags: []string{"L2"}, TrialIndex: 0, Expected: model.OutcomeAdvice,
 				Error: "trial s-2#0: a|b\nc", Latency: time.Millisecond},
 		},
 	}

@@ -13,15 +13,16 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"os/signal"
 	"strings"
-	"time"
 
 	"agri-steward/internal/agent/knowledge"
-	"agri-steward/internal/app"
+	"agri-steward/internal/clock"
 	"agri-steward/internal/evalkit"
 	"agri-steward/internal/evalkit/report"
 	"agri-steward/internal/evalkit/sample"
+	"agri-steward/internal/evalkit/store"
 )
 
 const (
@@ -51,7 +52,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	case "validate":
 		err = cmdValidate(args[1:], stdout)
 	case "run":
-		err = cmdRun(ctx, args[1:], stdout)
+		err = cmdRun(ctx, args[1:], stdout, stderr)
 	default:
 		fmt.Fprintln(stderr, usageString)
 		return exitUsage
@@ -112,7 +113,7 @@ func cmdValidate(args []string, stdout io.Writer) error {
 	return nil
 }
 
-func cmdRun(ctx context.Context, args []string, stdout io.Writer) error {
+func cmdRun(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet("run", flag.ContinueOnError)
 	var sf sampleFlags
 	sf.register(fs)
@@ -120,8 +121,13 @@ func cmdRun(ctx context.Context, args []string, stdout io.Writer) error {
 	n := fs.Int("n", evalkit.DefaultTrials, "每个样本运行次数")
 	tags := fs.String("tags", "", "只回放带任一 tag 的样本，逗号分隔，如 L2,protect")
 	outRoot := fs.String("out", defaultOut, "报告输出根目录")
+	var inf infraFlags
+	inf.register(fs)
 	if err := fs.Parse(args); err != nil {
 		return err
+	}
+	if *n < 1 {
+		return fmt.Errorf("n must be >= 1, got %d", *n)
 	}
 
 	all, err := sf.loadValidSamples()
@@ -134,19 +140,12 @@ func cmdRun(ctx context.Context, args []string, stdout io.Writer) error {
 		return fmt.Errorf("no sample matches suite=%v tags=%v", opts.Suites, opts.Tags)
 	}
 
-	a, err := app.Build(evalDeps())
+	in, err := inf.open(ctx, stderr)
 	if err != nil {
-		return fmt.Errorf("build app: %w", err)
+		return fmt.Errorf("eval infra unavailable (需先 docker compose up 并 make migrate migrate-eval): %w", err)
 	}
-	runner, err := evalkit.NewRunner(a, time.Now)
-	if err != nil {
-		return err
-	}
-	if opts.ExperimentID, err = evalkit.NewExperimentID(time.Now()); err != nil {
-		return err
-	}
-	exp, err := runner.Run(ctx, selected, opts)
-	if err != nil {
+	exp, err := runWithStore(ctx, in, selected, opts)
+	if err := errors.Join(err, in.close()); err != nil {
 		return err
 	}
 	path, err := report.WriteFile(*outRoot, exp)
@@ -158,9 +157,39 @@ func cmdRun(ctx context.Context, args []string, stdout io.Writer) error {
 	return nil
 }
 
-// evalDeps 组装评测依赖。L0 注入只拒答的空实现桩；L4 起换成真实主链路 + FixtureMCP 等评测接缝。
-func evalDeps() app.Deps {
-	return app.Deps{Agent: evalkit.RefuseAllAgent{}}
+// runWithStore 先在 agri_eval.experiment 建行，回放后同事务写 trial 并置 DONE。
+func runWithStore(ctx context.Context, in *infra, samples []*sample.Sample, opts evalkit.Options) (*evalkit.Experiment, error) {
+	wall := clock.System{}
+	sha, err := gitSHA(ctx)
+	if err != nil {
+		return nil, err
+	}
+	exps := store.New(in.evalDB)
+	id, err := exps.Start(ctx, opts.Suites, store.TriggerManual, sha, wall.Now())
+	if err != nil {
+		return nil, err
+	}
+	opts.ExperimentID = store.FormatID(id)
+	runner, err := evalkit.NewRunner(evalkit.PoolEnv(in.pool, in.deps), wall.Now)
+	if err != nil {
+		return nil, err
+	}
+	exp, err := runner.Run(ctx, samples, opts)
+	if err != nil {
+		return nil, err
+	}
+	if err := exps.Finish(ctx, id, exp); err != nil {
+		return nil, err
+	}
+	return exp, nil
+}
+
+func gitSHA(ctx context.Context) (string, error) {
+	out, err := exec.CommandContext(ctx, "git", "rev-parse", "HEAD").Output()
+	if err != nil {
+		return "", fmt.Errorf("git rev-parse HEAD: %w", err)
+	}
+	return strings.TrimSpace(string(out)), nil
 }
 
 func splitList(s string) []string {

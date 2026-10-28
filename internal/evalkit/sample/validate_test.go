@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"agri-steward/internal/agent"
 	"agri-steward/internal/agent/knowledge"
+	"agri-steward/internal/model"
 )
 
 const testTaxonomy = `
@@ -44,7 +44,7 @@ func validAdvice(id string) *Sample {
 		Fixtures:     Fixtures{Clock: "2026-07-15T09:00:00+08:00"},
 		KnowledgeRef: "kb@TBD",
 		Expect: Expect{
-			Outcome: agent.OutcomeAdvice,
+			Outcome: model.OutcomeAdvice,
 			Advice: &AdviceExpect{Category: "protect", AdviceType: "作业类", Conclusion: "建议施药",
 				MustCite: []string{"kb:rice/pest/x@TBD"}},
 		},
@@ -54,7 +54,7 @@ func validAdvice(id string) *Sample {
 
 func validRefusal(id string) *Sample {
 	s := validAdvice(id)
-	s.Expect = Expect{Outcome: agent.OutcomeRefused, RefuseReason: "KB_MISS"}
+	s.Expect = Expect{Outcome: model.OutcomeRefused, RefuseReason: "KB_MISS"}
 	return s
 }
 

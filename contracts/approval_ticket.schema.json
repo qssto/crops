@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agri-steward.local/contracts/v1/approval_ticket.schema.json",
+  "x-contract-version": 1,
+  "title": "ApprovalTicket",
+  "description": "一次人工审批请求，关联 run_id 与 WorkOrder。operator 为最终决策人（HIGH 为确认人）。",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["ticket_id", "run_id", "tenant_id", "farm_id", "order_id", "ticket_kind", "ticket_seq", "risk_level",
+    "required_role", "confirm_required", "initiator_id", "snapshot", "status"],
+  "properties": {
+    "ticket_id": {"type": "integer", "minimum": 1},
+    "run_id": {"type": "integer", "minimum": 1},
+    "tenant_id": {"type": "integer", "minimum": 1},
+    "farm_id": {"type": "integer", "minimum": 1},
+    "order_id": {"type": "integer", "minimum": 1},
+    "ticket_kind": {"enum": ["ORDER", "PLAN"]},
+    "ticket_seq": {"type": "integer", "minimum": 1},
+    "risk_level": {"enum": ["LOW", "HIGH"]},
+    "required_role": {"type": "array", "minItems": 1, "items": {"enum": ["farm_manager", "agronomist", "operator", "platform_admin"]}},
+    "confirm_required": {"type": "boolean"},
+    "initiator_id": {"type": "integer", "minimum": 1},
+    "first_approver": {"type": "integer", "minimum": 1},
+    "snapshot": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["digest", "raw_object_id"],
+      "properties": {
+        "digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "raw_object_id": {"type": "integer", "minimum": 1}
+      }
+    },
+    "status": {"enum": ["PREPARING", "OPEN", "APPROVED", "REJECTED", "EXPIRED", "SUPERSEDED"]},
+    "operator": {"type": "integer", "minimum": 1},
+    "expires_at": {"type": "string", "format": "date-time"},
+    "decided_at": {"type": "string", "format": "date-time"},
+    "reason": {"type": "string", "maxLength": 512}
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"status": {"enum": ["APPROVED", "REJECTED"]}}},
+      "then": {"required": ["operator", "decided_at"]}
+    },
+    {
+      "if": {"properties": {"status": {"enum": ["OPEN"]}}},
+      "then": {"required": ["expires_at"]}
+    }
+  ]
+}

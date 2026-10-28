@@ -11,6 +11,11 @@ import (
 const repoRoot = "../.."
 
 func TestRun_ExitCodes(t *testing.T) {
+	// 指向不可达端口：run 必须明确报错退出，不得静默跳过 DB
+	t.Setenv("AS_MYSQL_PORT", "1")
+	for _, k := range []string{"AS_MYSQL_PASSWORD", "AS_REDIS_PASSWORD", "AS_MINIO_ACCESS_KEY", "AS_MINIO_SECRET_KEY"} {
+		t.Setenv(k, "unit-test-dummy")
+	}
 	badDir := filepath.Join(t.TempDir(), "regression")
 	if err := os.MkdirAll(badDir, 0o755); err != nil {
 		t.Fatal(err)
@@ -47,8 +52,9 @@ signed_at: 2026-10-28
 			args: []string{"validate", "--suites-dir", suites, "--taxonomy", tax}},
 		{name: "validate rejects missing author", wantCode: exitFailed, wantStderr: "failed sample ids: tmp-no-author",
 			args: []string{"validate", "--suites-dir", filepath.Dir(badDir), "--taxonomy", tax}},
-		{name: "run with stub agent", wantCode: exitOK, wantStdout: "samples=2 trials=4",
+		{name: "run fails loudly when mysql down", wantCode: exitFailed, wantStderr: "eval infra unavailable",
 			args: []string{"run", "--suites-dir", suites, "--taxonomy", tax, "--out", outDir,
+				"--config", filepath.Join(repoRoot, "configs/app.yaml"), "--env-file", filepath.Join(outDir, "none.env"),
 				"--suite", "regression", "--n", "2", "--tags", "L5,irrigate.amount"}},
 		{name: "run no matching tag", wantCode: exitFailed, wantStderr: "no sample matches",
 			args: []string{"run", "--suites-dir", suites, "--taxonomy", tax, "--out", outDir, "--tags", "nope"}},

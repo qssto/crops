@@ -1,0 +1,44 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agri-steward.local/contracts/v1/run_state.schema.json",
+  "x-contract-version": 1,
+  "title": "RunState",
+  "description": "一次 Agent 运行的可恢复状态，run_id 为全局追踪主键；compaction_state 预留给 Phase 2。",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["run_id", "tenant_id", "farm_id", "steps", "completed_step_ids", "created_at"],
+  "properties": {
+    "run_id": {"type": "integer", "minimum": 1},
+    "tenant_id": {"type": "integer", "minimum": 1},
+    "farm_id": {"type": "integer", "minimum": 1},
+    "steps": {"type": "array", "items": {"$ref": "#/$defs/step"}},
+    "completed_step_ids": {"type": "array", "items": {"type": "string", "minLength": 1, "maxLength": 48}, "uniqueItems": true},
+    "pending_approval": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ticket_id", "order_id"],
+      "properties": {
+        "ticket_id": {"type": "integer", "minimum": 1},
+        "order_id": {"type": "integer", "minimum": 1}
+      }
+    },
+    "context_snapshot": {"type": "object"},
+    "compaction_state": {"type": "object"},
+    "created_at": {"type": "string", "format": "date-time"}
+  },
+  "$defs": {
+    "step": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["step_id", "node", "status", "started_at"],
+      "properties": {
+        "step_id": {"type": "string", "minLength": 1, "maxLength": 48},
+        "node": {"type": "string", "minLength": 1, "maxLength": 32},
+        "status": {"enum": ["STARTED", "COMPLETED", "FAILED", "SKIPPED"]},
+        "started_at": {"type": "string", "format": "date-time"},
+        "ended_at": {"type": "string", "format": "date-time"},
+        "error_code": {"type": "string", "maxLength": 32}
+      }
+    }
+  }
+}

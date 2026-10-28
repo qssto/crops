@@ -32,3 +32,24 @@
 4. 节点内 `compose.StatefulInterrupt`：Set 1 次（约 1.4 KB）；`ExtractInterruptInfo` 里取 `IsRootCause` 的 `InterruptContexts` 拿 interruptID，用 `compose.ResumeWithData(ctx, id, "approve")` 恢复。被中断节点本身会重跑（`RerunNodes=[approval_gate]`），之前的节点不重跑，下游执行一次。
 5. 重跑节点拿到的 input 是零值（原 input 只在 `WithGraphInterrupt` 下持久化），所以需要的数据要放进 interrupt state，节点用 `GetInterruptState` 取回；自定义 state 类型须 `schema.RegisterName` 注册。
 6. 每次带 checkpoint id 的 Invoke 开头都会 Get 一次，Store 的 Get 要便宜（L5 用 Redis 实现时注意）。
+
+## L1 · 核心契约与数据模型冻结（2026-10-28）
+
+- 选型（协调方指定）：HTTP 用 gin（`/api/v1/farms/:farm_id` 分组，鉴权中间件把 Scope 放进 `c.Request.Context()`）。MySQL 用 GORM（事务句柄统一 `*gorm.DB`，service 用别名 `*repository.DB`），定版 SQL 一律经 `tx.Exec` / `tx.Raw` 照抄执行，需要 LastInsertId 时在事务连接上调 `ConnPool.ExecContext`，NowFunc 取注入的 Clock，GORM 日志接 slog。建表只用 golang-migrate，禁止 AutoMigrate。配置用 Viper，读 `configs/*.yaml`，环境变量前缀 `AS_` 覆盖；密钥只从 env 或 `deploy/.env` 取，yaml 中出现密钥直接报错。日志用 slog JSON handler，`app.NewLogger` 是 L5 脱敏时替换 Handler 的位置。
+- 交付：`deploy/`（compose、.env.example）、`migrations/0001_init`（12 表，run_event / audit_log 预建 p202610–p202709 + pmax）、`migrations/eval/0001_init`、`configs/{app,auth}.yaml`、`configs/seed/fields.yaml`、`contracts/*.schema.json`、`docs/contracts.md`、`internal/{model,clock,config,repository,service,controller,adapter,seed,archtest}`、`internal/agent/seams.go`、`internal/evalkit/{env,store,itest}`、`cmd/{migrate,server,devtoken}`，以及改为写库的 `cmd/eval`。
+- 对外接口：
+  - `service.WorkOrderService.Transition(ctx, tx, model.OrderRef, to, actor, reason)`；`EventRepo.AppendTx(ctx, tx, RunEvent) (seq, error)`，非事务句柄返回 `ErrNotInTx`。
+  - `repository.Locker.Acquire / Lock.Renew / Release`，键名由 `rediskey.Keys` 统一加 `as:{env}:` 前缀；`repository.RawStore.Put`（先写 MinIO，再写 raw_object）。
+  - `app.Build(Deps{Clock, Logger, DB, Redis, Keys, RawStore, Agent})`，缺多个依赖时一次报全。
+  - `env.Pool.Acquire(ctx, at)`：TRUNCATE 业务表、按前缀清 Redis、重灌种子、拨 FrozenClock。`evalkit.PoolEnv(pool, DepsFunc)` 返回 EnvFunc。
+  - `make migrate / migrate-eval / seed / server / eval / test-integration`；`devtoken --user 1001` 签发联调 token。
+- 与文档的偏差：
+  - `Transition` 用 `OrderRef{TenantID, FarmID, OrderID}` 代替裸 order_id，所有查询都带租户条件。
+  - farm_profile.main_crops 与 field_profile.prefs 两个 json 列设为 NOT NULL（文档未写），空值统一写 `[]` 或 `{}`。
+  - 平台管理员 (0,0) 不能访问 `/farms/:farm_id` 路径，返回 403。平台接口等后续层再加。
+  - seed 文件用 yaml.v3 解析（属于数据文件，不是配置，不经 Viper）。server 在 L4 前注入 `agent.Placeholder`（只拒答），因为生产代码不能 import evalkit。
+  - experiment.id 自增，同时作为 exp_id，报告目录为 `eval/out/{id}/`；trial 只比较 outcome，scores 为 `{"outcome_match":bool}`。
+  - 迁移目录 `migrations/` 被 gitignore 忽略（用户要求），只存在于本地。
+- TODO：
+  - 本机缺 MinIO 镜像（多个镜像源都拉不到），`migrate up` 建表成功但建 bucket 失败。RawStore 集成测试改用内存 putter，真实 MinIO 链路未验证，需要用户提供镜像或批准安装。
+  - run_event / audit_log 的分区滚动由 partition-maintainer（后续层）负责。ToolProvider、KnowledgeSource、MemoryStore、UserChannel、Approver 目前只有签名，按 seams.go 注释在 L2–L8 实现。

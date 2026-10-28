@@ -1,7 +1,6 @@
 package evalkit
 
 import (
-	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
@@ -11,16 +10,11 @@ import (
 )
 
 // RefuseReasonStub 是空实现桩的拒答原因。
-const RefuseReasonStub = "NOT_IMPLEMENTED"
+const RefuseReasonStub = agent.PlaceholderRefuseReason
 
-// RefuseAllAgent 是 L0 空实现桩：对任何问题都返回 REFUSED，用于在主链路就绪前验证回放与报告链路。
-// L4 起由 cmd/eval 改为注入真实主链路，evalkit 代码不变。
-type RefuseAllAgent struct{}
-
-// Ask 实现 agent.Agent。
-func (RefuseAllAgent) Ask(context.Context, agent.Question) (agent.Answer, error) {
-	return agent.Answer{Outcome: agent.OutcomeRefused, RefuseReason: RefuseReasonStub}, nil
-}
+// RefuseAllAgent 是 L0 空实现桩（即 agent.Placeholder）：对任何问题都返回 REFUSED，
+// 用于在主链路就绪前验证回放与报告链路。L4 起由 cmd/eval 改为注入真实主链路，evalkit 代码不变。
+type RefuseAllAgent = agent.Placeholder
 
 const (
 	expIDTimeLayout = "20060102T150405"

@@ -11,8 +11,8 @@ import (
 	"strings"
 	"time"
 
-	"agri-steward/internal/agent"
 	"agri-steward/internal/evalkit"
+	"agri-steward/internal/model"
 )
 
 // FileName 是报告文件名。
@@ -65,9 +65,9 @@ func (s *stats) add(t evalkit.Trial) {
 		return
 	}
 	switch t.Outcome {
-	case agent.OutcomeAdvice:
+	case model.OutcomeAdvice:
 		s.advice++
-	case agent.OutcomeRefused:
+	case model.OutcomeRefused:
 		s.refused++
 	}
 	if t.Outcome == t.Expected {

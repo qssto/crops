@@ -10,7 +10,9 @@ import (
 
 	"agri-steward/internal/agent"
 	"agri-steward/internal/app"
+	"agri-steward/internal/clock"
 	"agri-steward/internal/evalkit/sample"
+	"agri-steward/internal/model"
 )
 
 // DefaultTrials 是每个样本默认运行次数（P0 §6.1 技术实现 3）。
@@ -19,10 +21,11 @@ const DefaultTrials = 3
 // Trial 是一个样本的一次运行结果。L4 起补充 run_id、transcript 与打分明细。
 type Trial struct {
 	SampleID     string
+	Suite        string
 	Tags         []string
 	TrialIndex   int
-	Expected     agent.Outcome
-	Outcome      agent.Outcome
+	Expected     model.Outcome
+	Outcome      model.Outcome
 	RefuseReason string
 	Latency      time.Duration
 	Error        string
@@ -48,21 +51,32 @@ type Options struct {
 	N            int
 }
 
-// Runner 调度样本运行。now 可注入，便于测试延迟统计。
+// EnvFunc 为一个 (sample, trial) 提供经 app.Build 装配的 App 与归还函数。
+// 评测用 env.Pool（agri_eval_t_{n} + as:eval-t{n}: + FrozenClock）实现；单测可用 StaticEnv。
+type EnvFunc func(ctx context.Context, s *sample.Sample, index int) (a *app.App, release func() error, err error)
+
+// StaticEnv 让所有 trial 共用同一个 App（无需隔离的单测）。
+func StaticEnv(a *app.App) EnvFunc {
+	return func(context.Context, *sample.Sample, int) (*app.App, func() error, error) {
+		return a, func() error { return nil }, nil
+	}
+}
+
+// Runner 调度样本运行。now 是墙钟（统计延迟用），与被测 App 内的 FrozenClock 无关。
 type Runner struct {
-	app *app.App
+	env EnvFunc
 	now func() time.Time
 }
 
-// NewRunner 构造 Runner；a 必须由 app.Build 装配。
-func NewRunner(a *app.App, now func() time.Time) (*Runner, error) {
-	if a == nil {
-		return nil, errors.New("evalkit: app is nil")
+// NewRunner 构造 Runner；now 为 nil 时用系统时钟。
+func NewRunner(env EnvFunc, now func() time.Time) (*Runner, error) {
+	if env == nil {
+		return nil, errors.New("evalkit: env is nil")
 	}
 	if now == nil {
-		now = time.Now
+		now = clock.System{}.Now
 	}
-	return &Runner{app: a, now: now}, nil
+	return &Runner{env: env, now: now}, nil
 }
 
 // Run 对 samples 中每个样本顺序跑 opts.N 次。单个 trial 的 agent 错误记入 Trial.Error，
@@ -96,15 +110,24 @@ func (r *Runner) Run(ctx context.Context, samples []*sample.Sample, opts Options
 func (r *Runner) runTrial(ctx context.Context, s *sample.Sample, index int) Trial {
 	t := Trial{
 		SampleID:   s.ID,
+		Suite:      s.Suite,
 		Tags:       s.Tags,
 		TrialIndex: index,
 		Expected:   s.Expect.Outcome,
 	}
-	start := r.now()
-	ans, err := r.app.Agent.Ask(ctx, questionOf(s))
-	t.Latency = r.now().Sub(start)
+	a, release, err := r.env(ctx, s, index)
 	if err != nil {
-		t.Error = fmt.Errorf("trial %s#%d: %w", s.ID, index, err).Error()
+		t.Error = fmt.Errorf("trial %s#%d: env: %w", s.ID, index, err).Error()
+		return t
+	}
+	start := r.now()
+	ans, askErr := a.Agent.Ask(ctx, questionOf(s))
+	t.Latency = r.now().Sub(start)
+	if relErr := release(); relErr != nil {
+		askErr = errors.Join(askErr, fmt.Errorf("release env: %w", relErr))
+	}
+	if askErr != nil {
+		t.Error = fmt.Errorf("trial %s#%d: %w", s.ID, index, askErr).Error()
 		return t
 	}
 	t.Outcome = ans.Outcome

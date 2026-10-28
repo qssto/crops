@@ -13,3 +13,6 @@ web/amis/**/*.json
 # 构建与评测产物
 /bin/
 eval/out/
+
+# Claude 子 agent worktree
+.claude/

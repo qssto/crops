@@ -1,0 +1,54 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agri-steward.local/contracts/v1/work_order.schema.json",
+  "x-contract-version": 1,
+  "title": "WorkOrder",
+  "description": "由建议卡转化出的可执行作业，必经审批。approver / approval_expires_at 取自 approval_ticket，不在 work_order 冗余存储。",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["order_id", "advice_id", "run_id", "tenant_id", "farm_id", "field_id", "work_type", "device_type",
+    "payload", "time_window", "constraint_checks", "status", "dispatch_mode"],
+  "properties": {
+    "order_id": {"type": "integer", "minimum": 1},
+    "advice_id": {"type": "integer", "minimum": 1},
+    "run_id": {"type": "integer", "minimum": 1},
+    "tenant_id": {"type": "integer", "minimum": 1},
+    "farm_id": {"type": "integer", "minimum": 1},
+    "field_id": {"type": "integer", "minimum": 1},
+    "work_type": {"enum": ["SPRAY", "FERTILIZE", "IRRIGATE"]},
+    "device_type": {"type": "string", "minLength": 1, "maxLength": 16},
+    "payload": {"type": "object"},
+    "time_window": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["from", "to"],
+      "properties": {
+        "from": {"type": "string", "format": "date-time"},
+        "to": {"type": "string", "format": "date-time"}
+      }
+    },
+    "constraint_checks": {"type": "array", "items": {"$ref": "#/$defs/constraint_check"}},
+    "status": {"enum": ["DRAFT", "PENDING_APPROVAL", "APPROVED", "DISPATCHED", "EXECUTING", "DONE",
+      "PARTIALLY_DONE", "REJECTED", "EXPIRED", "FAILED", "CANCELED"]},
+    "dispatch_mode": {"enum": ["DRY_RUN", "REAL"]},
+    "approver": {"type": "integer", "minimum": 1},
+    "approval_expires_at": {"type": "string", "format": "date-time"},
+    "dispatch_result": {"type": "object"},
+    "done_area": {"type": "number", "minimum": 0}
+  },
+  "$defs": {
+    "constraint_check": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["phase", "attempt", "rule_id", "passed", "observed", "threshold"],
+      "properties": {
+        "phase": {"enum": ["PRE_APPROVAL", "PRE_DISPATCH"]},
+        "attempt": {"type": "integer", "minimum": 1},
+        "rule_id": {"type": "string", "minLength": 1, "maxLength": 48},
+        "passed": {"type": "boolean"},
+        "observed": {"type": "object"},
+        "threshold": {"type": "object"}
+      }
+    }
+  }
+}

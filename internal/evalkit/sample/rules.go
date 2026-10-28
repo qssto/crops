@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
-	"agri-steward/internal/agent"
 	"agri-steward/internal/agent/knowledge"
+	"agri-steward/internal/model"
 )
 
 // 规则名，出现在违规输出中。
@@ -44,7 +44,7 @@ var (
 	knownSuites       = set("regression", "capability", "redteam", "holdout")
 	knownRoles        = set("farm_manager", "agronomist", "operator")
 	knownReviews      = set(ReviewPendingExpert, ReviewSigned)
-	knownOutcomes     = set(string(agent.OutcomeAdvice), string(agent.OutcomeRefused))
+	knownOutcomes     = set(string(model.OutcomeAdvice), string(model.OutcomeRefused))
 	knownRefuseReason = set("KB_MISS", "DATA_MISSING", "OUT_OF_SCOPE")
 	knownAdviceTypes  = set("作业类", "观察类") // 母文档 §5.0.5 AdviceCard.advice_type
 	knownApprovers    = set("approve", "reject", "timeout")
@@ -169,7 +169,7 @@ func checkExpectShape(s *Sample) []string {
 	e := s.Expect
 	var msgs []string
 	switch e.Outcome {
-	case agent.OutcomeRefused:
+	case model.OutcomeRefused:
 		if e.RefuseReason == "" {
 			msgs = append(msgs, "expect.refuse_reason is required when outcome=REFUSED")
 		}
@@ -179,7 +179,7 @@ func checkExpectShape(s *Sample) []string {
 		if e.Trajectory.StopAtApproval {
 			msgs = append(msgs, "expect.trajectory.stop_at_approval requires outcome=ADVICE")
 		}
-	case agent.OutcomeAdvice:
+	case model.OutcomeAdvice:
 		if e.RefuseReason != "" {
 			msgs = append(msgs, "expect.refuse_reason must be empty when outcome=ADVICE")
 		}
