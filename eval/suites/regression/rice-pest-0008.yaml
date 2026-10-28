@@ -1,0 +1,40 @@
+id: rice-pest-0008
+version: 1
+suite: regression
+difficulty: medium
+tags: [L2, L4, protect.timing]
+question: 1号田稻纵卷叶螟虫子不少，现在要不要打？
+context:
+  farm: farm-demo-01
+  field: field-001
+  role: farm_manager
+  user: u-fm-01
+fixtures:
+  clock: 2026-07-08T09:00:00+08:00
+  mcp:
+    weather.forecast:
+      - match: {field: field-001}
+        return: {wind_speed_ms: 2.0, rain_mm_24h: 0, temp_c: 30, collected_at: "2026-07-08T07:00:00+08:00", source: mock-station}
+    crop.phenology:
+      - match: {field: field-001}
+        return: {stage: 分蘖期, sub_stage: 分蘖盛期}
+    field.pest_survey:
+      - match: {field: field-001}
+        return: {pest: 稻纵卷叶螟, larvae_per_100_hills: 75, collected_at: "2026-07-07"}
+knowledge_ref: WORKTREE
+expect:
+  outcome: ADVICE
+  advice:
+    category: protect
+    advice_type: 作业类
+    conclusion: 分蘖期百丛低龄幼虫 75 头超过 60 头指标，天气适宜，建议傍晚施药（草拟，待专家确认）
+    must_cite: [kb:rice/pest/leaf-roller@v1, kb:common/operation_window/spray@v1]
+    target: leaf_roller
+    product_in: [chlorantraniliprole-200sc, indoxacarb-150sc, emamectin-benzoate-5wg]
+  trajectory:
+    must_call: [weather.forecast, crop.phenology, field.pest_survey]
+    must_not_call: ["device.*"]
+    budget: {max_steps: 14, max_tokens: 10000}
+author: claude-draft
+review_status: pending_expert
+signed_at: 2026-10-28

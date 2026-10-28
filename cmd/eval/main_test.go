@@ -27,7 +27,7 @@ tags: [L4, protect.timing]
 question: 要不要打药？
 context: {farm: farm-demo-01, field: field-001, role: farm_manager, user: u-1}
 fixtures: {clock: "2026-07-15T09:00:00+08:00"}
-knowledge_ref: kb@TBD
+knowledge_ref: WORKTREE
 expect: {outcome: REFUSED, refuse_reason: KB_MISS}
 review_status: pending_expert
 signed_at: 2026-10-28
@@ -48,18 +48,22 @@ signed_at: 2026-10-28
 	}{
 		{name: "no args", args: nil, wantCode: exitUsage},
 		{name: "unknown subcommand", args: []string{"foo"}, wantCode: exitUsage},
-		{name: "validate repo samples", wantCode: exitOK, wantStdout: "validate OK: 20 samples",
-			args: []string{"validate", "--suites-dir", suites, "--taxonomy", tax}},
+		{name: "validate repo samples", wantCode: exitOK, wantStdout: "validate OK: 100 samples",
+			args: []string{"validate", "--suites-dir", suites, "--taxonomy", tax, "--repo", repoRoot}},
 		{name: "validate rejects missing author", wantCode: exitFailed, wantStderr: "failed sample ids: tmp-no-author",
-			args: []string{"validate", "--suites-dir", filepath.Dir(badDir), "--taxonomy", tax}},
+			args: []string{"validate", "--suites-dir", filepath.Dir(badDir), "--taxonomy", tax, "--repo", repoRoot}},
 		{name: "run fails loudly when mysql down", wantCode: exitFailed, wantStderr: "eval infra unavailable",
-			args: []string{"run", "--suites-dir", suites, "--taxonomy", tax, "--out", outDir,
+			args: []string{"run", "--suites-dir", suites, "--taxonomy", tax, "--repo", repoRoot, "--out", outDir,
 				"--config", filepath.Join(repoRoot, "configs/app.yaml"), "--env-file", filepath.Join(outDir, "none.env"),
 				"--suite", "regression", "--n", "2", "--tags", "L5,irrigate.amount"}},
 		{name: "run no matching tag", wantCode: exitFailed, wantStderr: "no sample matches",
-			args: []string{"run", "--suites-dir", suites, "--taxonomy", tax, "--out", outDir, "--tags", "nope"}},
+			args: []string{"run", "--suites-dir", suites, "--taxonomy", tax, "--repo", repoRoot, "--out", outDir, "--tags", "nope"}},
 		{name: "run n=0", wantCode: exitFailed, wantStderr: "n must be >= 1",
-			args: []string{"run", "--suites-dir", suites, "--taxonomy", tax, "--out", outDir, "--n", "0"}},
+			args: []string{"run", "--suites-dir", suites, "--taxonomy", tax, "--repo", repoRoot, "--out", outDir, "--n", "0"}},
+		{name: "kbdump regression", wantCode: exitOK, wantStdout: "kbdump: 100 samples",
+			args: []string{"kbdump", "--suites-dir", suites, "--taxonomy", tax, "--repo", repoRoot, "--suite", "regression"}},
+		{name: "kbdump unknown suite", wantCode: exitFailed, wantStderr: "no sample matches",
+			args: []string{"kbdump", "--suites-dir", suites, "--taxonomy", tax, "--repo", repoRoot, "--suite", "nope"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

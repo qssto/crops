@@ -1,0 +1,41 @@
+id: rice-irr-0010
+version: 1
+suite: regression
+difficulty: hard
+tags: [L3, L4, irrigate.amount]
+question: 5号田晒好了准备复水，灌到3厘米要多少方水？
+context:
+  farm: farm-demo-01
+  field: field-005
+  role: agronomist
+  user: u-agro-01
+fixtures:
+  clock: 2026-07-20T07:00:00+08:00
+  mcp:
+    field.profile:
+      - match: {field: field-005}
+        return: {area_mu: 35.0}
+    crop.phenology:
+      - match: {field: field-005}
+        return: {stage: 拔节孕穗期, sub_stage: 拔节期}
+    field.history:
+      - match: {field: field-005}
+        return: {last_drain: {start: "2026-07-10", end: "2026-07-19"}, water_depth_cm: 0}
+knowledge_ref: WORKTREE
+expect:
+  outcome: ADVICE
+  advice:
+    category: irrigate
+    advice_type: 作业类
+    conclusion: 晒田后复水到 3 cm，灌水量按面积、水层差与 1.2 补墒系数由规则层计算（草拟，待专家确认）
+    must_cite: [kb:rice/irrigation/rewater@v1, kb:rice/irrigation/water-volume@v1]
+    numbers:
+      - {field: water_m3, value: 840, unit: m3, precision: 1}
+  trajectory:
+    must_call: [field.profile, field.history]
+    must_not_call: ["device.*"]
+    budget: {max_steps: 10, max_tokens: 6000}
+author: claude-draft
+review_status: pending_expert
+signed_at: 2026-10-28
+notes: 35 亩 × 666.67 m2 × (3 - 0) cm ÷ 100 × 1.2 = 840.0 m3

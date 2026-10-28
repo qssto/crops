@@ -1,0 +1,32 @@
+id: rice-pest-0014
+version: 1
+suite: regression
+difficulty: easy
+tags: [L3, protect.dosage]
+question: 4号田的稻种要浸种防恶苗病，用咪鲜胺配50升药液、稀释2000倍，要放多少药？
+context:
+  farm: farm-demo-01
+  field: field-004
+  role: operator
+  user: u-op-01
+fixtures:
+  clock: 2026-05-10T09:00:00+08:00
+knowledge_ref: WORKTREE
+expect:
+  outcome: ADVICE
+  advice:
+    category: protect
+    advice_type: 作业类
+    conclusion: 咪鲜胺 2000 倍浸种 48–72 h，药液没过种子，药量按药液量与稀释倍数换算（草拟，待专家确认）
+    must_cite: [kb:rice/pest/bakanae@v1, kb:common/operation_window/dosage-dilution@v1]
+    target: bakanae
+    product_in: [prochloraz-25ec]
+    numbers:
+      - {field: product_ml, value: 25, unit: mL, precision: 0.1}
+  trajectory:
+    must_not_call: ["device.*"]
+    budget: {max_steps: 8, max_tokens: 6000}
+author: claude-draft
+review_status: pending_expert
+signed_at: 2026-10-28
+notes: 药量 = 50 L × 1000 ÷ 2000 = 25 mL；浸种无 PHI，不做安全间隔推算

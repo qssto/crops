@@ -1,5 +1,5 @@
 id: rice-irr-0002
-version: 1
+version: 2
 suite: regression
 difficulty: easy
 tags: [L4, irrigate.depth]
@@ -14,15 +14,15 @@ fixtures:
   mcp:
     crop.phenology:
       - match: {field: field-001}
-        return: {stage: 破口期}
-knowledge_ref: kb@TBD
+        return: {stage: 抽穗扬花期, sub_stage: 破口期}
+knowledge_ref: WORKTREE
 expect:
   outcome: ADVICE
   advice:
     category: irrigate
     advice_type: 观察类
     conclusion: 抽穗扬花期保持浅水层，不宜断水（草拟，待专家确认）
-    must_cite: [kb:rice/irrigate/heading@TBD]
+    must_cite: [kb:rice/irrigation/heading@v1]
   trajectory:
     must_call: [crop.phenology]
     must_not_call: ["device.*"]

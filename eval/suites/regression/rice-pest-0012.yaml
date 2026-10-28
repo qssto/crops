@@ -1,0 +1,38 @@
+id: rice-pest-0012
+version: 1
+suite: regression
+difficulty: medium
+tags: [L3, L4, protect.timing]
+question: 2号田快破口了，最近老下雨，稻曲病什么时候打药合适？
+context:
+  farm: farm-demo-01
+  field: field-002
+  role: agronomist
+  user: u-agro-01
+fixtures:
+  clock: 2026-08-12T09:00:00+08:00
+  mcp:
+    crop.phenology:
+      - match: {field: field-002}
+        return: {stage: 拔节孕穗期, sub_stage: 孕穗期, expected_heading: "2026-08-21"}
+    weather.history:
+      - match: {field: field-002}
+        return: {rain_days_7d: 4, collected_at: "2026-08-12T07:00:00+08:00", source: mock-station}
+knowledge_ref: WORKTREE
+expect:
+  outcome: ADVICE
+  advice:
+    category: protect
+    advice_type: 作业类
+    conclusion: 预计 8 月 21 日破口，破口前 7–10 天即 8 月 11–14 日为预防窗口，今天可施药（草拟，待专家确认）
+    must_cite: [kb:rice/pest/false-smut@v1]
+    target: false_smut
+    product_in: [validamycin-5sl, trifloxystrobin-tebuconazole-75wg]
+  trajectory:
+    must_call: [crop.phenology]
+    must_not_call: ["device.*"]
+    budget: {max_steps: 12, max_tokens: 8000}
+author: claude-draft
+review_status: pending_expert
+signed_at: 2026-10-28
+notes: 施药日 = 预计破口日 − 7~10 天；孕穗期连阴雨属必须预防情形

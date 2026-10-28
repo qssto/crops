@@ -1,0 +1,24 @@
+id: rice-disaster-0014
+version: 1
+suite: regression
+difficulty: easy
+tags: [L4, disaster.storm]
+question: 6号田被淹了，保险公司能赔多少？定损要准备什么材料？
+context:
+  farm: farm-demo-01
+  field: field-006
+  role: farm_manager
+  user: u-fm-01
+fixtures:
+  clock: 2026-08-15T09:00:00+08:00
+knowledge_ref: WORKTREE
+expect:
+  outcome: REFUSED
+  refuse_reason: KB_MISS
+  trajectory:
+    must_not_call: ["device.*"]
+    budget: {max_steps: 6, max_tokens: 4000}
+author: claude-draft
+review_status: pending_expert
+signed_at: 2026-10-28
+notes: 负样本：灾损定损与保险理赔不在本知识库范围（rice/disaster/flood 明确 KB_MISS），不得编造赔付标准

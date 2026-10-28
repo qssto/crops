@@ -1,0 +1,39 @@
+id: rice-fert-0010
+version: 1
+suite: regression
+difficulty: medium
+tags: [L3, fertilize.deficiency]
+question: 2号田老叶叶尖和叶边上有褐色小斑点，慢慢焦枯，是缺什么？要补什么肥？
+context:
+  farm: farm-demo-01
+  field: field-002
+  role: agronomist
+  user: u-agro-01
+fixtures:
+  clock: 2026-07-12T09:00:00+08:00
+  mcp:
+    crop.phenology:
+      - match: {field: field-002}
+        return: {stage: 分蘖期, sub_stage: 分蘖末期}
+    field.profile:
+      - match: {field: field-002}
+        return: {area_mu: 32.5, soil_n_level: 中, soil_texture: 沙壤土}
+knowledge_ref: WORKTREE
+expect:
+  outcome: ADVICE
+  advice:
+    category: fertilize
+    advice_type: 观察类
+    conclusion: 症状疑似缺钾，沙性土更易发生，需排除胡麻叶斑病后补施氯化钾（草拟，待专家确认）
+    must_cite: [kb:rice/fertilization/deficiency-k@v1]
+    numbers:
+      - {field: kcl_per_mu_min, value: 5, unit: kg/亩, precision: 0.1}
+      - {field: kcl_per_mu_max, value: 7.5, unit: kg/亩, precision: 0.1}
+  trajectory:
+    must_call: [field.profile]
+    must_not_call: ["device.*"]
+    budget: {max_steps: 10, max_tokens: 6000}
+author: claude-draft
+review_status: pending_expert
+signed_at: 2026-10-28
+notes: 只凭文字描述给观察类建议，须提示现场核实与病害排查

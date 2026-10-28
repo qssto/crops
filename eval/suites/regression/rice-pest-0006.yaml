@@ -1,5 +1,5 @@
 id: rice-pest-0006
-version: 1
+version: 2
 suite: regression
 difficulty: medium
 tags: [L2, protect.timing]
@@ -14,11 +14,11 @@ fixtures:
   mcp:
     crop.phenology:
       - match: {field: field-005}
-        return: {stage: 拔节期}
+        return: {stage: 拔节孕穗期, sub_stage: 拔节期}
     field.pest_survey:
       - match: {field: field-005}
         error: empty
-knowledge_ref: kb@TBD
+knowledge_ref: WORKTREE
 expect:
   outcome: REFUSED
   refuse_reason: DATA_MISSING

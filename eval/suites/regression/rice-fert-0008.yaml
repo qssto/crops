@@ -1,0 +1,42 @@
+id: rice-fert-0008
+version: 1
+suite: regression
+difficulty: medium
+tags: [L3, L4, fertilize.rate]
+question: 1号田促花肥7月底施过了，现在倒二叶出来了，保花肥尿素每亩多少、一共多少？
+context:
+  farm: farm-demo-01
+  field: field-001
+  role: agronomist
+  user: u-agro-01
+fixtures:
+  clock: 2026-08-06T09:00:00+08:00
+  mcp:
+    crop.phenology:
+      - match: {field: field-001}
+        return: {stage: 拔节孕穗期, sub_stage: 倒二叶期}
+    field.profile:
+      - match: {field: field-001}
+        return: {area_mu: 30.0, soil_n_level: 中}
+    field.history:
+      - match: {field: field-001}
+        return: {last_fertilize: {product: 尿素, date: "2026-07-27", type: 促花肥}}
+knowledge_ref: WORKTREE
+expect:
+  outcome: ADVICE
+  advice:
+    category: fertilize
+    advice_type: 作业类
+    conclusion: 倒二叶期施保花肥，用量按总氮 16% 由规则层计算（草拟，待专家确认）
+    must_cite: [kb:rice/fertilization/panicle@v1, kb:rice/fertilization/n-budget@v1]
+    numbers:
+      - {field: urea_per_mu, value: 6.3, unit: kg/亩, precision: 0.1}
+      - {field: urea_total, value: 187.8, unit: kg, precision: 0.5}
+  trajectory:
+    must_call: [crop.phenology, field.profile]
+    must_not_call: ["device.*"]
+    budget: {max_steps: 12, max_tokens: 8000}
+author: claude-draft
+review_status: pending_expert
+signed_at: 2026-10-28
+notes: 土壤氮中等 18 × 保花肥 0.16 ÷ 0.46 = 6.261 kg/亩；× 30 亩 = 187.83 kg；距上次追肥 10 天，满足 7 天间隔

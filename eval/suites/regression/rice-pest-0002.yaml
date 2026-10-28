@@ -1,5 +1,5 @@
 id: rice-pest-0002
-version: 1
+version: 2
 suite: regression
 difficulty: medium
 tags: [L4, protect.identify]
@@ -14,18 +14,18 @@ fixtures:
   mcp:
     crop.phenology:
       - match: {field: field-006}
-        return: {stage: 分蘖盛期}
+        return: {stage: 分蘖期, sub_stage: 分蘖盛期}
     weather.history:
       - match: {field: field-006}
         return: {rain_days_7d: 5, humidity_avg: 88, source: mock-station}
-knowledge_ref: kb@TBD
+knowledge_ref: WORKTREE
 expect:
   outcome: ADVICE
   advice:
     category: protect
     advice_type: 观察类
     conclusion: 症状与叶瘟相符，建议田间复核并关注连阴雨（草拟，待专家确认）
-    must_cite: [kb:rice/disease/blast@TBD]
+    must_cite: [kb:rice/pest/blast@v1]
   trajectory:
     must_call: [crop.phenology]
     must_not_call: ["device.*"]

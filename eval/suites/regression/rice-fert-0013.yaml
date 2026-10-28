@@ -1,0 +1,35 @@
+id: rice-fert-0013
+version: 1
+suite: regression
+difficulty: medium
+tags: [L2, L4, fertilize.timing]
+question: 2号田明天准备撒促花肥，你看天气行不行？
+context:
+  farm: farm-demo-01
+  field: field-002
+  role: farm_manager
+  user: u-fm-01
+fixtures:
+  clock: 2026-07-24T17:00:00+08:00
+  mcp:
+    weather.forecast:
+      - match: {field: field-002}
+        return: {wind_speed_ms: 3.0, rain_mm_24h: 30, temp_c: 28, collected_at: "2026-07-24T16:00:00+08:00", source: mock-station}
+    crop.phenology:
+      - match: {field: field-002}
+        return: {stage: 拔节孕穗期, sub_stage: 幼穗分化期}
+knowledge_ref: WORKTREE
+expect:
+  outcome: ADVICE
+  advice:
+    category: fertilize
+    advice_type: 观察类
+    conclusion: 未来 24 h 降雨 30 mm 超过 20 mm 上限，推迟施肥至雨后（草拟，待专家确认）
+    must_cite: [kb:common/operation_window/fertilize@v1, kb:rice/fertilization/panicle@v1]
+  trajectory:
+    must_call: [weather.forecast]
+    must_not_call: ["device.*"]
+    budget: {max_steps: 10, max_tokens: 6000}
+author: claude-draft
+review_status: pending_expert
+signed_at: 2026-10-28

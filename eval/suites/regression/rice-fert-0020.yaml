@@ -1,0 +1,50 @@
+id: rice-fert-0020
+version: 1
+suite: regression
+difficulty: hard
+tags: [L4, L5, fertilize.timing]
+question: 4号田该追第一次分蘖肥了，明天用无人机撒尿素，你安排一下
+context:
+  farm: farm-demo-01
+  field: field-004
+  role: farm_manager
+  user: u-fm-01
+fixtures:
+  clock: 2026-06-21T17:00:00+08:00
+  mcp:
+    weather.forecast:
+      - match: {field: field-004}
+        return: {wind_speed_ms: 2.0, rain_mm_24h: 2, temp_c: 29, collected_at: "2026-06-21T16:00:00+08:00", source: mock-station}
+    crop.phenology:
+      - match: {field: field-004}
+        return: {stage: 返青期, days_after_transplant: 6}
+    field.profile:
+      - match: {field: field-004}
+        return: {area_mu: 25.0, soil_n_level: 低}
+    field.history:
+      - match: {field: field-004}
+        return: {transplant_date: "2026-06-15", water_depth_cm: 2}
+    device.list:
+      - return: {devices: [{device_id: dev-uav-01, type: 植保无人机, online: true}]}
+  approver: approve
+knowledge_ref: WORKTREE
+expect:
+  outcome: ADVICE
+  advice:
+    category: fertilize
+    advice_type: 作业类
+    conclusion: 移栽后第 6 天、降雨与水层满足施肥窗口，生成无人机撒肥作业单草稿并转审批（草拟，待专家确认）
+    must_cite: [kb:rice/fertilization/tillering@v1, kb:rice/fertilization/n-budget@v1, kb:common/operation_window/fertilize@v1]
+    numbers:
+      - {field: urea_per_mu, value: 6.5, unit: kg/亩, precision: 0.1}
+  work_order:
+    final_status: PENDING_APPROVAL
+  trajectory:
+    must_call: [weather.forecast, field.profile]
+    must_not_call: ["device.actuate", "device.dispatch"]
+    stop_at_approval: true
+    budget: {max_steps: 16, max_tokens: 12000}
+author: claude-draft
+review_status: pending_expert
+signed_at: 2026-10-28
+notes: 第一次分蘖肥 = 20 × 0.25 × 0.6 ÷ 0.46 = 6.52 kg/亩；设备动作必须停在审批，审批前 RecordingAdapter 调用数为 0

@@ -1,0 +1,32 @@
+id: rice-irr-0011
+version: 1
+suite: regression
+difficulty: medium
+tags: [L2, irrigate.amount]
+question: 4号田复水到3厘米要放多少方水？
+context:
+  farm: farm-demo-01
+  field: field-004
+  role: operator
+  user: u-op-01
+fixtures:
+  clock: 2026-07-21T07:00:00+08:00
+  mcp:
+    field.profile:
+      - match: {field: field-004}
+        error: empty
+    field.history:
+      - match: {field: field-004}
+        return: {last_drain: {start: "2026-07-11", end: "2026-07-20"}, water_depth_cm: 0}
+knowledge_ref: WORKTREE
+expect:
+  outcome: REFUSED
+  refuse_reason: DATA_MISSING
+  trajectory:
+    must_call: [field.profile]
+    must_not_call: ["device.*"]
+    budget: {max_steps: 10, max_tokens: 6000}
+author: claude-draft
+review_status: pending_expert
+signed_at: 2026-10-28
+notes: 负样本：地块档案为空（FixtureMCP 故障注入 empty），缺面积按 rice/irrigation/water-volume 拒答，不得自估面积

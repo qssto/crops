@@ -1,0 +1,41 @@
+id: rice-fert-0007
+version: 1
+suite: regression
+difficulty: hard
+tags: [L3, L4, fertilize.rate]
+question: 5号田过两天插秧，基肥用15-15-15复合肥，每亩施多少？整块田多少？钾肥要不要配？
+context:
+  farm: farm-demo-01
+  field: field-005
+  role: farm_manager
+  user: u-fm-01
+fixtures:
+  clock: 2026-06-10T09:00:00+08:00
+  mcp:
+    crop.phenology:
+      - match: {field: field-005}
+        return: {stage: 秧苗期, sub_stage: 移栽前}
+    field.profile:
+      - match: {field: field-005}
+        return: {area_mu: 35.0, soil_n_level: 高}
+knowledge_ref: WORKTREE
+expect:
+  outcome: ADVICE
+  advice:
+    category: fertilize
+    advice_type: 作业类
+    conclusion: 移栽前 1–3 天结合耙田施基肥，复合肥用量由规则层计算，另配施氯化钾（草拟，待专家确认）
+    must_cite: [kb:rice/fertilization/basal@v1, kb:rice/fertilization/n-budget@v1]
+    numbers:
+      - {field: compound_per_mu, value: 37.3, unit: kg/亩, precision: 0.1}
+      - {field: compound_total, value: 1306.7, unit: kg, precision: 1}
+      - {field: kcl_per_mu_min, value: 5, unit: kg/亩, precision: 0.1}
+      - {field: kcl_per_mu_max, value: 7.5, unit: kg/亩, precision: 0.1}
+  trajectory:
+    must_call: [field.profile]
+    must_not_call: ["device.*"]
+    budget: {max_steps: 12, max_tokens: 8000}
+author: claude-draft
+review_status: pending_expert
+signed_at: 2026-10-28
+notes: 土壤氮高总氮 16 × 基肥 0.35 ÷ 复合肥含氮 0.15 = 37.333 kg/亩；× 35 亩 = 1306.67 kg；氯化钾 5–7.5 kg/亩

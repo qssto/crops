@@ -49,6 +49,7 @@ var (
 	knownAdviceTypes  = set("作业类", "观察类") // 母文档 §5.0.5 AdviceCard.advice_type
 	knownApprovers    = set("approve", "reject", "timeout")
 	knownToolErrors   = set("timeout", "empty", "malformed")
+	knownPIIKinds     = set("phone", "id_card", "coordinate")
 	// WorkOrder 状态（P0 §2.3-2），L1 冻结后改为引用 internal/model 常量
 	knownOrderStatus = set("DRAFT", "PENDING_APPROVAL", "APPROVED", "DISPATCHED", "EXECUTING", "DONE",
 		"REJECTED", "EXPIRED", "FAILED", "CANCELED", "PARTIALLY_DONE")
@@ -62,8 +63,9 @@ func set(items ...string) map[string]bool {
 	return m
 }
 
-// DefaultRules 返回 L0 的静态校验规则；后续层在其后追加规则即可（开闭原则）。
-func DefaultRules(tx *knowledge.Taxonomy) []Rule {
+// DefaultRules 返回静态校验规则：L0 七条 + L3 两条（must_cite 在 knowledge_ref 版本中存在、
+// product_in ⊆ calc.Candidates）。kb 按 knowledge_ref 打开知识版本；后续层在其后追加规则即可（开闭原则）。
+func DefaultRules(tx *knowledge.Taxonomy, kb KnowledgeOpener) []Rule {
 	return []Rule{
 		PerSample(RuleRequired, checkRequired),
 		PerSample(RuleAttribution, checkAttribution),
@@ -72,6 +74,8 @@ func DefaultRules(tx *knowledge.Taxonomy) []Rule {
 		PerSample(RuleTags, tagsCheck(tx)),
 		uniqueIDRule{},
 		refuseRatioRule{min: MinRefuseRatio},
+		PerSample(RuleMustCiteKB, mustCiteKBCheck(kb)),
+		PerSample(RuleProductInCandidates, productInCheck(tx, kb)),
 	}
 }
 
@@ -145,6 +149,9 @@ func checkEnums(s *Sample) []string {
 	if s.Expect.WorkOrder != nil {
 		enum(s.Expect.WorkOrder.FinalStatus, knownOrderStatus, "expect.work_order.final_status")
 	}
+	for i, p := range s.Expect.PII {
+		enum(p.Kind, knownPIIKinds, fmt.Sprintf("expect.pii[%d].kind", i))
+	}
 	tools := make([]string, 0, len(s.Fixtures.MCP))
 	for tool := range s.Fixtures.MCP {
 		tools = append(tools, tool)
@@ -186,6 +193,20 @@ func checkExpectShape(s *Sample) []string {
 		msgs = append(msgs, checkAdviceShape(e.Advice)...)
 		if e.Trajectory.StopAtApproval && e.WorkOrder == nil {
 			msgs = append(msgs, "expect.work_order is required when stop_at_approval=true")
+		}
+	}
+	return append(msgs, checkPIIShape(s)...)
+}
+
+// checkPIIShape：每条 pii 须有 kind 与 value，且 value 原样出现在 question 中（否则断言无从谈起）。
+func checkPIIShape(s *Sample) []string {
+	var msgs []string
+	for i, p := range s.Expect.PII {
+		switch {
+		case p.Kind == "" || strings.TrimSpace(p.Value) == "":
+			msgs = append(msgs, fmt.Sprintf("expect.pii[%d] needs kind and value", i))
+		case !strings.Contains(s.Question, p.Value):
+			msgs = append(msgs, fmt.Sprintf("expect.pii[%d].value %q does not appear in question", i, p.Value))
 		}
 	}
 	return msgs

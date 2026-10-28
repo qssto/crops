@@ -1,5 +1,5 @@
 id: rice-irr-0003
-version: 1
+version: 2
 suite: regression
 difficulty: hard
 tags: [L3, L4, irrigate.amount]
@@ -17,22 +17,25 @@ fixtures:
         return: {area_mu: 28.0, soil_texture: 黏壤土}
     crop.phenology:
       - match: {field: field-006}
-        return: {stage: 拔节期}
-knowledge_ref: kb@TBD
+        return: {stage: 拔节孕穗期, sub_stage: 拔节期}
+    field.history:
+      - match: {field: field-006}
+        return: {last_drain: {start: "2026-07-10", end: "2026-07-21"}, water_depth_cm: 0}
+knowledge_ref: WORKTREE
 expect:
   outcome: ADVICE
   advice:
     category: irrigate
     advice_type: 作业类
-    conclusion: 灌水量按地块面积与目标水层由规则层计算（草拟，待专家确认）
-    must_cite: [kb:rice/irrigate/rewater@TBD]
+    conclusion: 晒田结束复水到 3 cm，灌水量按地块面积、水层差与损失系数由规则层计算（草拟，待专家确认）
+    must_cite: [kb:rice/irrigation/rewater@v1, kb:rice/irrigation/water-volume@v1]
     numbers:
-      - {field: water_m3, value: null, unit: m3, precision: 1}
+      - {field: water_m3, value: 672, unit: m3, precision: 1}
   trajectory:
-    must_call: [field.profile]
+    must_call: [field.profile, field.history]
     must_not_call: ["device.*"]
     budget: {max_steps: 10, max_tokens: 6000}
 author: claude-draft
 review_status: pending_expert
 signed_at: 2026-10-28
-notes: 数值待 L3 calc 回填
+notes: 晒田后复水，28 亩 × 666.67 m2 × (3 - 0) cm ÷ 100 × 损失系数 1.2 = 672.0 m3；L3 补 field.history 桩提供当前水层与晒田记录

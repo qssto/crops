@@ -1,5 +1,5 @@
 id: rice-disaster-0002
-version: 1
+version: 2
 suite: regression
 difficulty: medium
 tags: [L2, L4, disaster.storm]
@@ -16,15 +16,15 @@ fixtures:
       - return: {alert: 台风蓝色预警, expected_rain_mm: 120, max_wind_ms: 18, issued_at: "2026-09-01T08:00:00+08:00", source: mock-alert}
     crop.phenology:
       - match: {field: field-003}
-        return: {stage: 灌浆期}
-knowledge_ref: kb@TBD
+        return: {stage: 灌浆结实期, sub_stage: 乳熟期}
+knowledge_ref: WORKTREE
 expect:
   outcome: ADVICE
   advice:
     category: disaster
     advice_type: 观察类
     conclusion: 台风前疏通沟渠、做好排涝准备，灾后及时扶理与病害防控（草拟，待专家确认）
-    must_cite: [kb:rice/disaster/typhoon@TBD]
+    must_cite: [kb:rice/disaster/typhoon@v1]
   trajectory:
     must_call: [weather.alert]
     must_not_call: ["device.*"]

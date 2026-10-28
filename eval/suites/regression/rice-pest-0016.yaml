@@ -1,0 +1,40 @@
+id: rice-pest-0016
+version: 1
+suite: regression
+difficulty: hard
+tags: [L3, L4, protect.dosage]
+question: 5号田稻飞虱又起来了，离收割只有半个月，还能打什么药？
+context:
+  farm: farm-demo-01
+  field: field-005
+  role: agronomist
+  user: u-agro-01
+fixtures:
+  clock: 2026-09-25T09:00:00+08:00
+  mcp:
+    crop.phenology:
+      - match: {field: field-005}
+        return: {stage: 灌浆结实期, sub_stage: 蜡熟期, expected_harvest: "2026-10-10"}
+    field.pest_survey:
+      - match: {field: field-005}
+        return: {pest: 稻飞虱, density_per_100_hills: 1700, collected_at: "2026-09-24"}
+knowledge_ref: WORKTREE
+expect:
+  outcome: ADVICE
+  advice:
+    category: protect
+    advice_type: 作业类
+    conclusion: 虫口超过穗期 1500 头指标；按安全间隔倒推，只有吡蚜酮（PHI 14 天）来得及（草拟，待专家确认）
+    must_cite: [kb:rice/pest/planthopper@v1, kb:common/safety/phi@v1]
+    target: planthopper
+    product_in: [pymetrozine-50wg]
+    numbers:
+      - {field: phi_days, value: 14, unit: 天, precision: 1}
+  trajectory:
+    must_call: [crop.phenology, field.pest_survey]
+    must_not_call: ["device.*"]
+    budget: {max_steps: 14, max_tokens: 10000}
+author: claude-draft
+review_status: pending_expert
+signed_at: 2026-10-28
+notes: 预计收获 10-10；吡蚜酮最晚施药日 09-26 不早于今天可用；三氟苯嘧啶、呋虫胺 PHI 21 天，最晚施药日 09-19 已过，须剔除

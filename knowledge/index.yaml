@@ -1,0 +1,354 @@
+# 知识索引（P0 · L3）：由各条目 front-matter 汇总，格式见 knowledge/README.md §6。
+# 警告：内容为 Claude 草拟（claude-draft / pending_expert），待农艺专家逐条核对，不得作为真实用药依据。
+version: v1
+entries:
+  - kb_id: common/operation_window/spray
+    file: common/operation_window.md
+    version: v1
+    crop: '*'
+    stage: ['*']
+    region: '*'
+    category: [protect]
+    topics: [protect.timing]
+    authority_level: 专家经验
+  - kb_id: common/operation_window/uav
+    file: common/operation_window.md
+    version: v1
+    crop: '*'
+    stage: ['*']
+    region: '*'
+    category: [protect]
+    topics: [protect.dosage, protect.timing]
+    authority_level: 专家经验
+  - kb_id: common/operation_window/dosage-dilution
+    file: common/operation_window.md
+    version: v1
+    crop: '*'
+    stage: ['*']
+    region: '*'
+    category: [protect]
+    topics: [protect.dosage]
+    authority_level: 专家经验
+  - kb_id: common/operation_window/fertilize
+    file: common/operation_window.md
+    version: v1
+    crop: '*'
+    stage: ['*']
+    region: '*'
+    category: [fertilize]
+    topics: [fertilize.timing]
+    authority_level: 专家经验
+  - kb_id: common/safety/phi
+    file: common/safety.md
+    version: v1
+    crop: '*'
+    stage: ['*']
+    region: '*'
+    category: [protect]
+    topics: [protect.dosage, protect.timing]
+    authority_level: 专家经验
+  - kb_id: common/safety/mixing
+    file: common/safety.md
+    version: v1
+    crop: '*'
+    stage: ['*']
+    region: '*'
+    category: [protect]
+    topics: [protect.product]
+    authority_level: 专家经验
+  - kb_id: common/safety/resistance
+    file: common/safety.md
+    version: v1
+    crop: '*'
+    stage: ['*']
+    region: '*'
+    category: [protect]
+    topics: [protect.product]
+    authority_level: 专家经验
+  - kb_id: common/safety/ppe
+    file: common/safety.md
+    version: v1
+    crop: '*'
+    stage: ['*']
+    region: '*'
+    category: [protect]
+    topics: [protect.dosage]
+    authority_level: 专家经验
+  - kb_id: common/safety/registration
+    file: common/safety.md
+    version: v1
+    crop: '*'
+    stage: ['*']
+    region: '*'
+    category: [protect]
+    topics: [protect.product, protect.dosage]
+    authority_level: 专家经验
+  - kb_id: rice/disaster/heat
+    file: rice/disaster.md
+    version: v1
+    crop: rice
+    stage: [拔节孕穗期, 抽穗扬花期, 灌浆结实期]
+    region: jiangsu
+    category: [disaster]
+    topics: [disaster.heat]
+    authority_level: 专家经验
+  - kb_id: rice/disaster/cold
+    file: rice/disaster.md
+    version: v1
+    crop: rice
+    stage: [拔节孕穗期, 抽穗扬花期]
+    region: jiangsu
+    category: [disaster]
+    topics: [disaster.cold]
+    authority_level: 专家经验
+  - kb_id: rice/disaster/typhoon
+    file: rice/disaster.md
+    version: v1
+    crop: rice
+    stage: ['*']
+    region: jiangsu
+    category: [disaster]
+    topics: [disaster.storm]
+    authority_level: 专家经验
+  - kb_id: rice/disaster/flood
+    file: rice/disaster.md
+    version: v1
+    crop: rice
+    stage: ['*']
+    region: jiangsu
+    category: [disaster]
+    topics: [disaster.storm]
+    authority_level: 专家经验
+  - kb_id: rice/disaster/lodging
+    file: rice/disaster.md
+    version: v1
+    crop: rice
+    stage: [分蘖期, 拔节孕穗期, 抽穗扬花期, 灌浆结实期]
+    region: jiangsu
+    category: [disaster]
+    topics: [disaster.lodging]
+    authority_level: 专家经验
+  - kb_id: rice/fertilization/n-budget
+    file: rice/fertilization.md
+    version: v1
+    crop: rice
+    stage: [秧苗期, 返青期, 分蘖期, 拔节孕穗期]
+    region: jiangsu
+    category: [fertilize]
+    topics: [fertilize.rate, fertilize.product]
+    authority_level: 专家经验
+  - kb_id: rice/fertilization/basal
+    file: rice/fertilization.md
+    version: v1
+    crop: rice
+    stage: [秧苗期]
+    region: jiangsu
+    category: [fertilize]
+    topics: [fertilize.timing, fertilize.product]
+    authority_level: 专家经验
+  - kb_id: rice/fertilization/tillering
+    file: rice/fertilization.md
+    version: v1
+    crop: rice
+    stage: [返青期, 分蘖期]
+    region: jiangsu
+    category: [fertilize]
+    topics: [fertilize.timing, fertilize.rate]
+    authority_level: 专家经验
+  - kb_id: rice/fertilization/panicle
+    file: rice/fertilization.md
+    version: v1
+    crop: rice
+    stage: [拔节孕穗期]
+    region: jiangsu
+    category: [fertilize]
+    topics: [fertilize.timing, fertilize.rate]
+    authority_level: 专家经验
+  - kb_id: rice/fertilization/foliar
+    file: rice/fertilization.md
+    version: v1
+    crop: rice
+    stage: [抽穗扬花期, 灌浆结实期]
+    region: jiangsu
+    category: [fertilize]
+    topics: [fertilize.product, fertilize.rate]
+    authority_level: 专家经验
+  - kb_id: rice/fertilization/deficiency-n
+    file: rice/fertilization.md
+    version: v1
+    crop: rice
+    stage: [分蘖期, 拔节孕穗期]
+    region: jiangsu
+    category: [fertilize]
+    topics: [fertilize.deficiency]
+    authority_level: 专家经验
+  - kb_id: rice/fertilization/deficiency-k
+    file: rice/fertilization.md
+    version: v1
+    crop: rice
+    stage: [分蘖期, 拔节孕穗期]
+    region: jiangsu
+    category: [fertilize]
+    topics: [fertilize.deficiency]
+    authority_level: 专家经验
+  - kb_id: rice/fertilization/deficiency-zn
+    file: rice/fertilization.md
+    version: v1
+    crop: rice
+    stage: [返青期, 分蘖期]
+    region: jiangsu
+    category: [fertilize]
+    topics: [fertilize.deficiency]
+    authority_level: 专家经验
+  - kb_id: rice/irrigation/seedling-tillering
+    file: rice/irrigation.md
+    version: v1
+    crop: rice
+    stage: [返青期, 分蘖期]
+    region: jiangsu
+    category: [irrigate]
+    topics: [irrigate.depth, irrigate.timing]
+    authority_level: 专家经验
+  - kb_id: rice/irrigation/drain
+    file: rice/irrigation.md
+    version: v1
+    crop: rice
+    stage: [分蘖期, 拔节孕穗期]
+    region: jiangsu
+    category: [irrigate]
+    topics: [irrigate.drain, irrigate.timing]
+    authority_level: 专家经验
+  - kb_id: rice/irrigation/rewater
+    file: rice/irrigation.md
+    version: v1
+    crop: rice
+    stage: [拔节孕穗期]
+    region: jiangsu
+    category: [irrigate]
+    topics: [irrigate.depth, irrigate.timing, irrigate.amount]
+    authority_level: 专家经验
+  - kb_id: rice/irrigation/heading
+    file: rice/irrigation.md
+    version: v1
+    crop: rice
+    stage: [拔节孕穗期, 抽穗扬花期]
+    region: jiangsu
+    category: [irrigate]
+    topics: [irrigate.depth]
+    authority_level: 专家经验
+  - kb_id: rice/irrigation/grain-filling
+    file: rice/irrigation.md
+    version: v1
+    crop: rice
+    stage: [灌浆结实期, 成熟期]
+    region: jiangsu
+    category: [irrigate]
+    topics: [irrigate.drain, irrigate.depth, irrigate.timing]
+    authority_level: 专家经验
+  - kb_id: rice/irrigation/water-volume
+    file: rice/irrigation.md
+    version: v1
+    crop: rice
+    stage: ['*']
+    region: jiangsu
+    category: [irrigate]
+    topics: [irrigate.amount]
+    authority_level: 专家经验
+  - kb_id: rice/irrigation/spray-water
+    file: rice/irrigation.md
+    version: v1
+    crop: rice
+    stage: [返青期, 分蘖期, 拔节孕穗期, 抽穗扬花期]
+    region: jiangsu
+    category: [irrigate, protect]
+    topics: [irrigate.depth, protect.dosage]
+    authority_level: 专家经验
+  - kb_id: rice/pest/bakanae
+    file: rice/pest/bakanae.md
+    version: v1
+    crop: rice
+    stage: [秧苗期]
+    region: jiangsu
+    category: [protect]
+    topics: [protect.identify, protect.product, protect.dosage]
+    target: bakanae
+    authority_level: 专家经验
+  - kb_id: rice/pest/blast
+    file: rice/pest/blast.md
+    version: v1
+    crop: rice
+    stage: [分蘖期, 拔节孕穗期, 抽穗扬花期]
+    region: jiangsu
+    category: [protect]
+    topics: [protect.identify, protect.timing, protect.product, protect.dosage]
+    target: blast
+    authority_level: 专家经验
+  - kb_id: rice/pest/false-smut
+    file: rice/pest/false-smut.md
+    version: v1
+    crop: rice
+    stage: [拔节孕穗期]
+    region: jiangsu
+    category: [protect]
+    topics: [protect.identify, protect.timing, protect.product, protect.dosage]
+    target: false_smut
+    authority_level: 专家经验
+  - kb_id: rice/pest/leaf-roller
+    file: rice/pest/leaf-roller.md
+    version: v1
+    crop: rice
+    stage: [分蘖期, 拔节孕穗期, 抽穗扬花期]
+    region: jiangsu
+    category: [protect]
+    topics: [protect.identify, protect.timing, protect.product, protect.dosage]
+    target: leaf_roller
+    authority_level: 专家经验
+  - kb_id: rice/pest/planthopper
+    file: rice/pest/planthopper.md
+    version: v1
+    crop: rice
+    stage: [分蘖期, 拔节孕穗期, 抽穗扬花期, 灌浆结实期]
+    region: jiangsu
+    category: [protect]
+    topics: [protect.identify, protect.timing, protect.product, protect.dosage]
+    target: planthopper
+    authority_level: 专家经验
+  - kb_id: rice/pest/sheath-blight
+    file: rice/pest/sheath-blight.md
+    version: v1
+    crop: rice
+    stage: [分蘖期, 拔节孕穗期, 抽穗扬花期]
+    region: jiangsu
+    category: [protect]
+    topics: [protect.identify, protect.timing, protect.product, protect.dosage]
+    target: sheath_blight
+    authority_level: 专家经验
+  - kb_id: rice/pest/stem-borer
+    file: rice/pest/stem-borer.md
+    version: v1
+    crop: rice
+    stage: [分蘖期, 拔节孕穗期, 抽穗扬花期]
+    region: jiangsu
+    category: [protect]
+    topics: [protect.identify, protect.timing, protect.product, protect.dosage]
+    target: stem_borer
+    authority_level: 专家经验
+  - kb_id: rice/pest/weeds
+    file: rice/pest/weeds.md
+    version: v1
+    crop: rice
+    stage: [返青期, 分蘖期]
+    region: jiangsu
+    category: [protect]
+    topics: [protect.identify, protect.timing, protect.product, protect.dosage]
+    target: weeds
+    authority_level: 专家经验
+  - kb_id: rice/phenology/stages
+    file: rice/phenology.md
+    version: v1
+    crop: rice
+    stage: ['*']
+    region: jiangsu
+    category: [fertilize, protect, irrigate]
+    topics: [fertilize.timing, protect.timing, irrigate.timing]
+    authority_level: 专家经验

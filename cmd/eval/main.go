@@ -1,9 +1,11 @@
 // cmd/eval 是评测入口：
 //
-//	eval validate [--suites-dir eval/suites] [--taxonomy eval/taxonomy.yaml]
+//	eval validate [--suites-dir eval/suites] [--taxonomy eval/taxonomy.yaml] [--repo .]
 //	eval run --suite regression [--n 3] [--tags L2,protect] [--out eval/out]
+//	eval kbdump --suite regression
 //
-// validate 只做样本静态校验、不装配 agent；run 先校验再经 app.Build 装配被测 agent 回放并出报告。
+// validate 只做样本静态校验、不装配 agent；run 先校验再经 app.Build 装配被测 agent 回放并出报告；
+// kbdump 按样本情境（taxonomy tag + crop.phenology fixture）跑 progressive_loader，打印命中的 kb_id@version。
 package main
 
 import (
@@ -32,7 +34,8 @@ const (
 	defaultDir  = "eval/suites"
 	defaultTax  = "eval/taxonomy.yaml"
 	defaultOut  = "eval/out"
-	usageString = "usage: eval <validate|run> [flags]"
+	defaultRepo = "."
+	usageString = "usage: eval <validate|run|kbdump> [flags]"
 )
 
 func main() {
@@ -53,6 +56,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 		err = cmdValidate(args[1:], stdout)
 	case "run":
 		err = cmdRun(ctx, args[1:], stdout, stderr)
+	case "kbdump":
+		err = cmdKBDump(ctx, args[1:], stdout)
 	default:
 		fmt.Fprintln(stderr, usageString)
 		return exitUsage
@@ -71,24 +76,31 @@ func run(args []string, stdout, stderr io.Writer) int {
 	return exitFailed
 }
 
-// sampleFlags 是 validate 与 run 共用的样本位置参数。
+// sampleFlags 是 validate / run / kbdump 共用的样本与知识库位置参数。
 type sampleFlags struct {
 	dir      string
 	taxonomy string
+	repo     string
 }
 
 func (f *sampleFlags) register(fs *flag.FlagSet) {
 	fs.StringVar(&f.dir, "suites-dir", defaultDir, "样本根目录（递归加载 **.yaml）")
 	fs.StringVar(&f.taxonomy, "taxonomy", defaultTax, "question_taxonomy 文件")
+	fs.StringVar(&f.repo, "repo", defaultRepo, "仓库根目录（其下 knowledge/ 为知识库；knowledge_ref 为 git ref 时在此仓库取）")
 }
 
-// loadValidSamples 加载并静态校验全部样本。
-func (f *sampleFlags) loadValidSamples() ([]*sample.Sample, error) {
+// loadValidSamples 加载并静态校验全部样本（含 L3 must_cite / product_in 知识库规则）。
+func (f *sampleFlags) loadValidSamples() ([]*sample.Sample, *knowledge.Taxonomy, *knowledge.Store, error) {
 	tx, err := knowledge.LoadTaxonomy(f.taxonomy)
 	if err != nil {
-		return nil, err
+		return nil, nil, nil, err
 	}
-	return sample.LoadAndValidate(f.dir, sample.NewValidator(sample.DefaultRules(tx)...))
+	kb := knowledge.NewStore(knowledge.NewRepoReader(f.repo))
+	samples, err := sample.LoadAndValidate(f.dir, sample.NewValidator(sample.DefaultRules(tx, kb)...))
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	return samples, tx, kb, nil
 }
 
 func cmdValidate(args []string, stdout io.Writer) error {
@@ -98,7 +110,7 @@ func cmdValidate(args []string, stdout io.Writer) error {
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	samples, err := sf.loadValidSamples()
+	samples, _, _, err := sf.loadValidSamples()
 	if err != nil {
 		return err
 	}
@@ -130,7 +142,7 @@ func cmdRun(ctx context.Context, args []string, stdout, stderr io.Writer) error 
 		return fmt.Errorf("n must be >= 1, got %d", *n)
 	}
 
-	all, err := sf.loadValidSamples()
+	all, _, _, err := sf.loadValidSamples()
 	if err != nil {
 		return err
 	}

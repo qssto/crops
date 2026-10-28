@@ -1,0 +1,41 @@
+id: rice-fert-0006
+version: 1
+suite: regression
+difficulty: hard
+tags: [L3, L4, fertilize.rate]
+question: 4号田插秧6天了，分蘖肥每亩一共要多少尿素？分两次怎么分？整块田要备多少？
+context:
+  farm: farm-demo-01
+  field: field-004
+  role: agronomist
+  user: u-agro-01
+fixtures:
+  clock: 2026-06-21T09:00:00+08:00
+  mcp:
+    crop.phenology:
+      - match: {field: field-004}
+        return: {stage: 返青期, days_after_transplant: 6}
+    field.profile:
+      - match: {field: field-004}
+        return: {area_mu: 25.0, soil_n_level: 低}
+knowledge_ref: WORKTREE
+expect:
+  outcome: ADVICE
+  advice:
+    category: fertilize
+    advice_type: 作业类
+    conclusion: 移栽后 5–7 天施第一次分蘖肥，用量按土壤氮水平与运筹比例由规则层计算（草拟，待专家确认）
+    must_cite: [kb:rice/fertilization/tillering@v1, kb:rice/fertilization/n-budget@v1]
+    numbers:
+      - {field: urea_per_mu, value: 10.9, unit: kg/亩, precision: 0.1}
+      - {field: urea_first_per_mu, value: 6.5, unit: kg/亩, precision: 0.1}
+      - {field: urea_second_per_mu, value: 4.3, unit: kg/亩, precision: 0.1}
+      - {field: urea_total, value: 271.7, unit: kg, precision: 0.5}
+  trajectory:
+    must_call: [crop.phenology, field.profile]
+    must_not_call: ["device.*"]
+    budget: {max_steps: 12, max_tokens: 8000}
+author: claude-draft
+review_status: pending_expert
+signed_at: 2026-10-28
+notes: 土壤氮低总氮 20 × 分蘖肥 0.25 ÷ 0.46 = 10.870 kg/亩；第一次 × 0.6 = 6.522，第二次 × 0.4 = 4.348；× 25 亩 = 271.74 kg

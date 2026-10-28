@@ -1,0 +1,35 @@
+id: rice-disaster-0010
+version: 1
+suite: regression
+difficulty: medium
+tags: [L3, L4, disaster.storm]
+question: 6号田暴雨后被淹了，已经泡了30个小时，稻子正在孕穗，怎么办？
+context:
+  farm: farm-demo-01
+  field: field-006
+  role: farm_manager
+  user: u-fm-01
+fixtures:
+  clock: 2026-08-14T09:00:00+08:00
+  mcp:
+    crop.phenology:
+      - match: {field: field-006}
+        return: {stage: 拔节孕穗期, sub_stage: 孕穗期}
+    field.history:
+      - match: {field: field-006}
+        return: {flood: {submerged_hours: 30, started_at: "2026-08-13T03:00:00+08:00"}}
+knowledge_ref: WORKTREE
+expect:
+  outcome: ADVICE
+  advice:
+    category: disaster
+    advice_type: 作业类
+    conclusion: 孕穗期没顶已超 24 h，须立即抢排露出叶尖，留浅水防青枯，退水后清洗叶面（草拟，待专家确认）
+    must_cite: [kb:rice/disaster/flood@v1]
+  trajectory:
+    must_call: [crop.phenology]
+    must_not_call: ["device.*"]
+    budget: {max_steps: 10, max_tokens: 8000}
+author: claude-draft
+review_status: pending_expert
+signed_at: 2026-10-28

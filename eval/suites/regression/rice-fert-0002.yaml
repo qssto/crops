@@ -1,5 +1,5 @@
 id: rice-fert-0002
-version: 1
+version: 2
 suite: regression
 difficulty: medium
 tags: [L3, L4, fertilize.rate]
@@ -14,25 +14,24 @@ fixtures:
   mcp:
     crop.phenology:
       - match: {field: field-002}
-        return: {stage: 幼穗分化期}
+        return: {stage: 拔节孕穗期, sub_stage: 幼穗分化期}
     field.profile:
       - match: {field: field-002}
         return: {area_mu: 32.5, soil_n_level: 中}
     field.history:
       - match: {field: field-002}
         return: {last_fertilize: {product: 尿素, date: "2026-06-28", type: 分蘖肥}}
-knowledge_ref: kb@TBD
+knowledge_ref: WORKTREE
 expect:
   outcome: ADVICE
   advice:
     category: fertilize
     advice_type: 作业类
-    conclusion: 幼穗分化期可施穗肥，用量按规则层计算（草拟，待专家确认）
-    must_cite: [kb:rice/fertilize/panicle@TBD]
-    product_in: [TBD-fertilizer]
+    conclusion: 幼穗分化期可施促花肥，用量按规则层计算（草拟，待专家确认）
+    must_cite: [kb:rice/fertilization/panicle@v1, kb:rice/fertilization/n-budget@v1]
     numbers:
-      - {field: urea_per_mu, value: null, unit: kg/亩, precision: 0.1}
-      - {field: urea_total, value: null, unit: kg, precision: 0.5}
+      - {field: urea_per_mu, value: 9.4, unit: kg/亩, precision: 0.1}
+      - {field: urea_total, value: 305.2, unit: kg, precision: 0.5}
   trajectory:
     must_call: [crop.phenology, field.profile]
     must_not_call: ["device.*"]
@@ -40,4 +39,4 @@ expect:
 author: claude-draft
 review_status: pending_expert
 signed_at: 2026-10-28
-notes: 数值待 L3 calc 回填
+notes: 土壤氮中等总氮 18 kg/亩 × 促花肥 0.24 ÷ 尿素含氮 0.46 = 9.391 kg/亩；× 32.5 亩 = 305.22 kg。登记表只收农药，删去 product_in

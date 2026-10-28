@@ -1,5 +1,5 @@
 id: rice-fert-0004
-version: 1
+version: 2
 suite: regression
 difficulty: hard
 tags: [L4, fertilize.deficiency]
@@ -14,21 +14,21 @@ fixtures:
   mcp:
     crop.phenology:
       - match: {field: field-004}
-        return: {stage: 分蘖盛期}
+        return: {stage: 分蘖期, sub_stage: 分蘖盛期}
     field.history:
       - match: {field: field-004}
         return: {last_fertilize: {product: 复合肥, date: "2026-06-01", type: 基肥}}
     field.profile:
       - match: {field: field-004}
         return: {area_mu: 25.0, soil_n_level: 低}
-knowledge_ref: kb@TBD
+knowledge_ref: WORKTREE
 expect:
   outcome: ADVICE
   advice:
     category: fertilize
     advice_type: 观察类
     conclusion: 老叶先黄且分蘖期未追肥，疑似缺氮，建议先现场核实叶色后再定追肥（草拟，待专家确认）
-    must_cite: [kb:rice/fertilize/deficiency-n@TBD]
+    must_cite: [kb:rice/fertilization/deficiency-n@v1]
   trajectory:
     must_call: [crop.phenology, field.history]
     budget: {max_steps: 12, max_tokens: 8000}

@@ -1,0 +1,248 @@
+# 农药登记表（P0 · 江苏水稻常见防治对象）
+# 警告：Claude 草拟，待农艺专家逐条核对，不得作为真实用药依据。
+# 用量、PHI、每季次数按常见登记标签整理，登记证号未填；专家须对照中国农药信息网核实后再改 review_status。
+# 格式见 knowledge/README.md §7。calc.Candidates(crop, target, region) 只从这里取候选药剂。
+version: v1
+author: claude-draft
+review_status: pending_expert
+effective_from: 2026-10-28
+
+targets:
+  planthopper: 稻飞虱（褐飞虱、白背飞虱）
+  leaf_roller: 稻纵卷叶螟
+  stem_borer: 二化螟
+  sheath_blight: 纹枯病
+  blast: 稻瘟病
+  false_smut: 稻曲病
+  bakanae: 恶苗病
+  weeds: 稻田杂草（稗草、千金子、阔叶杂草、莎草）
+  # 以下两项只被 out_of_set_test 产品引用，非水稻防治对象
+  gray_mold: 灰霉病（黄瓜）
+  leafhopper: 小绿叶蝉（茶树）
+
+products:
+  # ---------- 杀虫剂 ----------
+  - id: pymetrozine-50wg
+    common_name: 吡蚜酮
+    formulation: 水分散粒剂
+    content: 50%
+    registration_no: null
+    registrations:
+      - {crop: rice, target: planthopper, dose: {min: 8, max: 12, unit: g/亩}, method: 喷雾,
+         dilution_note: 常规喷雾每亩兑水 30–45 L，无人机每亩药液量不少于 1 L；对准稻株中下部,
+         phi_days: 14, max_times_per_season: 2, regions: ["*"], confidence: medium}
+
+  - id: triflumezopyrim-10sc
+    common_name: 三氟苯嘧啶
+    formulation: 悬浮剂
+    content: 10%
+    registration_no: null
+    registrations:
+      - {crop: rice, target: planthopper, dose: {min: 10, max: 16, unit: mL/亩}, method: 喷雾,
+         dilution_note: 常规喷雾每亩兑水 30–45 L，无人机每亩药液量不少于 1 L,
+         phi_days: 21, max_times_per_season: 1, regions: ["*"], confidence: medium}
+
+  - id: dinotefuran-20sg
+    common_name: 呋虫胺
+    formulation: 可溶粒剂
+    content: 20%
+    registration_no: null
+    registrations:
+      - {crop: rice, target: planthopper, dose: {min: 30, max: 40, unit: g/亩}, method: 喷雾,
+         dilution_note: 常规喷雾每亩兑水 30–45 L，无人机每亩药液量不少于 1 L,
+         phi_days: 21, max_times_per_season: 1, regions: ["*"], confidence: medium}
+
+  - id: chlorantraniliprole-200sc
+    common_name: 氯虫苯甲酰胺
+    formulation: 悬浮剂
+    content: 200 g/L
+    registration_no: null
+    registrations:
+      - {crop: rice, target: leaf_roller, dose: {min: 5, max: 10, unit: mL/亩}, method: 喷雾,
+         dilution_note: 常规喷雾每亩兑水 30–45 L，无人机每亩药液量不少于 1 L；低龄幼虫高峰期施药,
+         phi_days: 7, max_times_per_season: 2, regions: ["*"], confidence: high}
+      - {crop: rice, target: stem_borer, dose: {min: 5, max: 10, unit: mL/亩}, method: 喷雾,
+         dilution_note: 常规喷雾每亩兑水 30–45 L；施药时田间保水 3–5 cm,
+         phi_days: 7, max_times_per_season: 2, regions: ["*"], confidence: high}
+
+  - id: indoxacarb-150sc
+    common_name: 茚虫威
+    formulation: 悬浮剂
+    content: 150 g/L
+    registration_no: null
+    registrations:
+      - {crop: rice, target: leaf_roller, dose: {min: 12, max: 16, unit: mL/亩}, method: 喷雾,
+         dilution_note: 常规喷雾每亩兑水 30–45 L，无人机每亩药液量不少于 1 L,
+         phi_days: 21, max_times_per_season: 2, regions: ["*"], confidence: medium}
+
+  - id: emamectin-benzoate-5wg
+    common_name: 甲氨基阿维菌素苯甲酸盐
+    formulation: 水分散粒剂
+    content: 5%
+    registration_no: null
+    registrations:
+      - {crop: rice, target: leaf_roller, dose: {min: 10, max: 15, unit: g/亩}, method: 喷雾,
+         dilution_note: 常规喷雾每亩兑水 30–45 L；避免强光高温时段施药,
+         phi_days: 21, max_times_per_season: 2, regions: ["*"], confidence: medium}
+      - {crop: rice, target: stem_borer, dose: {min: 10, max: 15, unit: g/亩}, method: 喷雾,
+         dilution_note: 常规喷雾每亩兑水 30–45 L；施药时田间保水 3–5 cm,
+         phi_days: 21, max_times_per_season: 2, regions: ["*"], confidence: medium}
+
+  - id: methoxyfenozide-24sc
+    common_name: 甲氧虫酰肼
+    formulation: 悬浮剂
+    content: 24%
+    registration_no: null
+    registrations:
+      - {crop: rice, target: stem_borer, dose: {min: 20, max: 30, unit: mL/亩}, method: 喷雾,
+         dilution_note: 常规喷雾每亩兑水 30–45 L；卵孵高峰期施药，田间保水 3–5 cm,
+         phi_days: 60, max_times_per_season: 2, regions: ["*"], confidence: medium}
+
+  # ---------- 杀菌剂 ----------
+  - id: validamycin-5sl
+    common_name: 井冈霉素
+    formulation: 水剂
+    content: 5%
+    registration_no: null
+    registrations:
+      - {crop: rice, target: sheath_blight, dose: {min: 100, max: 150, unit: mL/亩}, method: 喷雾,
+         dilution_note: 每亩兑水 45–60 L，重点喷稻株中下部,
+         phi_days: 14, max_times_per_season: 2, regions: ["*"], confidence: high}
+      - {crop: rice, target: false_smut, dose: {min: 100, max: 150, unit: mL/亩}, method: 喷雾,
+         dilution_note: 破口前 7–10 天施药，每亩兑水 30–45 L,
+         phi_days: 14, max_times_per_season: 2, regions: ["*"], confidence: medium}
+
+  - id: thifluzamide-240sc
+    common_name: 噻呋酰胺
+    formulation: 悬浮剂
+    content: 240 g/L
+    registration_no: null
+    registrations:
+      - {crop: rice, target: sheath_blight, dose: {min: 15, max: 20, unit: mL/亩}, method: 喷雾,
+         dilution_note: 每亩兑水 30–45 L，重点喷稻株中下部,
+         phi_days: 14, max_times_per_season: 2, regions: ["*"], confidence: medium}
+
+  - id: hexaconazole-5sc
+    common_name: 己唑醇
+    formulation: 悬浮剂
+    content: 5%
+    registration_no: null
+    registrations:
+      - {crop: rice, target: sheath_blight, dose: {min: 60, max: 80, unit: mL/亩}, method: 喷雾,
+         dilution_note: 每亩兑水 30–45 L；孕穗后慎用高剂量,
+         phi_days: 21, max_times_per_season: 2, regions: ["*"], confidence: medium}
+
+  - id: tricyclazole-75wp
+    common_name: 三环唑
+    formulation: 可湿性粉剂
+    content: 75%
+    registration_no: null
+    registrations:
+      - {crop: rice, target: blast, dose: {min: 20, max: 30, unit: g/亩}, method: 喷雾,
+         dilution_note: 每亩兑水 30–45 L；穗瘟预防在破口期和齐穗期各施一次,
+         phi_days: 21, max_times_per_season: 2, regions: ["*"], confidence: high}
+
+  - id: isoprothiolane-40ec
+    common_name: 稻瘟灵
+    formulation: 乳油
+    content: 40%
+    registration_no: null
+    registrations:
+      - {crop: rice, target: blast, dose: {min: 75, max: 100, unit: mL/亩}, method: 喷雾,
+         dilution_note: 每亩兑水 30–45 L,
+         phi_days: 28, max_times_per_season: 2, regions: ["*"], confidence: medium}
+
+  - id: kasugamycin-2sl
+    common_name: 春雷霉素
+    formulation: 水剂
+    content: 2%
+    registration_no: null
+    registrations:
+      - {crop: rice, target: blast, dose: {min: 80, max: 100, unit: mL/亩}, method: 喷雾,
+         dilution_note: 每亩兑水 30–45 L,
+         phi_days: 21, max_times_per_season: 3, regions: ["*"], confidence: medium}
+
+  - id: trifloxystrobin-tebuconazole-75wg
+    common_name: 肟菌·戊唑醇
+    formulation: 水分散粒剂
+    content: 75%
+    registration_no: null
+    registrations:
+      - {crop: rice, target: false_smut, dose: {min: 10, max: 15, unit: g/亩}, method: 喷雾,
+         dilution_note: 破口前 7–10 天施药，每亩兑水 30–45 L，无人机每亩药液量不少于 1 L,
+         phi_days: 21, max_times_per_season: 2, regions: ["*"], confidence: medium}
+      - {crop: rice, target: sheath_blight, dose: {min: 10, max: 15, unit: g/亩}, method: 喷雾,
+         dilution_note: 每亩兑水 30–45 L,
+         phi_days: 21, max_times_per_season: 2, regions: ["*"], confidence: medium}
+
+  - id: prochloraz-25ec
+    common_name: 咪鲜胺
+    formulation: 乳油
+    content: 25%
+    registration_no: null
+    registrations:
+      - {crop: rice, target: bakanae, dose: {min: 2000, max: 3000, unit: 倍}, method: 浸种,
+         dilution_note: 稀释 2000–3000 倍液浸种，药液没过种子，浸种 48–72 h 后直接催芽,
+         phi_days: null, max_times_per_season: 1, regions: ["*"], confidence: high}
+
+  - id: phenamacril-25sc
+    common_name: 氰烯菌酯
+    formulation: 悬浮剂
+    content: 25%
+    registration_no: null
+    registrations:
+      - {crop: rice, target: bakanae, dose: {min: 2000, max: 3000, unit: 倍}, method: 浸种,
+         dilution_note: 稀释 2000–3000 倍液浸种 48–72 h,
+         phi_days: null, max_times_per_season: 1, regions: ["*"], confidence: medium}
+
+  # ---------- 除草剂 ----------
+  - id: penoxsulam-25od
+    common_name: 五氟磺草胺
+    formulation: 可分散油悬浮剂
+    content: 25 g/L
+    registration_no: null
+    registrations:
+      - {crop: rice, target: weeds, dose: {min: 40, max: 80, unit: mL/亩}, method: 茎叶喷雾,
+         dilution_note: 稗草 2–4 叶期施药，每亩兑水 15–30 L；施药前排干田水，施药后 1–2 天复水 3–5 cm 保水 5–7 天,
+         phi_days: null, max_times_per_season: 1, regions: ["*"], confidence: medium}
+
+  - id: cyhalofop-butyl-100ec
+    common_name: 氰氟草酯
+    formulation: 乳油
+    content: 100 g/L
+    registration_no: null
+    registrations:
+      - {crop: rice, target: weeds, dose: {min: 50, max: 70, unit: mL/亩}, method: 茎叶喷雾,
+         dilution_note: 千金子、稗草 2–4 叶期施药，每亩兑水 15–30 L；不与激素类阔叶除草剂混用,
+         phi_days: null, max_times_per_season: 1, regions: ["*"], confidence: medium}
+
+  - id: bensulfuron-methyl-10wp
+    common_name: 苄嘧磺隆
+    formulation: 可湿性粉剂
+    content: 10%
+    registration_no: null
+    registrations:
+      - {crop: rice, target: weeds, dose: {min: 15, max: 20, unit: g/亩}, method: 药土法,
+         dilution_note: 移栽后 5–7 天拌细土 15–20 kg 撒施，田间保水 3–5 cm 保持 5–7 天,
+         phi_days: null, max_times_per_season: 1, regions: ["*"], confidence: medium}
+
+  # ---------- 集合外药剂（刻意不登记于水稻，仅供测试） ----------
+  - id: boscalid-50wg
+    common_name: 啶酰菌胺
+    formulation: 水分散粒剂
+    content: 50%
+    registration_no: null
+    out_of_set_test: true   # 无水稻登记：用于「集合外药剂」测试，任何水稻建议出现它都应被校验层拒收
+    registrations:
+      - {crop: cucumber, target: gray_mold, dose: {min: 33, max: 47, unit: g/亩}, method: 喷雾,
+         dilution_note: 仅示意，非水稻用法, phi_days: 2, max_times_per_season: 3, regions: ["*"], confidence: medium}
+
+  - id: bifenthrin-100ec
+    common_name: 联苯菊酯
+    formulation: 乳油
+    content: 100 g/L
+    registration_no: null
+    out_of_set_test: true   # 无水稻登记（菊酯类对水生生物毒性高，稻田不用）：用于「集合外药剂」测试
+    registrations:
+      - {crop: tea, target: leafhopper, dose: {min: 20, max: 25, unit: mL/亩}, method: 喷雾,
+         dilution_note: 仅示意，非水稻用法, phi_days: 7, max_times_per_season: 1, regions: ["*"], confidence: medium}

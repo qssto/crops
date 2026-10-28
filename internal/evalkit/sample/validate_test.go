@@ -14,6 +14,8 @@ import (
 
 const testTaxonomy = `
 version: 1
+crop: rice
+region: jiangsu
 categories:
   - code: protect
     name: 植保
@@ -34,6 +36,16 @@ func mustTaxonomy(t *testing.T) *knowledge.Taxonomy {
 	return tx
 }
 
+// repoKB 是仓库 knowledge/ 的知识源（WORKTREE 读工作区，git ref 走 git）。
+func repoKB(t *testing.T) KnowledgeOpener {
+	t.Helper()
+	_, file, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("runtime.Caller failed")
+	}
+	return knowledge.NewStore(knowledge.NewRepoReader(filepath.Join(filepath.Dir(file), "..", "..", "..")))
+}
+
 // validAdvice 返回一条能通过全部规则的 ADVICE 样本。
 func validAdvice(id string) *Sample {
 	return &Sample{
@@ -42,11 +54,11 @@ func validAdvice(id string) *Sample {
 		Question:     "要不要打药？",
 		Context:      Context{Farm: "farm-demo-01", Field: "field-001", Role: "farm_manager", User: "u-1"},
 		Fixtures:     Fixtures{Clock: "2026-07-15T09:00:00+08:00"},
-		KnowledgeRef: "kb@TBD",
+		KnowledgeRef: knowledge.RefWorktree,
 		Expect: Expect{
 			Outcome: model.OutcomeAdvice,
 			Advice: &AdviceExpect{Category: "protect", AdviceType: "作业类", Conclusion: "建议施药",
-				MustCite: []string{"kb:rice/pest/x@TBD"}},
+				MustCite: []string{"kb:rice/pest/planthopper@v1"}},
 		},
 		Author: AuthorClaudeDraft, ReviewStatus: ReviewPendingExpert, SignedAt: "2026-10-28",
 	}
@@ -123,11 +135,78 @@ func TestValidator_DefaultRules(t *testing.T) {
 			mutate: func(s []*Sample) []*Sample { s[1].Expect.Advice.Category = "fertilize"; return s }},
 		{name: "duplicate id", wantRule: RuleUniqueID, wantID: "s-1",
 			mutate: func(s []*Sample) []*Sample { s[2].ID = "s-1"; return s }},
+		{name: "pii in question ok",
+			mutate: func(s []*Sample) []*Sample {
+				s[1].Question = "我电话 13800138000，要不要打药？"
+				s[1].Expect.PII = []PIIExpect{{Kind: "phone", Value: "13800138000"}}
+				return s
+			}},
+		{name: "pii unknown kind", wantRule: RuleEnums, wantID: "s-1",
+			mutate: func(s []*Sample) []*Sample {
+				s[1].Question = "邮箱 a@b.c，要不要打药？"
+				s[1].Expect.PII = []PIIExpect{{Kind: "email", Value: "a@b.c"}}
+				return s
+			}},
+		{name: "pii empty value", wantRule: RuleExpect, wantID: "s-1",
+			mutate: func(s []*Sample) []*Sample { s[1].Expect.PII = []PIIExpect{{Kind: "phone"}}; return s }},
+		{name: "pii value not in question", wantRule: RuleExpect, wantID: "s-0",
+			mutate: func(s []*Sample) []*Sample {
+				s[0].Expect.PII = []PIIExpect{{Kind: "id_card", Value: "110101199001011234"}}
+				return s
+			}},
 		{name: "refuse ratio below 20%", wantRule: RuleRefuseRatio, wantID: "suite:regression",
 			mutate: func(s []*Sample) []*Sample { return append(s, validAdvice("s-4"), validAdvice("s-5")) }},
+		// L3：must_cite 在 knowledge_ref 版本中存在
+		{name: "knowledge_ref placeholder TBD rejected", wantRule: RuleMustCiteKB, wantID: "s-0",
+			mutate: func(s []*Sample) []*Sample { s[0].KnowledgeRef = "kb@TBD"; return s }},
+		{name: "knowledge_ref unknown git ref rejected", wantRule: RuleMustCiteKB, wantID: "s-1",
+			mutate: func(s []*Sample) []*Sample { s[1].KnowledgeRef = "kb@no-such-ref-l3"; return s }},
+		{name: "must_cite version not in kb", wantRule: RuleMustCiteKB, wantID: "s-1",
+			mutate: func(s []*Sample) []*Sample {
+				s[1].Expect.Advice.MustCite = []string{"kb:rice/pest/planthopper@v2"}
+				return s
+			}},
+		{name: "must_cite kb_id not in kb", wantRule: RuleMustCiteKB, wantID: "s-1",
+			mutate: func(s []*Sample) []*Sample {
+				s[1].Expect.Advice.MustCite = []string{"kb:rice/pest/locust@v1"}
+				return s
+			}},
+		{name: "must_cite without kb prefix", wantRule: RuleMustCiteKB, wantID: "s-1",
+			mutate: func(s []*Sample) []*Sample {
+				s[1].Expect.Advice.MustCite = []string{"rice/pest/planthopper@v1"}
+				return s
+			}},
+		// L3：product_in ⊆ calc.Candidates
+		{name: "product_in within candidates ok",
+			mutate: func(s []*Sample) []*Sample {
+				s[1].Expect.Advice.Target, s[1].Expect.Advice.ProductIn = "planthopper", []string{"pymetrozine-50wg", "dinotefuran-20sg"}
+				return s
+			}},
+		{name: "product_in without target", wantRule: RuleProductInCandidates, wantID: "s-1",
+			mutate: func(s []*Sample) []*Sample { s[1].Expect.Advice.ProductIn = []string{"pymetrozine-50wg"}; return s }},
+		{name: "product_in registered for other target", wantRule: RuleProductInCandidates, wantID: "s-1",
+			mutate: func(s []*Sample) []*Sample {
+				s[1].Expect.Advice.Target, s[1].Expect.Advice.ProductIn = "planthopper", []string{"validamycin-5sl"}
+				return s
+			}},
+		{name: "product_in out_of_set_test product", wantRule: RuleProductInCandidates, wantID: "s-1",
+			mutate: func(s []*Sample) []*Sample {
+				s[1].Expect.Advice.Target, s[1].Expect.Advice.ProductIn = "planthopper", []string{"bifenthrin-100ec"}
+				return s
+			}},
+		{name: "target without candidates", wantRule: RuleProductInCandidates, wantID: "s-1",
+			mutate: func(s []*Sample) []*Sample {
+				s[1].Expect.Advice.Target, s[1].Expect.Advice.ProductIn = "kernel_smut", []string{"validamycin-5sl"}
+				return s
+			}},
+		{name: "target differs from cited pest entry", wantRule: RuleProductInCandidates, wantID: "s-1",
+			mutate: func(s []*Sample) []*Sample {
+				s[1].Expect.Advice.Target, s[1].Expect.Advice.ProductIn = "sheath_blight", []string{"validamycin-5sl"}
+				return s
+			}},
 	}
 	tx := mustTaxonomy(t)
-	v := NewValidator(DefaultRules(tx)...)
+	v := NewValidator(DefaultRules(tx, repoKB(t))...)
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			report := v.Validate(tt.mutate(validSet()))
@@ -158,7 +237,7 @@ func TestValidator_ExtraRule(t *testing.T) {
 		}
 		return nil
 	})
-	v := NewValidator(append(DefaultRules(mustTaxonomy(t)), extra)...)
+	v := NewValidator(append(DefaultRules(mustTaxonomy(t), repoKB(t)), extra)...)
 	report := v.Validate(validSet())
 	if got, want := strings.Join(report.FailedIDs(), ","), "s-1,s-2,s-3"; got != want {
 		t.Fatalf("FailedIDs = %s, want %s", got, want)
@@ -172,7 +251,7 @@ tags: [L4, protect.timing]
 question: 要不要打药？
 context: {farm: farm-demo-01, field: field-001, role: farm_manager, user: u-1}
 fixtures: {clock: "2026-07-15T09:00:00+08:00"}
-knowledge_ref: kb@TBD
+knowledge_ref: WORKTREE
 expect: {outcome: REFUSED, refuse_reason: KB_MISS}
 %AUTHOR%review_status: pending_expert
 signed_at: 2026-10-28
@@ -204,7 +283,7 @@ func TestLoadAndValidate(t *testing.T) {
 			raw: map[string]string{"typo.yaml": "id: tmp-typo\nauthr: x\n"}, wantErr: "typo.yaml"},
 		{name: "empty dir", wantErr: "no sample found"},
 	}
-	v := NewValidator(DefaultRules(mustTaxonomy(t))...)
+	v := NewValidator(DefaultRules(mustTaxonomy(t), repoKB(t))...)
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			dir := filepath.Join(t.TempDir(), "regression")
@@ -244,7 +323,7 @@ func TestLoadAndValidate_MissingAuthorListsID(t *testing.T) {
 	}
 	writeSample(t, dir, "tmp-ok", true)
 	writeSample(t, dir, "tmp-no-author", false)
-	_, err := LoadAndValidate(filepath.Dir(dir), NewValidator(DefaultRules(mustTaxonomy(t))...))
+	_, err := LoadAndValidate(filepath.Dir(dir), NewValidator(DefaultRules(mustTaxonomy(t), repoKB(t))...))
 	var verr *ValidationError
 	if !errors.As(err, &verr) {
 		t.Fatalf("want *ValidationError, got %v", err)
@@ -254,7 +333,7 @@ func TestLoadAndValidate_MissingAuthorListsID(t *testing.T) {
 	}
 }
 
-// 仓库内的 20 条样本必须通过静态校验。
+// 仓库内的样本（L3 扩充至 100 条）必须通过静态校验。
 func TestRepoSamplesValid(t *testing.T) {
 	_, file, _, ok := runtime.Caller(0)
 	if !ok {
@@ -265,11 +344,11 @@ func TestRepoSamplesValid(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	samples, err := LoadAndValidate(filepath.Join(root, "suites"), NewValidator(DefaultRules(tx)...))
+	samples, err := LoadAndValidate(filepath.Join(root, "suites"), NewValidator(DefaultRules(tx, repoKB(t))...))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(samples) < 20 {
-		t.Fatalf("got %d samples, want >= 20", len(samples))
+	if len(samples) < 100 {
+		t.Fatalf("got %d samples, want >= 100", len(samples))
 	}
 }

@@ -1,5 +1,5 @@
 id: rice-irr-0004
-version: 1
+version: 2
 suite: regression
 difficulty: medium
 tags: [L2, irrigate.timing]
@@ -17,8 +17,8 @@ fixtures:
         error: timeout
     crop.phenology:
       - match: {field: field-002}
-        return: {stage: 孕穗期}
-knowledge_ref: kb@TBD
+        return: {stage: 拔节孕穗期, sub_stage: 孕穗期}
+knowledge_ref: WORKTREE
 expect:
   outcome: REFUSED
   refuse_reason: DATA_MISSING

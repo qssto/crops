@@ -1,0 +1,41 @@
+id: rice-irr-0009
+version: 1
+suite: regression
+difficulty: hard
+tags: [L3, L4, irrigate.amount]
+question: 1号田现在水层1厘米，要补到3厘米，大概要灌多少方水？
+context:
+  farm: farm-demo-01
+  field: field-001
+  role: operator
+  user: u-op-01
+fixtures:
+  clock: 2026-07-28T07:00:00+08:00
+  mcp:
+    field.profile:
+      - match: {field: field-001}
+        return: {area_mu: 30.0}
+    crop.phenology:
+      - match: {field: field-001}
+        return: {stage: 拔节孕穗期, sub_stage: 幼穗分化期}
+    field.history:
+      - match: {field: field-001}
+        return: {water_depth_cm: 1, last_drain: {start: "2026-07-08", end: "2026-07-17"}}
+knowledge_ref: WORKTREE
+expect:
+  outcome: ADVICE
+  advice:
+    category: irrigate
+    advice_type: 作业类
+    conclusion: 田面已有水层补水，灌水量按面积、水层差与 1.05 渗漏系数由规则层计算（草拟，待专家确认）
+    must_cite: [kb:rice/irrigation/water-volume@v1]
+    numbers:
+      - {field: water_m3, value: 420, unit: m3, precision: 1}
+  trajectory:
+    must_call: [field.profile, field.history]
+    must_not_call: ["device.*"]
+    budget: {max_steps: 10, max_tokens: 6000}
+author: claude-draft
+review_status: pending_expert
+signed_at: 2026-10-28
+notes: 30 亩 × 666.67 m2 × (3 - 1) cm ÷ 100 × 1.05 = 420.0 m3；晒田已于 07-17 结束并复水，不取 1.2

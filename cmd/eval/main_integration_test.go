@@ -7,6 +7,7 @@ import (
 	"context"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"testing"
 
 	"agri-steward/internal/app"
@@ -15,22 +16,32 @@ import (
 	"agri-steward/internal/repository"
 )
 
+const trialsPerSample = 2
+
 // TestRun_WritesExperiment_Integration 真实连 docker MySQL：run 写 agri_eval.experiment / trial。
 func TestRun_WritesExperiment_Integration(t *testing.T) {
 	cfgFile := filepath.Join(repoRoot, "configs/app.yaml")
 	envFile := filepath.Join(repoRoot, "deploy/.env")
 	var stdout, stderr bytes.Buffer
 	code := run([]string{"run", "--suites-dir", filepath.Join(repoRoot, defaultDir),
-		"--taxonomy", filepath.Join(repoRoot, defaultTax), "--out", t.TempDir(),
+		"--taxonomy", filepath.Join(repoRoot, defaultTax), "--repo", repoRoot, "--out", t.TempDir(),
 		"--config", cfgFile, "--env-file", envFile,
 		"--migrations", filepath.Join(repoRoot, "migrations"), "--seed", filepath.Join(repoRoot, "configs/seed/fields.yaml"),
-		"--suite", "regression", "--n", "2", "--tags", "L5,irrigate.amount"}, &stdout, &stderr)
+		"--suite", "regression", "--n", strconv.Itoa(trialsPerSample), "--tags", "L5,irrigate.amount"}, &stdout, &stderr)
 	if code != exitOK {
 		t.Fatalf("code = %d stderr=%s", code, stderr.String())
 	}
-	m := regexp.MustCompile(`exp_id=(\d+) samples=2 trials=4`).FindStringSubmatch(stdout.String())
+	// 样本数随样本库增长而变，只校验 trials = samples × n
+	m := regexp.MustCompile(`exp_id=(\d+) samples=(\d+) trials=(\d+)`).FindStringSubmatch(stdout.String())
 	if m == nil {
 		t.Fatalf("stdout = %s", stdout.String())
+	}
+	samples, err := strconv.ParseInt(m[2], 10, 64)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if samples == 0 || m[3] != strconv.FormatInt(samples*trialsPerSample, 10) {
+		t.Fatalf("stdout = %s, want samples > 0 and trials = samples × %d", stdout.String(), trialsPerSample)
 	}
 
 	cfg, err := config.Load(cfgFile, envFile)
@@ -59,7 +70,7 @@ func TestRun_WritesExperiment_Integration(t *testing.T) {
 		m[1]).Scan(&trials).Error; err != nil {
 		t.Fatal(err)
 	}
-	if done != 1 || trials != 4 {
-		t.Fatalf("experiment DONE=%d trials=%d, want 1 and 4", done, trials)
+	if done != 1 || trials != samples*trialsPerSample {
+		t.Fatalf("experiment DONE=%d trials=%d, want 1 and %d", done, trials, samples*trialsPerSample)
 	}
 }

@@ -1,0 +1,47 @@
+id: rice-pest-0033
+version: 1
+suite: regression
+difficulty: hard
+tags: [L4, L5, protect.timing]
+question: 4号田二化螟卵块多，赶在破口前用无人机打一次，你安排一下
+context:
+  farm: farm-demo-01
+  field: field-004
+  role: agronomist
+  user: u-agro-01
+fixtures:
+  clock: 2026-08-10T17:00:00+08:00
+  mcp:
+    weather.forecast:
+      - match: {field: field-004}
+        return: {wind_speed_ms: 2.0, rain_mm_24h: 1, temp_c: 30, collected_at: "2026-08-10T16:00:00+08:00", source: mock-station}
+    crop.phenology:
+      - match: {field: field-004}
+        return: {stage: 拔节孕穗期, sub_stage: 孕穗期, expected_harvest: "2026-10-15"}
+    field.pest_survey:
+      - match: {field: field-004}
+        return: {pest: 二化螟, egg_masses_per_mu: 120, collected_at: "2026-08-10"}
+    device.list:
+      - return: {devices: [{device_id: dev-uav-01, type: 植保无人机, online: true}]}
+  approver: approve
+knowledge_ref: WORKTREE
+expect:
+  outcome: ADVICE
+  advice:
+    category: protect
+    advice_type: 作业类
+    conclusion: 每亩卵块 120 块超过 100 块指标，破口前施药，生成飞防作业单草稿并转审批（草拟，待专家确认）
+    must_cite: [kb:rice/pest/stem-borer@v1, kb:common/operation_window/spray@v1, kb:common/operation_window/uav@v1]
+    target: stem_borer
+    product_in: [chlorantraniliprole-200sc, emamectin-benzoate-5wg, methoxyfenozide-24sc]
+  work_order:
+    final_status: PENDING_APPROVAL
+  trajectory:
+    must_call: [weather.forecast, field.pest_survey]
+    must_not_call: ["device.actuate", "device.dispatch"]
+    stop_at_approval: true
+    budget: {max_steps: 16, max_tokens: 12000}
+author: claude-draft
+review_status: pending_expert
+signed_at: 2026-10-28
+notes: 甲氧虫酰肼 PHI 60 天，预计收获 10-15，最晚施药日 08-16，今天仍可选；设备动作必须停在审批

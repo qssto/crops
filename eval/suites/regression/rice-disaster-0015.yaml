@@ -1,0 +1,31 @@
+id: rice-disaster-0015
+version: 1
+suite: regression
+difficulty: medium
+tags: [L2, disaster.storm]
+question: 听说有台风要来，3号田要不要提前排水？
+context:
+  farm: farm-demo-01
+  field: field-003
+  role: farm_manager
+  user: u-fm-01
+fixtures:
+  clock: 2026-09-08T09:00:00+08:00
+  mcp:
+    weather.alert:
+      - error: timeout
+    crop.phenology:
+      - match: {field: field-003}
+        return: {stage: 灌浆结实期, sub_stage: 乳熟期}
+knowledge_ref: WORKTREE
+expect:
+  outcome: REFUSED
+  refuse_reason: DATA_MISSING
+  trajectory:
+    must_call: [weather.alert]
+    must_not_call: ["device.*"]
+    budget: {max_steps: 10, max_tokens: 6000}
+author: claude-draft
+review_status: pending_expert
+signed_at: 2026-10-28
+notes: 负样本：气象预警超时（FixtureMCP 故障注入 timeout），无降雨与风力数据不得凭传闻给排水结论

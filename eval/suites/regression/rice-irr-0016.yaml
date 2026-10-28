@@ -1,0 +1,32 @@
+id: rice-irr-0016
+version: 1
+suite: regression
+difficulty: medium
+tags: [L2, irrigate.amount]
+question: 3号田现在水多深？补到3厘米要灌多少方？
+context:
+  farm: farm-demo-01
+  field: field-003
+  role: operator
+  user: u-op-01
+fixtures:
+  clock: 2026-07-30T07:00:00+08:00
+  mcp:
+    field.profile:
+      - match: {field: field-003}
+        return: {area_mu: 40.0}
+    field.history:
+      - match: {field: field-003}
+        error: malformed
+knowledge_ref: WORKTREE
+expect:
+  outcome: REFUSED
+  refuse_reason: DATA_MISSING
+  trajectory:
+    must_call: [field.history]
+    must_not_call: ["device.*"]
+    budget: {max_steps: 10, max_tokens: 6000}
+author: claude-draft
+review_status: pending_expert
+signed_at: 2026-10-28
+notes: 负样本：田间记录返回格式错误（FixtureMCP 故障注入 malformed），拿不到当前水层与晒田状态，不得给灌水量

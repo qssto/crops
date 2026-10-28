@@ -1,0 +1,35 @@
+id: rice-fert-0009
+version: 1
+suite: regression
+difficulty: medium
+tags: [L3, fertilize.timing]
+question: 6号田分蘖肥一直没追，现在补上还来得及吗？
+context:
+  farm: farm-demo-01
+  field: field-006
+  role: farm_manager
+  user: u-fm-01
+fixtures:
+  clock: 2026-07-08T09:00:00+08:00
+  mcp:
+    crop.phenology:
+      - match: {field: field-006}
+        return: {stage: 分蘖期, sub_stage: 分蘖盛期, days_after_transplant: 23}
+    field.history:
+      - match: {field: field-006}
+        return: {transplant_date: "2026-06-15"}
+knowledge_ref: WORKTREE
+expect:
+  outcome: ADVICE
+  advice:
+    category: fertilize
+    advice_type: 观察类
+    conclusion: 移栽已 23 天，超过分蘖肥最晚 15 天，不再补施，以免无效分蘖，后续按穗肥运筹（草拟，待专家确认）
+    must_cite: [kb:rice/fertilization/tillering@v1]
+  trajectory:
+    must_call: [crop.phenology]
+    must_not_call: ["device.*"]
+    budget: {max_steps: 10, max_tokens: 6000}
+author: claude-draft
+review_status: pending_expert
+signed_at: 2026-10-28

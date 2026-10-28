@@ -1,0 +1,41 @@
+id: rice-irr-0012
+version: 1
+suite: regression
+difficulty: hard
+tags: [L3, L4, irrigate.amount]
+question: 2号田抽穗了，现在水层2厘米，加到5厘米要灌多少方水？
+context:
+  farm: farm-demo-01
+  field: field-002
+  role: operator
+  user: u-op-01
+fixtures:
+  clock: 2026-08-25T07:00:00+08:00
+  mcp:
+    field.profile:
+      - match: {field: field-002}
+        return: {area_mu: 32.5}
+    crop.phenology:
+      - match: {field: field-002}
+        return: {stage: 抽穗扬花期, sub_stage: 齐穗期}
+    field.history:
+      - match: {field: field-002}
+        return: {water_depth_cm: 2}
+knowledge_ref: WORKTREE
+expect:
+  outcome: ADVICE
+  advice:
+    category: irrigate
+    advice_type: 作业类
+    conclusion: 抽穗扬花期保持 3–5 cm 水层，补水量按面积、水层差与 1.05 渗漏系数由规则层计算（草拟，待专家确认）
+    must_cite: [kb:rice/irrigation/heading@v1, kb:rice/irrigation/water-volume@v1]
+    numbers:
+      - {field: water_m3, value: 682.5, unit: m3, precision: 1}
+  trajectory:
+    must_call: [field.profile, field.history]
+    must_not_call: ["device.*"]
+    budget: {max_steps: 10, max_tokens: 6000}
+author: claude-draft
+review_status: pending_expert
+signed_at: 2026-10-28
+notes: 32.5 亩 × 666.67 m2 × (5 - 2) cm ÷ 100 × 1.05 = 682.50 m3

@@ -1,0 +1,38 @@
+id: rice-disaster-0006
+version: 1
+suite: regression
+difficulty: medium
+tags: [L2, L4, disaster.cold]
+question: 1号田正在孕穗，这两天要降温，有影响吗？要做什么？
+context:
+  farm: farm-demo-01
+  field: field-001
+  role: agronomist
+  user: u-agro-01
+fixtures:
+  clock: 2026-08-12T09:00:00+08:00
+  mcp:
+    weather.forecast:
+      - match: {field: field-001}
+        return: {mean_temp_c_3d: [16.5, 16.0, 19.0], collected_at: "2026-08-12T08:00:00+08:00", source: mock-station}
+    crop.phenology:
+      - match: {field: field-001}
+        return: {stage: 拔节孕穗期, sub_stage: 减数分裂期}
+knowledge_ref: WORKTREE
+expect:
+  outcome: ADVICE
+  advice:
+    category: disaster
+    advice_type: 作业类
+    conclusion: 孕穗期日均温 ≤ 17 ℃ 连续 2 天，达到低温指标，降温前灌深水 5–10 cm 保温（草拟，待专家确认）
+    must_cite: [kb:rice/disaster/cold@v1]
+    numbers:
+      - {field: warm_water_cm_min, value: 5, unit: cm, precision: 0.5}
+      - {field: warm_water_cm_max, value: 10, unit: cm, precision: 0.5}
+  trajectory:
+    must_call: [weather.forecast, crop.phenology]
+    must_not_call: ["device.*"]
+    budget: {max_steps: 10, max_tokens: 8000}
+author: claude-draft
+review_status: pending_expert
+signed_at: 2026-10-28

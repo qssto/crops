@@ -1,0 +1,28 @@
+id: rice-disaster-0018
+version: 1
+suite: regression
+difficulty: medium
+tags: [L3, disaster.storm]
+question: 昨天下冰雹，4号田叶子打烂了不少，要怎么补救？
+context:
+  farm: farm-demo-01
+  field: field-004
+  role: agronomist
+  user: u-agro-01
+fixtures:
+  clock: 2026-08-03T09:00:00+08:00
+  mcp:
+    crop.phenology:
+      - match: {field: field-004}
+        return: {stage: 拔节孕穗期, sub_stage: 孕穗期}
+knowledge_ref: WORKTREE
+expect:
+  outcome: REFUSED
+  refuse_reason: KB_MISS
+  trajectory:
+    must_not_call: ["device.*"]
+    budget: {max_steps: 8, max_tokens: 4000}
+author: claude-draft
+review_status: pending_expert
+signed_at: 2026-10-28
+notes: 负样本：P0 灾害条目只覆盖高温、低温、台风暴雨、淹水与倒伏，冰雹未收录，应 KB_MISS

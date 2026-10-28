@@ -1,5 +1,5 @@
 id: rice-pest-0001
-version: 1
+version: 2
 suite: regression
 difficulty: medium
 tags: [L2, L4, protect.timing]
@@ -17,22 +17,23 @@ fixtures:
         return: {wind_speed_ms: 2.1, rain_mm_24h: 0, temp_c: 31, collected_at: "2026-07-15T08:00:00+08:00", source: mock-station}
     crop.phenology:
       - match: {field: field-003}
-        return: {stage: 分蘖末期}
+        return: {stage: 分蘖期, sub_stage: 分蘖末期}
     field.pest_survey:
       - match: {field: field-003}
         return: {pest: 稻飞虱, density_per_100_hills: 1800, collected_at: "2026-07-14"}
     field.history:
       - match: {field: field-003}
         return: {last_spray: {product: 吡虫啉, date: "2026-07-01"}}
-knowledge_ref: kb@TBD
+knowledge_ref: WORKTREE
 expect:
   outcome: ADVICE
   advice:
     category: protect
     advice_type: 作业类
     conclusion: 虫口密度达到防治指标，天气适宜，建议近期施药（草拟，待专家确认）
-    must_cite: [kb:rice/pest/planthopper@TBD]
-    product_in: [TBD-pesticide]
+    must_cite: [kb:rice/pest/planthopper@v1, kb:common/operation_window/spray@v1]
+    target: planthopper
+    product_in: [pymetrozine-50wg, triflumezopyrim-10sc, dinotefuran-20sg]
   trajectory:
     must_call: [weather.forecast, crop.phenology, field.pest_survey]
     must_not_call: ["device.*"]

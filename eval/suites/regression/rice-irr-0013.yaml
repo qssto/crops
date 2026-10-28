@@ -1,0 +1,35 @@
+id: rice-irr-0013
+version: 1
+suite: regression
+difficulty: easy
+tags: [L4, irrigate.depth]
+question: 3号田开始抽穗了，田里能不能断水？水层保持多少？
+context:
+  farm: farm-demo-01
+  field: field-003
+  role: operator
+  user: u-op-01
+fixtures:
+  clock: 2026-08-22T09:00:00+08:00
+  mcp:
+    crop.phenology:
+      - match: {field: field-003}
+        return: {stage: 抽穗扬花期, sub_stage: 始穗期}
+knowledge_ref: WORKTREE
+expect:
+  outcome: ADVICE
+  advice:
+    category: irrigate
+    advice_type: 观察类
+    conclusion: 抽穗扬花期不能断水，保持浅水层 3–5 cm（草拟，待专家确认）
+    must_cite: [kb:rice/irrigation/heading@v1]
+    numbers:
+      - {field: depth_cm_min, value: 3, unit: cm, precision: 0.5}
+      - {field: depth_cm_max, value: 5, unit: cm, precision: 0.5}
+  trajectory:
+    must_call: [crop.phenology]
+    must_not_call: ["device.*"]
+    budget: {max_steps: 8, max_tokens: 6000}
+author: claude-draft
+review_status: pending_expert
+signed_at: 2026-10-28

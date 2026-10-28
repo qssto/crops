@@ -1,0 +1,38 @@
+id: rice-pest-0011
+version: 1
+suite: regression
+difficulty: medium
+tags: [L3, L4, protect.identify]
+question: 6号田叶片上有梭形病斑，中间灰白、边缘褐色，是不是稻瘟病？要不要打药？
+context:
+  farm: farm-demo-01
+  field: field-006
+  role: farm_manager
+  user: u-fm-01
+fixtures:
+  clock: 2026-07-12T09:00:00+08:00
+  mcp:
+    crop.phenology:
+      - match: {field: field-006}
+        return: {stage: 分蘖期, sub_stage: 分蘖末期}
+    field.pest_survey:
+      - match: {field: field-006}
+        return: {disease: 稻瘟病, disease_centers: 2, collected_at: "2026-07-11"}
+knowledge_ref: WORKTREE
+expect:
+  outcome: ADVICE
+  advice:
+    category: protect
+    advice_type: 作业类
+    conclusion: 症状符合叶瘟慢性型病斑，调查已见 2 个发病中心，达到施药条件（草拟，待专家确认）
+    must_cite: [kb:rice/pest/blast@v1]
+    target: blast
+    product_in: [tricyclazole-75wp, isoprothiolane-40ec, kasugamycin-2sl]
+  trajectory:
+    must_call: [field.pest_survey]
+    must_not_call: ["device.*"]
+    budget: {max_steps: 12, max_tokens: 8000}
+author: claude-draft
+review_status: pending_expert
+signed_at: 2026-10-28
+notes: 症状描述只支撑「疑似」，作业结论依赖 field.pest_survey 的发病中心记录

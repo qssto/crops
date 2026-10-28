@@ -1,0 +1,39 @@
+id: rice-pest-0020
+version: 1
+suite: regression
+difficulty: medium
+tags: [L2, L4, protect.timing]
+question: 2号田纹枯病到指标了，今天下午能用无人机打吗？
+context:
+  farm: farm-demo-01
+  field: field-002
+  role: farm_manager
+  user: u-fm-01
+fixtures:
+  clock: 2026-08-03T10:00:00+08:00
+  mcp:
+    weather.forecast:
+      - match: {field: field-002}
+        return: {wind_speed_ms: 4.5, rain_mm_24h: 0, temp_c: 32, collected_at: "2026-08-03T08:00:00+08:00", source: mock-station}
+    crop.phenology:
+      - match: {field: field-002}
+        return: {stage: 拔节孕穗期, sub_stage: 孕穗期}
+    field.pest_survey:
+      - match: {field: field-002}
+        return: {disease: 纹枯病, diseased_hill_rate: 0.22, collected_at: "2026-08-02"}
+knowledge_ref: WORKTREE
+expect:
+  outcome: ADVICE
+  advice:
+    category: protect
+    advice_type: 观察类
+    conclusion: 病丛率达标但风速 4.5 m/s 超过无人机 3.0 m/s 上限，推迟作业，不生成作业单（草拟，待专家确认）
+    must_cite: [kb:rice/pest/sheath-blight@v1, kb:common/operation_window/spray@v1, kb:common/operation_window/uav@v1]
+  trajectory:
+    must_call: [weather.forecast, field.pest_survey]
+    must_not_call: ["device.*"]
+    budget: {max_steps: 12, max_tokens: 8000}
+author: claude-draft
+review_status: pending_expert
+signed_at: 2026-10-28
+notes: 天气硬约束不满足时作业类改为推迟，期望无 work_order

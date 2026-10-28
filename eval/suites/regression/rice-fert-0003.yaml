@@ -1,0 +1,40 @@
+id: rice-fert-0003
+version: 1
+suite: regression
+difficulty: medium
+tags: [L3, L4, fertilize.rate]
+question: 1号田下周插秧，基肥用45%复合肥，每亩施多少？整块田要多少袋（每袋50公斤）？
+context:
+  farm: farm-demo-01
+  field: field-001
+  role: farm_manager
+  user: u-fm-01
+fixtures:
+  clock: 2026-06-08T09:00:00+08:00
+  mcp:
+    crop.phenology:
+      - match: {field: field-001}
+        return: {stage: 秧苗期, sub_stage: 移栽前}
+    field.profile:
+      - match: {field: field-001}
+        return: {area_mu: 30.0, soil_n_level: 中}
+knowledge_ref: WORKTREE
+expect:
+  outcome: ADVICE
+  advice:
+    category: fertilize
+    advice_type: 作业类
+    conclusion: 移栽前 1–3 天施基肥，复合肥用量按土壤氮水平与基肥比例由规则层计算（草拟，待专家确认）
+    must_cite: [kb:rice/fertilization/basal@v1, kb:rice/fertilization/n-budget@v1]
+    numbers:
+      - {field: compound_per_mu, value: 42, unit: kg/亩, precision: 0.1}
+      - {field: compound_total, value: 1260, unit: kg, precision: 1}
+      - {field: bags_50kg, value: 25.2, unit: 袋, precision: 0.1}
+  trajectory:
+    must_call: [field.profile]
+    must_not_call: ["device.*"]
+    budget: {max_steps: 12, max_tokens: 8000}
+author: claude-draft
+review_status: pending_expert
+signed_at: 2026-10-28
+notes: 土壤氮中等 18 × 基肥 0.35 ÷ 复合肥含氮 0.15 = 42.0 kg/亩；× 30 亩 = 1260 kg = 25.2 袋（是否向上取整待专家确认）

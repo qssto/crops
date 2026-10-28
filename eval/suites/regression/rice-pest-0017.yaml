@@ -1,0 +1,41 @@
+id: rice-pest-0017
+version: 1
+suite: regression
+difficulty: hard
+tags: [L3, L4, protect.product]
+question: 3号田稻飞虱上次用的三氟苯嘧啶效果不错，这次还用它行不行？
+context:
+  farm: farm-demo-01
+  field: field-003
+  role: agronomist
+  user: u-agro-01
+fixtures:
+  clock: 2026-08-08T09:00:00+08:00
+  mcp:
+    crop.phenology:
+      - match: {field: field-003}
+        return: {stage: 拔节孕穗期, sub_stage: 孕穗期, expected_harvest: "2026-10-15"}
+    field.pest_survey:
+      - match: {field: field-003}
+        return: {pest: 稻飞虱, density_per_100_hills: 1400, collected_at: "2026-08-07"}
+    field.history:
+      - match: {field: field-003}
+        return: {sprays: [{product: 三氟苯嘧啶, target: 稻飞虱, date: "2026-07-16"}]}
+knowledge_ref: WORKTREE
+expect:
+  outcome: ADVICE
+  advice:
+    category: protect
+    advice_type: 作业类
+    conclusion: 三氟苯嘧啶每季限用 1 次且本季已用，须换用吡蚜酮或呋虫胺（草拟，待专家确认）
+    must_cite: [kb:rice/pest/planthopper@v1, kb:common/safety/resistance@v1]
+    target: planthopper
+    product_in: [pymetrozine-50wg, dinotefuran-20sg]
+  trajectory:
+    must_call: [field.pest_survey, field.history]
+    must_not_call: ["device.*"]
+    budget: {max_steps: 14, max_tokens: 10000}
+author: claude-draft
+review_status: pending_expert
+signed_at: 2026-10-28
+notes: 登记表 triflumezopyrim-10sc max_times_per_season = 1，已达上限从候选剔除

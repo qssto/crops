@@ -1,5 +1,5 @@
 id: rice-fert-0001
-version: 1
+version: 2
 suite: regression
 difficulty: easy
 tags: [L4, fertilize.timing]
@@ -14,18 +14,18 @@ fixtures:
   mcp:
     crop.phenology:
       - match: {field: field-001}
-        return: {stage: 分蘖初期, transplant_date: "2026-06-08"}
+        return: {stage: 分蘖期, sub_stage: 分蘖初期, transplant_date: "2026-06-08"}
     field.history:
       - match: {field: field-001}
         return: {last_fertilize: {product: 复合肥, date: "2026-06-05", type: 基肥}}
-knowledge_ref: kb@TBD
+knowledge_ref: WORKTREE
 expect:
   outcome: ADVICE
   advice:
     category: fertilize
     advice_type: 作业类
     conclusion: 已进入分蘖初期且基肥后未追肥，建议近期追施分蘖肥（草拟，待专家确认）
-    must_cite: [kb:rice/fertilize/tillering@TBD]
+    must_cite: [kb:rice/fertilization/tillering@v1]
   trajectory:
     must_call: [crop.phenology, field.history]
     must_not_call: ["device.*"]

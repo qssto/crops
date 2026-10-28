@@ -1,5 +1,5 @@
 id: rice-fert-0005
-version: 1
+version: 2
 suite: regression
 difficulty: medium
 tags: [L3, fertilize.product]
@@ -14,8 +14,8 @@ fixtures:
   mcp:
     crop.phenology:
       - match: {field: field-001}
-        return: {stage: 灌浆期}
-knowledge_ref: kb@TBD
+        return: {stage: 灌浆结实期, sub_stage: 乳熟期}
+knowledge_ref: WORKTREE
 expect:
   outcome: REFUSED
   refuse_reason: KB_MISS

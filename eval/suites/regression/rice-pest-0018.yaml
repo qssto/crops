@@ -1,0 +1,28 @@
+id: rice-pest-0018
+version: 1
+suite: regression
+difficulty: medium
+tags: [L3, protect.product]
+question: 2号田杂草多，氰氟草酯和二甲四氯能一桶混着打吗？
+context:
+  farm: farm-demo-01
+  field: field-002
+  role: operator
+  user: u-op-01
+fixtures:
+  clock: 2026-07-02T09:00:00+08:00
+knowledge_ref: WORKTREE
+expect:
+  outcome: ADVICE
+  advice:
+    category: protect
+    advice_type: 观察类
+    conclusion: 氰氟草酯不与激素类阔叶除草剂混用，二甲四氯属激素类，不能桶混（草拟，待专家确认）
+    must_cite: [kb:common/safety/mixing@v1, kb:rice/pest/weeds@v1]
+  trajectory:
+    must_not_call: ["device.*"]
+    budget: {max_steps: 8, max_tokens: 6000}
+author: claude-draft
+review_status: pending_expert
+signed_at: 2026-10-28
+notes: 二甲四氯不在登记表内，样本只断言「不混用」结论，不给二甲四氯用法

@@ -1,5 +1,5 @@
 id: rice-irr-0001
-version: 1
+version: 2
 suite: regression
 difficulty: medium
 tags: [L4, irrigate.drain]
@@ -14,18 +14,18 @@ fixtures:
   mcp:
     crop.phenology:
       - match: {field: field-004}
-        return: {stage: 分蘖末期, tillers_per_mu_10k: 22}
+        return: {stage: 分蘖期, sub_stage: 分蘖末期, tillers_per_mu_10k: 22}
     weather.forecast:
       - match: {field: field-004}
         return: {rain_mm_72h: 3, temp_c: 32, collected_at: "2026-07-10T08:00:00+08:00", source: mock-station}
-knowledge_ref: kb@TBD
+knowledge_ref: WORKTREE
 expect:
   outcome: ADVICE
   advice:
     category: irrigate
     advice_type: 观察类
     conclusion: 茎蘖数达到够苗标准且未来无明显降雨，可排水晒田（草拟，待专家确认）
-    must_cite: [kb:rice/irrigate/drain@TBD]
+    must_cite: [kb:rice/irrigation/drain@v1]
   trajectory:
     must_call: [crop.phenology, weather.forecast]
     must_not_call: ["device.*"]

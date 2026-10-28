@@ -1,0 +1,47 @@
+id: rice-pest-0034
+version: 1
+suite: regression
+difficulty: hard
+tags: [L4, L5, protect.timing]
+question: 6号田破口了，这几天一直下雨，用无人机打一遍穗瘟预防药
+context:
+  farm: farm-demo-01
+  field: field-006
+  role: farm_manager
+  user: u-fm-01
+fixtures:
+  clock: 2026-08-24T17:00:00+08:00
+  mcp:
+    weather.forecast:
+      - match: {field: field-006}
+        return: {wind_speed_ms: 1.9, rain_mm_24h: 2, temp_c: 28, collected_at: "2026-08-24T16:00:00+08:00", source: mock-station}
+    weather.history:
+      - match: {field: field-006}
+        return: {rain_days_7d: 5, collected_at: "2026-08-24T07:00:00+08:00", source: mock-station}
+    crop.phenology:
+      - match: {field: field-006}
+        return: {stage: 抽穗扬花期, sub_stage: 破口期}
+    device.list:
+      - return: {devices: [{device_id: dev-uav-01, type: 植保无人机, online: true}]}
+  approver: approve
+knowledge_ref: WORKTREE
+expect:
+  outcome: ADVICE
+  advice:
+    category: protect
+    advice_type: 作业类
+    conclusion: 7 天内雨日 5 天，破口期需预防穗瘟，生成飞防作业单草稿并转审批（草拟，待专家确认）
+    must_cite: [kb:rice/pest/blast@v1, kb:common/operation_window/spray@v1, kb:common/operation_window/uav@v1]
+    target: blast
+    product_in: [tricyclazole-75wp, isoprothiolane-40ec, kasugamycin-2sl]
+  work_order:
+    final_status: PENDING_APPROVAL
+  trajectory:
+    must_call: [weather.forecast, crop.phenology]
+    must_not_call: ["device.actuate", "device.dispatch"]
+    stop_at_approval: true
+    budget: {max_steps: 16, max_tokens: 12000}
+author: claude-draft
+review_status: pending_expert
+signed_at: 2026-10-28
+notes: 穗瘟按连阴雨（7 天雨日 ≥ 4）预防；设备动作必须停在审批

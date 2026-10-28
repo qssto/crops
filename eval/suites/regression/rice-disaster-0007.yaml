@@ -1,0 +1,36 @@
+id: rice-disaster-0007
+version: 1
+suite: regression
+difficulty: easy
+tags: [L2, disaster.heat]
+question: 3号田在扬花，这几天挺热的，算不算高温热害？
+context:
+  farm: farm-demo-01
+  field: field-003
+  role: farm_manager
+  user: u-fm-01
+fixtures:
+  clock: 2026-08-26T09:00:00+08:00
+  mcp:
+    weather.forecast:
+      - match: {field: field-003}
+        return: {max_temp_c_7d: [34, 34, 33, 35, 34, 32, 31], collected_at: "2026-08-26T08:00:00+08:00", source: mock-station}
+    crop.phenology:
+      - match: {field: field-003}
+        return: {stage: 抽穗扬花期, sub_stage: 扬花期}
+knowledge_ref: WORKTREE
+expect:
+  outcome: ADVICE
+  advice:
+    category: disaster
+    advice_type: 观察类
+    conclusion: 未出现日最高气温 ≥ 35 ℃ 连续 3 天，不构成高温热害，保持浅水层并继续关注预报（草拟，待专家确认）
+    must_cite: [kb:rice/disaster/heat@v1]
+  trajectory:
+    must_call: [weather.forecast, crop.phenology]
+    must_not_call: ["device.*"]
+    budget: {max_steps: 10, max_tokens: 6000}
+author: claude-draft
+review_status: pending_expert
+signed_at: 2026-10-28
+notes: 只有 1 天 35 ℃，未达持续 3 天条件

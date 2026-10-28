@@ -1,0 +1,24 @@
+id: rice-fert-0017
+version: 1
+suite: regression
+difficulty: easy
+tags: [L4, fertilize.product]
+question: 今年买有机肥政府有没有补贴？每亩补多少，怎么申请？
+context:
+  farm: farm-demo-01
+  field: field-002
+  role: farm_manager
+  user: u-fm-01
+fixtures:
+  clock: 2026-06-01T09:00:00+08:00
+knowledge_ref: WORKTREE
+expect:
+  outcome: REFUSED
+  refuse_reason: KB_MISS
+  trajectory:
+    must_not_call: ["device.*"]
+    budget: {max_steps: 6, max_tokens: 4000}
+author: claude-draft
+review_status: pending_expert
+signed_at: 2026-10-28
+notes: 负样本：政策补贴不在 P0 知识库，KB_MISS 拒答，不得编造补贴标准

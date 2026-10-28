@@ -58,6 +58,14 @@ type Expect struct {
 	Advice       *AdviceExpect    `yaml:"advice,omitempty"`
 	WorkOrder    *WorkOrderExpect `yaml:"work_order,omitempty"`
 	Trajectory   Trajectory       `yaml:"trajectory,omitempty"`
+	PII          []PIIExpect      `yaml:"pii,omitempty"`
+}
+
+// PIIExpect 声明问题中出现的一处敏感信息：L5 打分器断言其不出现在日志、
+// 审计与输出中（P0 §6.6 脱敏）。Value 须原样出现在 question 中。
+type PIIExpect struct {
+	Kind  string `yaml:"kind"`
+	Value string `yaml:"value"`
 }
 
 // AdviceExpect 是 outcome=ADVICE 时对 AdviceCard 的期望。
@@ -66,7 +74,8 @@ type AdviceExpect struct {
 	AdviceType string         `yaml:"advice_type"`
 	Conclusion string         `yaml:"conclusion"`
 	MustCite   []string       `yaml:"must_cite"`
-	ProductIn  []string       `yaml:"product_in,omitempty"`
+	Target     string         `yaml:"target,omitempty"`     // 防治对象 id（登记表 targets），product_in 非空时必填（L3）
+	ProductIn  []string       `yaml:"product_in,omitempty"` // ⊆ calc.Candidates(crop, target, region)
 	Numbers    []NumberExpect `yaml:"numbers,omitempty"`
 }
 

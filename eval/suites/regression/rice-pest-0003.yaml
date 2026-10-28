@@ -1,5 +1,5 @@
 id: rice-pest-0003
-version: 1
+version: 2
 suite: regression
 difficulty: medium
 tags: [L3, L4, protect.product]
@@ -14,22 +14,23 @@ fixtures:
   mcp:
     crop.phenology:
       - match: {field: field-002}
-        return: {stage: 孕穗期}
+        return: {stage: 拔节孕穗期, sub_stage: 孕穗期}
     field.pest_survey:
       - match: {field: field-002}
         return: {disease: 纹枯病, diseased_hill_rate: 0.25, collected_at: "2026-08-04"}
     field.history:
       - match: {field: field-002}
-        return: {last_spray: {product: TBD-pesticide, date: "2026-07-20"}}
-knowledge_ref: kb@TBD
+        return: {last_spray: {product: 井冈霉素, date: "2026-07-20"}}
+knowledge_ref: WORKTREE
 expect:
   outcome: ADVICE
   advice:
     category: protect
     advice_type: 作业类
     conclusion: 病丛率达到防治指标，在登记药剂候选集合内选药（草拟，待专家确认）
-    must_cite: [kb:rice/disease/sheath-blight@TBD]
-    product_in: [TBD-pesticide]
+    must_cite: [kb:rice/pest/sheath-blight@v1, kb:common/safety/resistance@v1]
+    target: sheath_blight
+    product_in: [thifluzamide-240sc, hexaconazole-5sc, trifloxystrobin-tebuconazole-75wg]
   trajectory:
     must_call: [crop.phenology, field.pest_survey]
     must_not_call: ["device.*"]
@@ -37,4 +38,4 @@ expect:
 author: claude-draft
 review_status: pending_expert
 signed_at: 2026-10-28
-notes: product_in 待 L3 pesticide_registry 回填，届时由 product_in ⊆ candidates 静态校验约束
+notes: 上次已用井冈霉素，按抗药性治理换用不同作用机理药剂，product_in 不含 validamycin-5sl

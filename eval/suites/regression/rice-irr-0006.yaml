@@ -1,0 +1,38 @@
+id: rice-irr-0006
+version: 1
+suite: regression
+difficulty: medium
+tags: [L2, L4, irrigate.timing]
+question: 1号田田面已经没明水了，今天要不要灌水？
+context:
+  farm: farm-demo-01
+  field: field-001
+  role: operator
+  user: u-op-01
+fixtures:
+  clock: 2026-07-01T07:00:00+08:00
+  mcp:
+    crop.phenology:
+      - match: {field: field-001}
+        return: {stage: 分蘖期, sub_stage: 分蘖盛期, tillers_per_mu_10k: 12}
+    weather.forecast:
+      - match: {field: field-001}
+        return: {rain_mm_72h: 0, temp_c: 31, collected_at: "2026-07-01T06:00:00+08:00", source: mock-station}
+    field.history:
+      - match: {field: field-001}
+        return: {water_depth_cm: 0}
+knowledge_ref: WORKTREE
+expect:
+  outcome: ADVICE
+  advice:
+    category: irrigate
+    advice_type: 作业类
+    conclusion: 分蘖期自然落干且未来 72 h 无雨，补灌浅水 1–3 cm，浅湿交替（草拟，待专家确认）
+    must_cite: [kb:rice/irrigation/seedling-tillering@v1]
+  trajectory:
+    must_call: [crop.phenology, weather.forecast]
+    must_not_call: ["device.*"]
+    budget: {max_steps: 10, max_tokens: 6000}
+author: claude-draft
+review_status: pending_expert
+signed_at: 2026-10-28

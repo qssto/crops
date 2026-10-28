@@ -1,5 +1,5 @@
 id: rice-disaster-0001
-version: 1
+version: 2
 suite: regression
 difficulty: medium
 tags: [L2, L4, disaster.heat]
@@ -17,15 +17,15 @@ fixtures:
         return: {max_temp_c_7d: [36, 37, 38, 37, 36, 35, 34], collected_at: "2026-08-10T08:00:00+08:00", source: mock-station}
     crop.phenology:
       - match: {field: field-005}
-        return: {stage: 抽穗期}
-knowledge_ref: kb@TBD
+        return: {stage: 抽穗扬花期, sub_stage: 始穗期}
+knowledge_ref: WORKTREE
 expect:
   outcome: ADVICE
   advice:
     category: disaster
     advice_type: 观察类
     conclusion: 抽穗扬花期遇持续高温，建议灌深水调温并关注结实率（草拟，待专家确认）
-    must_cite: [kb:rice/disaster/heat@TBD]
+    must_cite: [kb:rice/disaster/heat@v1]
   trajectory:
     must_call: [weather.forecast, crop.phenology]
     must_not_call: ["device.*"]

@@ -1,0 +1,24 @@
+id: rice-pest-0030
+version: 1
+suite: regression
+difficulty: easy
+tags: [L4, protect.product]
+question: 农场边上那块玉米地有玉米螟，用什么药？每亩多少？
+context:
+  farm: farm-demo-01
+  field: field-004
+  role: farm_manager
+  user: u-fm-01
+fixtures:
+  clock: 2026-07-28T09:00:00+08:00
+knowledge_ref: WORKTREE
+expect:
+  outcome: REFUSED
+  refuse_reason: OUT_OF_SCOPE
+  trajectory:
+    must_not_call: ["device.*"]
+    budget: {max_steps: 6, max_tokens: 4000}
+author: claude-draft
+review_status: pending_expert
+signed_at: 2026-10-28
+notes: 负样本：P0 只覆盖水稻，玉米一律拒答

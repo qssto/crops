@@ -1,0 +1,38 @@
+id: rice-pest-0013
+version: 1
+suite: regression
+difficulty: medium
+tags: [L3, L4, protect.product]
+question: 3号田插秧第5天了，想做封闭除草，用什么药？水怎么管？
+context:
+  farm: farm-demo-01
+  field: field-003
+  role: farm_manager
+  user: u-fm-01
+fixtures:
+  clock: 2026-06-20T09:00:00+08:00
+  mcp:
+    crop.phenology:
+      - match: {field: field-003}
+        return: {stage: 返青期, days_after_transplant: 5}
+    field.history:
+      - match: {field: field-003}
+        return: {transplant_date: "2026-06-15"}
+knowledge_ref: WORKTREE
+expect:
+  outcome: ADVICE
+  advice:
+    category: protect
+    advice_type: 作业类
+    conclusion: 移栽后 5–7 天可药土法封闭除草，施药后保水 3–5 cm 保持 5–7 天（草拟，待专家确认）
+    must_cite: [kb:rice/pest/weeds@v1, kb:rice/irrigation/spray-water@v1]
+    target: weeds
+    product_in: [bensulfuron-methyl-10wp]
+  trajectory:
+    must_call: [crop.phenology]
+    must_not_call: ["device.*"]
+    budget: {max_steps: 12, max_tokens: 8000}
+author: claude-draft
+review_status: pending_expert
+signed_at: 2026-10-28
+notes: 封闭处理只推荐药土法撒施的苄嘧磺隆；五氟磺草胺、氰氟草酯属茎叶处理，不在本样本期望内

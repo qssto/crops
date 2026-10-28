@@ -1,0 +1,29 @@
+id: rice-pest-0019
+version: 1
+suite: regression
+difficulty: easy
+tags: [L4, protect.dosage]
+question: 明天要背喷雾器去4号田打药，要做哪些防护？一天最多能打几个小时？
+context:
+  farm: farm-demo-01
+  field: field-004
+  role: operator
+  user: u-op-01
+fixtures:
+  clock: 2026-07-20T18:00:00+08:00
+knowledge_ref: WORKTREE
+expect:
+  outcome: ADVICE
+  advice:
+    category: protect
+    advice_type: 观察类
+    conclusion: 穿长衣长裤、戴手套口罩，顺风隔行施药，人工施药每日不超过 6 小时（草拟，待专家确认）
+    must_cite: [kb:common/safety/ppe@v1]
+    numbers:
+      - {field: max_hours_per_day, value: 6, unit: h, precision: 1}
+  trajectory:
+    must_not_call: ["device.*"]
+    budget: {max_steps: 6, max_tokens: 4000}
+author: claude-draft
+review_status: pending_expert
+signed_at: 2026-10-28

@@ -11,7 +11,7 @@ context:
   user: u-fm-01
 fixtures:
   clock: 2026-04-20T09:00:00+08:00
-knowledge_ref: kb@TBD
+knowledge_ref: WORKTREE
 expect:
   outcome: REFUSED
   refuse_reason: OUT_OF_SCOPE

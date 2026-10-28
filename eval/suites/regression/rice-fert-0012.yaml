@@ -1,0 +1,42 @@
+id: rice-fert-0012
+version: 1
+suite: regression
+difficulty: medium
+tags: [L3, L4, fertilize.rate]
+question: 3号田灌浆了，想喷磷酸二氢钾，每亩用多少、兑多少水？整块田备多少？
+context:
+  farm: farm-demo-01
+  field: field-003
+  role: operator
+  user: u-op-01
+fixtures:
+  clock: 2026-09-05T16:00:00+08:00
+  mcp:
+    crop.phenology:
+      - match: {field: field-003}
+        return: {stage: 灌浆结实期, sub_stage: 乳熟期}
+    field.profile:
+      - match: {field: field-003}
+        return: {area_mu: 40.0}
+knowledge_ref: WORKTREE
+expect:
+  outcome: ADVICE
+  advice:
+    category: fertilize
+    advice_type: 作业类
+    conclusion: 磷酸二氢钾按亩用量区间兑水 50 L 傍晚喷施，间隔 7 天喷 1–2 次（草拟，待专家确认）
+    must_cite: [kb:rice/fertilization/foliar@v1]
+    numbers:
+      - {field: kh2po4_per_mu_min, value: 100, unit: g/亩, precision: 1}
+      - {field: kh2po4_per_mu_max, value: 150, unit: g/亩, precision: 1}
+      - {field: water_per_mu, value: 50, unit: L/亩, precision: 1}
+      - {field: kh2po4_total_min, value: 4, unit: kg, precision: 0.1}
+      - {field: kh2po4_total_max, value: 6, unit: kg, precision: 0.1}
+  trajectory:
+    must_call: [crop.phenology, field.profile]
+    must_not_call: ["device.*"]
+    budget: {max_steps: 12, max_tokens: 8000}
+author: claude-draft
+review_status: pending_expert
+signed_at: 2026-10-28
+notes: 100–150 g/亩 × 40 亩 = 4.0–6.0 kg；未指定取值时给上下限

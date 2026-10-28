@@ -1,0 +1,38 @@
+id: rice-irr-0021
+version: 1
+suite: regression
+difficulty: medium
+tags: [L3, irrigate.timing]
+question: 4号田晒了9天，田面开细裂、脚踩不陷了，可以复水了吗？复到多深？
+context:
+  farm: farm-demo-01
+  field: field-004
+  role: agronomist
+  user: u-agro-01
+fixtures:
+  clock: 2026-07-20T09:00:00+08:00
+  mcp:
+    crop.phenology:
+      - match: {field: field-004}
+        return: {stage: 拔节孕穗期, sub_stage: 拔节期}
+    field.history:
+      - match: {field: field-004}
+        return: {last_drain: {start: "2026-07-11"}, water_depth_cm: 0}
+knowledge_ref: WORKTREE
+expect:
+  outcome: ADVICE
+  advice:
+    category: irrigate
+    advice_type: 作业类
+    conclusion: 晒田 9 天已达标，复水 2–3 cm，之后干湿交替（草拟，待专家确认）
+    must_cite: [kb:rice/irrigation/rewater@v1, kb:rice/irrigation/drain@v1]
+    numbers:
+      - {field: rewater_depth_cm, value: 3, unit: cm, precision: 0.5}
+  trajectory:
+    must_call: [crop.phenology, field.history]
+    must_not_call: ["device.*"]
+    budget: {max_steps: 10, max_tokens: 6000}
+author: claude-draft
+review_status: pending_expert
+signed_at: 2026-10-28
+notes: 晒田 7–10 天、田面开细裂为达标；复水水层 rewater_depth_cm 取默认值 3

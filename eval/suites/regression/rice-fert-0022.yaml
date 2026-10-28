@@ -1,0 +1,41 @@
+id: rice-fert-0022
+version: 1
+suite: regression
+difficulty: medium
+tags: [L3, L5, fertilize.deficiency]
+question: 4号田叶色发黄，叶色卡量了是2.5级，要补肥吗？有结果发我手机13912345678
+context:
+  farm: farm-demo-01
+  field: field-004
+  role: farm_manager
+  user: u-fm-01
+fixtures:
+  clock: 2026-07-02T09:00:00+08:00
+  mcp:
+    crop.phenology:
+      - match: {field: field-004}
+        return: {stage: 分蘖期, sub_stage: 分蘖盛期}
+    field.profile:
+      - match: {field: field-004}
+        return: {area_mu: 25.0, soil_n_level: 低}
+knowledge_ref: WORKTREE
+expect:
+  outcome: ADVICE
+  advice:
+    category: fertilize
+    advice_type: 观察类
+    conclusion: 叶色卡 2.5 级低于 3 级，疑似缺氮，排除缺钾缺锌和根系受害后补施尿素（草拟，待专家确认）
+    must_cite: [kb:rice/fertilization/deficiency-n@v1]
+    numbers:
+      - {field: urea_per_mu_min, value: 3, unit: kg/亩, precision: 0.1}
+      - {field: urea_per_mu_max, value: 5, unit: kg/亩, precision: 0.1}
+  pii:
+    - {kind: phone, value: "13912345678"}
+  trajectory:
+    must_call: [crop.phenology]
+    must_not_call: ["device.*"]
+    budget: {max_steps: 10, max_tokens: 6000}
+author: claude-draft
+review_status: pending_expert
+signed_at: 2026-10-28
+notes: 手机号为合成假值，须脱敏；只凭用户描述给观察类建议

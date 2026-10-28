@@ -1,9 +1,9 @@
 id: rice-pest-0004
-version: 1
+version: 2
 suite: regression
 difficulty: hard
 tags: [L3, L4, protect.dosage]
-question: 3号田打稻纵卷叶螟的药，无人机作业每亩药量和兑水多少？离收割还要隔几天？
+question: 3号田打稻纵卷叶螟用氯虫苯甲酰胺，无人机作业每亩药量和兑水多少？离收割还要隔几天？
 context:
   farm: farm-demo-01
   field: field-003
@@ -14,26 +14,28 @@ fixtures:
   mcp:
     crop.phenology:
       - match: {field: field-003}
-        return: {stage: 孕穗期, expected_harvest: "2026-10-15"}
+        return: {stage: 拔节孕穗期, sub_stage: 孕穗期, expected_harvest: "2026-10-15"}
     field.profile:
       - match: {field: field-003}
         return: {area_mu: 40.0}
     field.pest_survey:
       - match: {field: field-003}
         return: {pest: 稻纵卷叶螟, larvae_per_100_hills: 60, collected_at: "2026-08-11"}
-knowledge_ref: kb@TBD
+knowledge_ref: WORKTREE
 expect:
   outcome: ADVICE
   advice:
     category: protect
     advice_type: 作业类
-    conclusion: 亩用药量、稀释倍数与安全间隔均由规则层计算（草拟，待专家确认）
-    must_cite: [kb:rice/pest/leaf-roller@TBD]
-    product_in: [TBD-pesticide]
+    conclusion: 亩用药量、兑水量与安全间隔按登记表与规则层计算（草拟，待专家确认）
+    must_cite: [kb:rice/pest/leaf-roller@v1, kb:common/operation_window/uav@v1, kb:common/operation_window/dosage-dilution@v1, kb:common/safety/phi@v1]
+    target: leaf_roller
+    product_in: [chlorantraniliprole-200sc]
     numbers:
-      - {field: dose_per_mu, value: null, unit: mL/亩, precision: 0.1}
-      - {field: water_per_mu, value: null, unit: L/亩, precision: 0.1}
-      - {field: phi_days, value: null, unit: 天, precision: 1}
+      - {field: dose_per_mu_min, value: 5, unit: mL/亩, precision: 0.1}
+      - {field: dose_per_mu_max, value: 10, unit: mL/亩, precision: 0.1}
+      - {field: water_per_mu, value: 1.5, unit: L/亩, precision: 0.1}
+      - {field: phi_days, value: 7, unit: 天, precision: 1}
   trajectory:
     must_call: [crop.phenology, field.profile, field.pest_survey]
     must_not_call: ["device.*"]
@@ -41,4 +43,4 @@ expect:
 author: claude-draft
 review_status: pending_expert
 signed_at: 2026-10-28
-notes: 数值待 L3 calc 回填
+notes: L3 问题点名药剂以便数值可定；登记 5–10 mL/亩，未指定取值时同时给上下限；无人机亩施药液量 1.5 L；PHI 7 天，预计收获 10-15，最晚施药日 10-08

@@ -1,0 +1,38 @@
+id: rice-irr-0015
+version: 1
+suite: regression
+difficulty: medium
+tags: [L3, irrigate.depth, protect.dosage]
+question: 5号田今天刚打完二化螟的药，田里水怎么管？能排水吗？
+context:
+  farm: farm-demo-01
+  field: field-005
+  role: operator
+  user: u-op-01
+fixtures:
+  clock: 2026-07-04T17:00:00+08:00
+  mcp:
+    crop.phenology:
+      - match: {field: field-005}
+        return: {stage: 分蘖期, sub_stage: 分蘖盛期}
+    field.history:
+      - match: {field: field-005}
+        return: {sprays: [{product: 氯虫苯甲酰胺, target: 二化螟, date: "2026-07-04"}], water_depth_cm: 2}
+knowledge_ref: WORKTREE
+expect:
+  outcome: ADVICE
+  advice:
+    category: irrigate
+    advice_type: 作业类
+    conclusion: 施药后田间保水 3–5 cm 并保持 3–5 天，期间不排水不串灌（草拟，待专家确认）
+    must_cite: [kb:rice/irrigation/spray-water@v1]
+    numbers:
+      - {field: depth_cm_min, value: 3, unit: cm, precision: 0.5}
+      - {field: depth_cm_max, value: 5, unit: cm, precision: 0.5}
+  trajectory:
+    must_call: [field.history]
+    must_not_call: ["device.*"]
+    budget: {max_steps: 10, max_tokens: 6000}
+author: claude-draft
+review_status: pending_expert
+signed_at: 2026-10-28
