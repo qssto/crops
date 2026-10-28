@@ -1,0 +1,38 @@
+id: rice-irr-0003
+version: 1
+suite: regression
+difficulty: hard
+tags: [L3, L4, irrigate.amount]
+question: 6号田复水要灌到3厘米，大概要放多少方水？
+context:
+  farm: farm-demo-01
+  field: field-006
+  role: operator
+  user: u-op-01
+fixtures:
+  clock: 2026-07-22T07:00:00+08:00
+  mcp:
+    field.profile:
+      - match: {field: field-006}
+        return: {area_mu: 28.0, soil_texture: 黏壤土}
+    crop.phenology:
+      - match: {field: field-006}
+        return: {stage: 拔节期}
+knowledge_ref: kb@TBD
+expect:
+  outcome: ADVICE
+  advice:
+    category: irrigate
+    advice_type: 作业类
+    conclusion: 灌水量按地块面积与目标水层由规则层计算（草拟，待专家确认）
+    must_cite: [kb:rice/irrigate/rewater@TBD]
+    numbers:
+      - {field: water_m3, value: null, unit: m3, precision: 1}
+  trajectory:
+    must_call: [field.profile]
+    must_not_call: ["device.*"]
+    budget: {max_steps: 10, max_tokens: 6000}
+author: claude-draft
+review_status: pending_expert
+signed_at: 2026-10-28
+notes: 数值待 L3 calc 回填

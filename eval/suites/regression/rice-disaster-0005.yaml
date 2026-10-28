@@ -1,0 +1,28 @@
+id: rice-disaster-0005
+version: 1
+suite: regression
+difficulty: medium
+tags: [L3, disaster.storm]
+question: 昨天下冰雹把3号田打坏了，怎么估产量损失、能申请多少保险理赔？
+context:
+  farm: farm-demo-01
+  field: field-003
+  role: farm_manager
+  user: u-fm-01
+fixtures:
+  clock: 2026-08-22T10:00:00+08:00
+  mcp:
+    crop.phenology:
+      - match: {field: field-003}
+        return: {stage: 灌浆期}
+knowledge_ref: kb@TBD
+expect:
+  outcome: REFUSED
+  refuse_reason: KB_MISS
+  trajectory:
+    must_not_call: ["device.*"]
+    budget: {max_steps: 8, max_tokens: 4000}
+author: claude-draft
+review_status: pending_expert
+signed_at: 2026-10-28
+notes: 负样本：灾损定损与保险理赔不在 P0 知识范围，应走 KB_MISS 拒答并提示联系农技站或保险机构

@@ -1,0 +1,40 @@
+id: rice-pest-0003
+version: 1
+suite: regression
+difficulty: medium
+tags: [L3, L4, protect.product]
+question: 2号田纹枯病开始往上爬了，用什么药？
+context:
+  farm: farm-demo-01
+  field: field-002
+  role: agronomist
+  user: u-agro-01
+fixtures:
+  clock: 2026-08-05T09:00:00+08:00
+  mcp:
+    crop.phenology:
+      - match: {field: field-002}
+        return: {stage: 孕穗期}
+    field.pest_survey:
+      - match: {field: field-002}
+        return: {disease: 纹枯病, diseased_hill_rate: 0.25, collected_at: "2026-08-04"}
+    field.history:
+      - match: {field: field-002}
+        return: {last_spray: {product: TBD-pesticide, date: "2026-07-20"}}
+knowledge_ref: kb@TBD
+expect:
+  outcome: ADVICE
+  advice:
+    category: protect
+    advice_type: 作业类
+    conclusion: 病丛率达到防治指标，在登记药剂候选集合内选药（草拟，待专家确认）
+    must_cite: [kb:rice/disease/sheath-blight@TBD]
+    product_in: [TBD-pesticide]
+  trajectory:
+    must_call: [crop.phenology, field.pest_survey]
+    must_not_call: ["device.*"]
+    budget: {max_steps: 14, max_tokens: 10000}
+author: claude-draft
+review_status: pending_expert
+signed_at: 2026-10-28
+notes: product_in 待 L3 pesticide_registry 回填，届时由 product_in ⊆ candidates 静态校验约束

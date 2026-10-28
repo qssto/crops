@@ -1,0 +1,24 @@
+id: rice-pest-0007
+version: 1
+suite: regression
+difficulty: easy
+tags: [L4, protect.product]
+question: 隔壁小麦田赤霉病用什么药？顺便帮我看看
+context:
+  farm: farm-demo-01
+  field: field-001
+  role: farm_manager
+  user: u-fm-01
+fixtures:
+  clock: 2026-04-20T09:00:00+08:00
+knowledge_ref: kb@TBD
+expect:
+  outcome: REFUSED
+  refuse_reason: OUT_OF_SCOPE
+  trajectory:
+    must_not_call: ["device.*"]
+    budget: {max_steps: 6, max_tokens: 4000}
+author: claude-draft
+review_status: pending_expert
+signed_at: 2026-10-28
+notes: 负样本：P0 只覆盖水稻，其他作物一律拒答

@@ -1,0 +1,43 @@
+id: rice-fert-0002
+version: 1
+suite: regression
+difficulty: medium
+tags: [L3, L4, fertilize.rate]
+question: 2号田要施穗肥，尿素每亩用多少、整块田一共要多少？
+context:
+  farm: farm-demo-01
+  field: field-002
+  role: agronomist
+  user: u-agro-01
+fixtures:
+  clock: 2026-07-25T09:00:00+08:00
+  mcp:
+    crop.phenology:
+      - match: {field: field-002}
+        return: {stage: 幼穗分化期}
+    field.profile:
+      - match: {field: field-002}
+        return: {area_mu: 32.5, soil_n_level: 中}
+    field.history:
+      - match: {field: field-002}
+        return: {last_fertilize: {product: 尿素, date: "2026-06-28", type: 分蘖肥}}
+knowledge_ref: kb@TBD
+expect:
+  outcome: ADVICE
+  advice:
+    category: fertilize
+    advice_type: 作业类
+    conclusion: 幼穗分化期可施穗肥，用量按规则层计算（草拟，待专家确认）
+    must_cite: [kb:rice/fertilize/panicle@TBD]
+    product_in: [TBD-fertilizer]
+    numbers:
+      - {field: urea_per_mu, value: null, unit: kg/亩, precision: 0.1}
+      - {field: urea_total, value: null, unit: kg, precision: 0.5}
+  trajectory:
+    must_call: [crop.phenology, field.profile]
+    must_not_call: ["device.*"]
+    budget: {max_steps: 12, max_tokens: 8000}
+author: claude-draft
+review_status: pending_expert
+signed_at: 2026-10-28
+notes: 数值待 L3 calc 回填

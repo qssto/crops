@@ -1,0 +1,44 @@
+id: rice-pest-0004
+version: 1
+suite: regression
+difficulty: hard
+tags: [L3, L4, protect.dosage]
+question: 3号田打稻纵卷叶螟的药，无人机作业每亩药量和兑水多少？离收割还要隔几天？
+context:
+  farm: farm-demo-01
+  field: field-003
+  role: operator
+  user: u-op-01
+fixtures:
+  clock: 2026-08-12T07:30:00+08:00
+  mcp:
+    crop.phenology:
+      - match: {field: field-003}
+        return: {stage: 孕穗期, expected_harvest: "2026-10-15"}
+    field.profile:
+      - match: {field: field-003}
+        return: {area_mu: 40.0}
+    field.pest_survey:
+      - match: {field: field-003}
+        return: {pest: 稻纵卷叶螟, larvae_per_100_hills: 60, collected_at: "2026-08-11"}
+knowledge_ref: kb@TBD
+expect:
+  outcome: ADVICE
+  advice:
+    category: protect
+    advice_type: 作业类
+    conclusion: 亩用药量、稀释倍数与安全间隔均由规则层计算（草拟，待专家确认）
+    must_cite: [kb:rice/pest/leaf-roller@TBD]
+    product_in: [TBD-pesticide]
+    numbers:
+      - {field: dose_per_mu, value: null, unit: mL/亩, precision: 0.1}
+      - {field: water_per_mu, value: null, unit: L/亩, precision: 0.1}
+      - {field: phi_days, value: null, unit: 天, precision: 1}
+  trajectory:
+    must_call: [crop.phenology, field.profile, field.pest_survey]
+    must_not_call: ["device.*"]
+    budget: {max_steps: 14, max_tokens: 10000}
+author: claude-draft
+review_status: pending_expert
+signed_at: 2026-10-28
+notes: 数值待 L3 calc 回填

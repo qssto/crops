@@ -1,0 +1,39 @@
+# question_taxonomy：问题域共同枚举（L3 知识加载与 L4 分类节点共用；评测样本 tags 引用这里的 code）
+# 状态：Claude 草拟，待业务与农艺书面确认。code 一经发布只增不改，废弃项标 deprecated 而不是删除。
+version: 1
+status: draft
+crop: rice
+region: jiangsu
+
+categories:
+  - code: fertilize
+    name: 施肥
+    subcategories:
+      - {code: fertilize.timing, name: 施肥时机}        # 基肥 / 分蘖肥 / 穗肥等时期判断
+      - {code: fertilize.product, name: 肥料选择}       # 品种、配比
+      - {code: fertilize.rate, name: 用量计算}          # 亩用量、总用量（数值由 calc 给出）
+      - {code: fertilize.deficiency, name: 缺素诊断}    # 叶色、长势异常归因
+
+  - code: protect
+    name: 植保
+    subcategories:
+      - {code: protect.identify, name: 病虫害识别}
+      - {code: protect.timing, name: 防治时机}          # 是否达到防治指标、窗口期、天气适宜性
+      - {code: protect.product, name: 药剂选择}         # 只能在登记候选集合内选
+      - {code: protect.dosage, name: 用量计算}          # 亩用量、稀释倍数、安全间隔（数值由 calc 给出）
+
+  - code: irrigate
+    name: 灌溉
+    subcategories:
+      - {code: irrigate.timing, name: 灌溉时机}
+      - {code: irrigate.depth, name: 水层管理}          # 浅水 / 湿润 / 深水护苗
+      - {code: irrigate.drain, name: 晒田与排水}
+      - {code: irrigate.amount, name: 用水量计算}
+
+  - code: disaster
+    name: 灾害防备
+    subcategories:
+      - {code: disaster.heat, name: 高温热害}
+      - {code: disaster.cold, name: 低温冷害}
+      - {code: disaster.storm, name: 台风暴雨}
+      - {code: disaster.lodging, name: 倒伏}

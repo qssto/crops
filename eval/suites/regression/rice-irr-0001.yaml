@@ -1,0 +1,35 @@
+id: rice-irr-0001
+version: 1
+suite: regression
+difficulty: medium
+tags: [L4, irrigate.drain]
+question: 4号田苗数够了，现在可以晒田吗？
+context:
+  farm: farm-demo-01
+  field: field-004
+  role: agronomist
+  user: u-agro-01
+fixtures:
+  clock: 2026-07-10T09:00:00+08:00
+  mcp:
+    crop.phenology:
+      - match: {field: field-004}
+        return: {stage: 分蘖末期, tillers_per_mu_10k: 22}
+    weather.forecast:
+      - match: {field: field-004}
+        return: {rain_mm_72h: 3, temp_c: 32, collected_at: "2026-07-10T08:00:00+08:00", source: mock-station}
+knowledge_ref: kb@TBD
+expect:
+  outcome: ADVICE
+  advice:
+    category: irrigate
+    advice_type: 观察类
+    conclusion: 茎蘖数达到够苗标准且未来无明显降雨，可排水晒田（草拟，待专家确认）
+    must_cite: [kb:rice/irrigate/drain@TBD]
+  trajectory:
+    must_call: [crop.phenology, weather.forecast]
+    must_not_call: ["device.*"]
+    budget: {max_steps: 10, max_tokens: 8000}
+author: claude-draft
+review_status: pending_expert
+signed_at: 2026-10-28

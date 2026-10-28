@@ -1,0 +1,34 @@
+id: rice-disaster-0002
+version: 1
+suite: regression
+difficulty: medium
+tags: [L2, L4, disaster.storm]
+question: 台风要来了，田里要提前做什么准备？
+context:
+  farm: farm-demo-01
+  field: field-003
+  role: farm_manager
+  user: u-fm-01
+fixtures:
+  clock: 2026-09-01T10:00:00+08:00
+  mcp:
+    weather.alert:
+      - return: {alert: 台风蓝色预警, expected_rain_mm: 120, max_wind_ms: 18, issued_at: "2026-09-01T08:00:00+08:00", source: mock-alert}
+    crop.phenology:
+      - match: {field: field-003}
+        return: {stage: 灌浆期}
+knowledge_ref: kb@TBD
+expect:
+  outcome: ADVICE
+  advice:
+    category: disaster
+    advice_type: 观察类
+    conclusion: 台风前疏通沟渠、做好排涝准备，灾后及时扶理与病害防控（草拟，待专家确认）
+    must_cite: [kb:rice/disaster/typhoon@TBD]
+  trajectory:
+    must_call: [weather.alert]
+    must_not_call: ["device.*"]
+    budget: {max_steps: 10, max_tokens: 8000}
+author: claude-draft
+review_status: pending_expert
+signed_at: 2026-10-28

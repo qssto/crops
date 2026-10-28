@@ -1,0 +1,35 @@
+id: rice-pest-0002
+version: 1
+suite: regression
+difficulty: medium
+tags: [L4, protect.identify]
+question: 6号田叶片上有梭形褐色病斑，中间灰白，是什么病？
+context:
+  farm: farm-demo-01
+  field: field-006
+  role: agronomist
+  user: u-agro-01
+fixtures:
+  clock: 2026-07-08T10:00:00+08:00
+  mcp:
+    crop.phenology:
+      - match: {field: field-006}
+        return: {stage: 分蘖盛期}
+    weather.history:
+      - match: {field: field-006}
+        return: {rain_days_7d: 5, humidity_avg: 88, source: mock-station}
+knowledge_ref: kb@TBD
+expect:
+  outcome: ADVICE
+  advice:
+    category: protect
+    advice_type: 观察类
+    conclusion: 症状与叶瘟相符，建议田间复核并关注连阴雨（草拟，待专家确认）
+    must_cite: [kb:rice/disease/blast@TBD]
+  trajectory:
+    must_call: [crop.phenology]
+    must_not_call: ["device.*"]
+    budget: {max_steps: 10, max_tokens: 8000}
+author: claude-draft
+review_status: pending_expert
+signed_at: 2026-10-28

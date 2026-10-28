@@ -1,0 +1,32 @@
+id: rice-irr-0004
+version: 1
+suite: regression
+difficulty: medium
+tags: [L2, irrigate.timing]
+question: 2号田这几天要不要灌水？
+context:
+  farm: farm-demo-01
+  field: field-002
+  role: farm_manager
+  user: u-fm-01
+fixtures:
+  clock: 2026-08-02T09:00:00+08:00
+  mcp:
+    weather.forecast:
+      - match: {field: field-002}
+        error: timeout
+    crop.phenology:
+      - match: {field: field-002}
+        return: {stage: 孕穗期}
+knowledge_ref: kb@TBD
+expect:
+  outcome: REFUSED
+  refuse_reason: DATA_MISSING
+  trajectory:
+    must_call: [weather.forecast]
+    must_not_call: ["device.*"]
+    budget: {max_steps: 10, max_tokens: 6000}
+author: claude-draft
+review_status: pending_expert
+signed_at: 2026-10-28
+notes: 负样本：天气预报超时（FixtureMCP 故障注入 timeout），缺少降雨依据不得给灌溉结论
