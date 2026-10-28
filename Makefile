@@ -7,7 +7,7 @@ TAGS    ?=
 -include deploy/.env
 export
 
-.PHONY: build test test-integration eval validate vet up migrate migrate-eval seed server
+.PHONY: build test test-integration eval validate vet up minio-local migrate migrate-eval seed server
 
 build:
 	$(GO) build ./...
@@ -25,6 +25,12 @@ test-integration:
 
 up:
 	docker compose -f deploy/docker-compose.yml --env-file deploy/.env up -d
+
+# docker 拉不到 minio 镜像时的替代：Homebrew minio 后台启动，端口 / 数据目录 / 凭据同 compose
+minio-local:
+	@mkdir -p deploy/data/minio
+	MINIO_ROOT_USER="$$MINIO_USER" MINIO_ROOT_PASSWORD="$$MINIO_PASSWORD" nohup minio server deploy/data/minio \
+		--address 127.0.0.1:9000 --console-address 127.0.0.1:9001 > deploy/data/minio.log 2>&1 &
 
 # 业务库 agri_steward + MinIO bucket；MinIO 未启动时 MIGRATE_FLAGS=--skip-buckets
 migrate:
