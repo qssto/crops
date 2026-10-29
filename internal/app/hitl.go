@@ -50,7 +50,7 @@ func (a *App) buildHITLServices() {
 	resumer, _ := a.Agent.(agent.Resumer)
 	idem := repository.NewRedisIdem(a.Redis)
 	a.HITL.Decisions = service.NewDecisionService(service.DecisionDeps{Store: a.HITL.decisions, Orders: a.WorkOrders,
-		Events: repository.EventRepo{}, Idem: idem, Locks: a.Locker, Keys: a.Keys, Resumer: resumer,
+		Events: a.eventRepo, Idem: idem, Locks: a.Locker, Keys: a.Keys, Resumer: resumer,
 		Clock: a.Clock, Logger: a.Logger})
 	a.HITL.Scanner = service.NewScanner(service.ScanDeps{Tickets: a.HITL.decisions, Runs: a.Runs,
 		Expirer: a.HITL.Decisions, Orders: a.WorkOrders, Resumer: resumer, Gate: a.Approvals, Locks: a.Locker,

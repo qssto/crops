@@ -88,7 +88,7 @@ func (s *WorkOrderService) transition(ctx context.Context, tx *repository.DB, re
 	}
 	if _, err := s.events.AppendTx(ctx, tx, model.RunEvent{
 		TenantID: ref.TenantID, FarmID: ref.FarmID, RunID: cur.RunID, Type: model.EventOrderTransition,
-		Actor: actor.Type, Payload: payload, CreatedAt: now,
+		Actor: actor.Type, ActorID: actor.ID, Payload: payload, CreatedAt: now,
 	}); err != nil {
 		return fmt.Errorf("service: transition order %d: %w", ref.OrderID, err)
 	}

@@ -253,6 +253,7 @@ func (a *Agent) persist(ctx context.Context, s *state) (*state, error) {
 		return s, fmt.Errorf("persist: save advice: %w", err)
 	}
 	s.card.AdviceID = id
+	a.emitAdviceReady(ctx, s)
 	return s, nil
 }
 

@@ -395,15 +395,15 @@ func (s *DecisionService) explainConflict(ctx context.Context, scope model.Scope
 	return fmt.Errorf("service: decide ticket %d: %w", ticketID, cause)
 }
 
-// decidedEvent 同事务追加 APPROVAL_DECIDED（payload 只含控制字段）。
+// decidedEvent 同事务追加 APPROVAL_DECIDED（payload 只含控制字段）；actor 带 ID，审计投影据此记操作人。
 func (s *DecisionService) decidedEvent(ctx context.Context, tx *repository.DB, t repository.TicketRow,
-	actor model.ActorType, payload map[string]any, now time.Time) error {
+	actor model.Actor, payload map[string]any, now time.Time) error {
 	body, err := json.Marshal(payload)
 	if err != nil {
 		return fmt.Errorf("service: encode APPROVAL_DECIDED: %w", err)
 	}
 	if _, err := s.d.Events.AppendTx(ctx, tx, model.RunEvent{TenantID: t.TenantID, FarmID: t.FarmID, RunID: t.RunID,
-		Type: model.EventApprovalDecided, Actor: actor, Payload: body, CreatedAt: now}); err != nil {
+		Type: model.EventApprovalDecided, Actor: actor.Type, ActorID: actor.ID, Payload: body, CreatedAt: now}); err != nil {
 		return fmt.Errorf("service: append APPROVAL_DECIDED ticket %d: %w", t.ID, err)
 	}
 	return nil
@@ -453,7 +453,7 @@ func (s *DecisionService) approve(ctx context.Context, scope model.Scope, t repo
 		if err := s.d.Store.InsertDispatchOutboxTx(ctx, tx, t, payload, now); err != nil {
 			return err
 		}
-		return s.decidedEvent(ctx, tx, t, model.ActorUser, map[string]any{"ticket_id": t.ID, "order_id": t.OrderID,
+		return s.decidedEvent(ctx, tx, t, actor, map[string]any{"ticket_id": t.ID, "order_id": t.OrderID,
 			"decision": d.Decision, "decision_id": id, "operator_id": scope.UserID}, now)
 	})
 	if err != nil {
@@ -490,7 +490,7 @@ func (s *DecisionService) reject(ctx context.Context, scope model.Scope, t repos
 		if err := s.d.Store.InsertRejectedMemoryTx(ctx, tx, t, truncateRunes(summary, maxCommentRunes), now); err != nil {
 			return err
 		}
-		return s.decidedEvent(ctx, tx, t, model.ActorUser, map[string]any{"ticket_id": t.ID, "order_id": t.OrderID,
+		return s.decidedEvent(ctx, tx, t, actor, map[string]any{"ticket_id": t.ID, "order_id": t.OrderID,
 			"decision": DecisionReject, "decision_id": id, "operator_id": scope.UserID}, now)
 	})
 	if err != nil {
@@ -534,7 +534,7 @@ func (s *DecisionService) expireLocked(ctx context.Context, t repository.TicketR
 			return err
 		}
 		expired = true
-		return s.decidedEvent(ctx, tx, t, actor.Type, map[string]any{"ticket_id": t.ID, "order_id": t.OrderID,
+		return s.decidedEvent(ctx, tx, t, actor, map[string]any{"ticket_id": t.ID, "order_id": t.OrderID,
 			"decision": string(model.TicketExpired)}, now)
 	})
 	if err != nil {

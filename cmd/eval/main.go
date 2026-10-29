@@ -192,12 +192,17 @@ func cmdRun(ctx context.Context, args []string, stdout, stderr io.Writer) error 
 	if err := errors.Join(err, in.close()); err != nil {
 		return err
 	}
+	// transcript 先于报告上传：报告明细的 run_id 列链到对象键（MinIO 客户端无需关闭，close 后仍可用）。
+	uploaded, err := report.UploadTranscripts(ctx, in.objects, in.evalBucket, exp)
+	if err != nil {
+		return err
+	}
 	path, err := report.WriteFile(*outRoot, exp)
 	if err != nil {
 		return err
 	}
-	fmt.Fprintf(stdout, "eval done: exp_id=%s samples=%d trials=%d report=%s\n",
-		exp.ID, exp.Samples, len(exp.Trials), path)
+	fmt.Fprintf(stdout, "eval done: exp_id=%s samples=%d trials=%d report=%s transcripts=%d bucket=%s\n",
+		exp.ID, exp.Samples, len(exp.Trials), path, uploaded, in.evalBucket)
 	return nil
 }
 

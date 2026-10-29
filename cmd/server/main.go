@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"time"
 
@@ -27,6 +28,8 @@ import (
 const (
 	readHeaderTimeout = 5 * time.Second
 	shutdownTimeout   = 10 * time.Second
+	// dashboardDir 是看板 amis 页面目录（相对 -repo；被 gitignore，缺失时 /dashboard 返回 404）。
+	dashboardDir = "web/amis"
 )
 
 func main() {
@@ -120,7 +123,8 @@ func run() (err error) {
 	a, err := app.Build(app.Deps{Clock: clk, Logger: logger, DB: db, Redis: rdb, Keys: keys, RawStore: raw,
 		NewAgent: app.GraphAgent(ctx, app.GraphConfig{Model: mcfg, Chat: chat, Taxonomy: tx,
 			KB: knowledge.NewStore(knowledge.NewRepoReader(*repoRoot))}),
-		Tools: tools, Risk: risk,
+		Tools: tools, Risk: risk, DashboardDir: filepath.Join(*repoRoot, dashboardDir),
+		Presign: repository.MinIOPresigner{Client: mc, Bucket: cfg.MinIO.BucketRaw},
 		HITL: app.HITLDeps{Objects: repository.MinIOGetter{Client: mc}, RawBucket: cfg.MinIO.BucketRaw,
 			Memory: memory.Options{Enabled: cfg.Memory.Enabled, EpisodicLimit: cfg.Memory.EpisodicLimit,
 				RuneBudget: cfg.Memory.RuneBudget}}})
@@ -138,6 +142,12 @@ func serve(ctx context.Context, srv *http.Server, a *app.App) error {
 	go func() {
 		defer close(scanDone)
 		a.HITL.Scanner.Run(ctx)
+	}()
+	// L7 分区维护（每月 25 日起预建后两个月；lock:scan:partition 跨实例互斥），退出时等待。
+	partDone := make(chan struct{})
+	go func() {
+		defer close(partDone)
+		a.Partitions.Run(ctx)
 	}()
 	errCh := make(chan error, 1)
 	go func() {
@@ -160,6 +170,7 @@ func serve(ctx context.Context, srv *http.Server, a *app.App) error {
 	// 等待已受理的异步主链路、扫描任务与审批后的异步续跑收尾（各自带超时兜底）。
 	a.Ask.Wait()
 	<-scanDone
+	<-partDone
 	a.HITL.Decisions.Wait()
 	return nil
 }

@@ -1,5 +1,6 @@
 // Package report 把一次评测实验汇总为 Markdown，写到 eval/out/{exp_id}/report.md。
-// L4 起列出各打分维度与红线 pass^k（k = n）；L7 起同时上传 MinIO agri-steward-eval；L8 补 flaky 统计与门禁。
+// L4 起列出各打分维度与红线 pass^k（k = n）；L7 起每个 trial 的三层 transcript 上传 MinIO agri-steward-eval
+// （transcript.go），明细表 run_id 列链到对象键；L8 补 flaky 统计与门禁。
 package report
 
 import (
@@ -8,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -139,10 +141,10 @@ func Render(w io.Writer, exp *evalkit.Experiment) error {
 	}
 
 	ew.printf("\n## trial 明细\n\n")
-	ew.printf("| sample_id | trial | 期望 | outcome | refuse_reason | latency | unexpected_call | error | status | 未通过维度 |\n")
-	ew.printf("|-----------|-------|------|---------|---------------|---------|-----------------|-------|--------|------------|\n")
+	ew.printf("| sample_id | trial | run_id | 期望 | outcome | refuse_reason | latency | unexpected_call | error | status | 未通过维度 |\n")
+	ew.printf("|-----------|-------|--------|------|---------|---------------|---------|-----------------|-------|--------|------------|\n")
 	for _, t := range exp.Trials {
-		ew.printf("| %s | %d | %s | %s | %s | %s | %s | %s | %s | %s |\n", t.SampleID, t.TrialIndex, t.Expected,
+		ew.printf("| %s | %d | %s | %s | %s | %s | %s | %s | %s | %s | %s |\n", t.SampleID, t.TrialIndex, runCell(t), t.Expected,
 			dash(string(t.Outcome)), dash(t.RefuseReason), fmtLatency(t.Latency),
 			dash(strings.Join(t.UnexpectedCalls, ", ")), dash(escapeCell(t.Error)), t.Status(), dash(escapeCell(failedDims(t))))
 	}
@@ -178,6 +180,19 @@ func renderScores(ew *errWriter, trials []evalkit.Trial) {
 		ew.printf("| %s | %s | %s |\n", s.id, strings.Join(cells, " | "), fmtPassK(s.n, s.all))
 	}
 	ew.printf("\n")
+}
+
+// runCell 是 trial 明细的 run_id 列：已上传 transcript 时链接到 eval bucket 内的对象键
+// （run 在 trial 库 agri_eval_t_{n}，生产 /runs 接口读不到，故不链 API）；无 run 时为 "-"。
+func runCell(t evalkit.Trial) string {
+	switch {
+	case t.RunID == 0:
+		return "-"
+	case t.Transcript == "":
+		return strconv.FormatUint(t.RunID, 10)
+	default:
+		return fmt.Sprintf("[%d](%s)", t.RunID, t.Transcript)
+	}
 }
 
 // failedDims 列出未通过或出错的维度及原因。

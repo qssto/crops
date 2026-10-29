@@ -7,7 +7,7 @@ TAGS    ?=
 -include deploy/.env
 export
 
-.PHONY: build test test-integration eval validate vet up minio-local migrate migrate-eval seed server
+.PHONY: build test test-integration eval validate vet up minio-local migrate migrate-eval seed server reconcile
 
 build:
 	$(GO) build ./...
@@ -44,6 +44,10 @@ seed:
 
 server:
 	$(GO) run ./cmd/server
+
+# L7 指标对账：生产库 agri_steward 某 UTC 日 MetricsService.Daily vs 直接 SQL（DAY=YYYY-MM-DD，缺省当天）
+reconcile:
+	$(GO) run ./cmd/reconcile $(if $(DAY),--day $(DAY))
 
 # 一键回放评测集：默认 regression 套件、每样本 3 次；TAGS=L2 只回放某层样本。写 agri_eval.experiment / trial
 eval:

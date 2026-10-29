@@ -120,7 +120,7 @@ func (a *Agent) callTool(ctx context.Context, s *state, name string, args json.R
 }
 
 // loadKnowledge：渐进式加载（作物 × 区域 × 生育期 × 一级类 × 防治对象）；无作物 / 对象专属条目即 KB_MISS。
-func (a *Agent) loadKnowledge(_ context.Context, s *state) (*state, error) {
+func (a *Agent) loadKnowledge(ctx context.Context, s *state) (*state, error) {
 	if s.stopped() {
 		return s, nil
 	}
@@ -144,6 +144,7 @@ func (a *Agent) loadKnowledge(_ context.Context, s *state) (*state, error) {
 		return s, fmt.Errorf("load knowledge: %w", err)
 	}
 	s.hits = hits
+	a.emitKBLoaded(ctx, s)
 	return s, nil
 }
 

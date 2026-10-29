@@ -17,6 +17,7 @@ import (
 	"github.com/cloudwego/eino/schema"
 
 	"agri-steward/internal/agent/guardrail/pii"
+	"agri-steward/internal/clock"
 )
 
 // Tier 是模型档位名（configs/model.yaml 的 tiers 键）。
@@ -73,6 +74,10 @@ type Config struct {
 	Redact  Redactor
 	// Backoff 是第 n 次重试前的等待基数（第 n 次等 n × Backoff）；0 表示不等待。
 	Backoff time.Duration
+	// Observer 在每次 Do 结束后收到一次调用记录（L7：LLM_IO 原文落 raw + LLM_CALL_END）；可空。
+	// 只在消息已组装（限流通过）后回调，限流 / 未知档位不算一次模型调用。设置 Observer 时 Clock 必填（计耗时）。
+	Observer Observer
+	Clock    clock.Clock
 }
 
 // Client 是线程安全的模型调用封装。
@@ -83,6 +88,8 @@ type Client struct {
 	limiter Limiter
 	redact  Redactor
 	backoff time.Duration
+	observe Observer
+	clock   clock.Clock
 
 	mu    sync.Mutex
 	usage map[Tier]Usage
@@ -99,6 +106,9 @@ func New(cfg Config) (*Client, error) {
 	}
 	if len(cfg.Tiers) == 0 {
 		errs = append(errs, errors.New("llm: at least one tier is required"))
+	}
+	if cfg.Observer != nil && cfg.Clock == nil {
+		errs = append(errs, errors.New("llm: clock is required with observer"))
 	}
 	for name, t := range cfg.Tiers {
 		if t.Timeout <= 0 || t.MaxTokens <= 0 || t.MaxRetries < 0 {
@@ -117,7 +127,7 @@ func New(cfg Config) (*Client, error) {
 		tiers[k] = v
 	}
 	return &Client{model: cfg.Model, prompts: cfg.Prompts, tiers: tiers, limiter: cfg.Limiter,
-		redact: redact, backoff: cfg.Backoff, usage: map[Tier]Usage{}}, nil
+		redact: redact, backoff: cfg.Backoff, observe: cfg.Observer, clock: cfg.Clock, usage: map[Tier]Usage{}}, nil
 }
 
 // PromptVersion 返回提示词版本（写入 RunMeta.PromptVersion）。
@@ -168,6 +178,15 @@ func (c *Client) Do(ctx context.Context, tier Tier, task Task, input any, out an
 		}
 	}
 	msgs := []*schema.Message{schema.SystemMessage(system), schema.UserMessage(c.redact(string(body)))}
+	rec := c.begin(tier, task, msgs)
+	total, err := c.run(ctx, cfg, tier, task, msgs, out, rec)
+	c.end(ctx, rec, total, err)
+	return total, err
+}
+
+// run 按档位重试执行；rec 非空时记录每次尝试的原始回复。
+func (c *Client) run(ctx context.Context, cfg TierConfig, tier Tier, task Task, msgs []*schema.Message, out any,
+	rec *callRecord) (Usage, error) {
 	var total Usage
 	var last error
 	for attempt := 0; attempt <= cfg.MaxRetries; attempt++ {
@@ -176,7 +195,8 @@ func (c *Client) Do(ctx context.Context, tier Tier, task Task, input any, out an
 				return total, err
 			}
 		}
-		u, err := c.attempt(ctx, cfg, msgs, out)
+		reply, u, err := c.attempt(ctx, cfg, msgs, out)
+		rec.add(reply, u, err)
 		total.Add(u)
 		c.meter(tier, u)
 		if err == nil {
@@ -190,21 +210,22 @@ func (c *Client) Do(ctx context.Context, tier Tier, task Task, input any, out an
 	return total, fmt.Errorf("%w: %s after %d attempts: %w", ErrUnavailable, task, cfg.MaxRetries+1, last)
 }
 
-func (c *Client) attempt(ctx context.Context, cfg TierConfig, msgs []*schema.Message, out any) (Usage, error) {
+// attempt 执行一次调用，返回模型原始回复（未解码）、用量与错误。
+func (c *Client) attempt(ctx context.Context, cfg TierConfig, msgs []*schema.Message, out any) (string, Usage, error) {
 	actx, cancel := context.WithTimeout(ctx, cfg.Timeout)
 	defer cancel()
 	resp, err := c.model.Generate(actx, msgs, einomodel.WithTemperature(cfg.Temperature), einomodel.WithMaxTokens(cfg.MaxTokens))
 	if err != nil {
-		return Usage{}, err
+		return "", Usage{}, err
 	}
 	if resp == nil {
-		return Usage{}, fmt.Errorf("%w: empty response", ErrBadReply)
+		return "", Usage{}, fmt.Errorf("%w: empty response", ErrBadReply)
 	}
 	u := usageOf(resp)
 	if err := json.Unmarshal([]byte(stripFence(resp.Content)), out); err != nil {
-		return u, fmt.Errorf("%w: %w", ErrBadReply, err)
+		return resp.Content, u, fmt.Errorf("%w: %w", ErrBadReply, err)
 	}
-	return u, nil
+	return resp.Content, u, nil
 }
 
 func (c *Client) wait(ctx context.Context, attempt int) error {

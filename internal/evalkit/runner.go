@@ -18,6 +18,7 @@ import (
 	"agri-steward/internal/evalkit/sample"
 	"agri-steward/internal/model"
 	"agri-steward/internal/repository"
+	"agri-steward/internal/service"
 )
 
 // DefaultTrials 是每个样本默认运行次数（P0 §6.1 技术实现 3）。
@@ -53,6 +54,12 @@ type Trial struct {
 	Stored []grader.StoredText
 	// L6：OrderTransitions 是该 run 的作业单迁移（脚本审批人动作之后读 trial 库），App.DB 为空时为 nil。
 	OrderTransitions []model.OrderTransition
+	// L7：Scope 是提问所在租户 / 农场；Detail 是该 run 在 trial 库的完整链路（run_event + tool_call 等，
+	// 归还槽位前经 App.RunDetail 读取），供 report 导出三层 transcript；App.DB 为空时为 nil，不写入 agri_eval。
+	// Transcript 是已上传的三层 transcript 对象键（report.UploadTranscripts 写入，未上传为空）。
+	Scope      model.Scope
+	Detail     *service.RunDetail
+	Transcript string
 }
 
 // ToolRecorder 是评测工具接缝的调用记录（env.FixtureMCP 实现）。
@@ -314,6 +321,7 @@ func (r *Runner) ask(ctx context.Context, t *Trial, a *app.App, s *sample.Sample
 	start := r.now()
 	ans, err := a.Agent.Ask(ctx, q)
 	t.Latency = r.now().Sub(start)
+	t.Scope = q.Scope
 	if err == nil && r.approve != nil {
 		if err = r.approve(ctx, a, s, q, ans); err != nil {
 			err = fmt.Errorf("approver: %w", err)
@@ -331,7 +339,24 @@ func (r *Runner) ask(ctx context.Context, t *Trial, a *app.App, s *sample.Sample
 	if err := recordStored(ctx, t, a, q.Scope, ans.RunID); err != nil {
 		return ans, err
 	}
-	return ans, recordTransitions(ctx, t, a, q.Scope, ans.RunID)
+	if err := recordTransitions(ctx, t, a, q.Scope, ans.RunID); err != nil {
+		return ans, err
+	}
+	return ans, recordDetail(ctx, t, a, q.Scope, ans.RunID)
+}
+
+// recordDetail 从 trial 库读该 run 的完整链路（App.DB / App.RunDetail 为空或无 run 时不动）。
+// 读的是槽位注入的 trial 库（agri_eval_t_{n}），与生产库隔离。
+func recordDetail(ctx context.Context, t *Trial, a *app.App, scope model.Scope, runID uint64) error {
+	if a.DB == nil || a.RunDetail == nil || runID == 0 {
+		return nil
+	}
+	d, err := a.RunDetail.Get(ctx, scope, runID)
+	if err != nil {
+		return fmt.Errorf("record run detail: %w", err)
+	}
+	t.Detail = &d
+	return nil
 }
 
 // recordStored 从 trial 库读该 run 落库的摘要（App.DB 为空或无 run 时不动；有库无行时是空切片）。

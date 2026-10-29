@@ -2,8 +2,6 @@ package repository
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"strconv"
@@ -27,9 +25,9 @@ func NewDecisionRepo(db *gorm.DB, c clock.Clock) *DecisionRepo {
 	return &DecisionRepo{db: db, clock: c}
 }
 
-// InTx 在一个事务内执行 fn（service 以此划定事务边界，不 import gorm）。
+// InTx 在一个事务内执行 fn（service 以此划定事务边界，不 import gorm）；提交后执行 SSE 发布。
 func (r *DecisionRepo) InTx(ctx context.Context, fn func(tx *gorm.DB) error) error {
-	return r.db.WithContext(ctx).Transaction(fn)
+	return inTx(ctx, r.db, fn)
 }
 
 // TicketRow 是 approval_ticket 的读取列（含 row_ver）。
@@ -270,18 +268,17 @@ SELECT tenant_id, farm_id, field_id, 'REJECTED', ?, ?, ? FROM agent_run WHERE id
 }
 
 // AuditDenied 写 audit_log(action=APPROVAL, result=DENIED)：拒绝本身不改状态，独立短写（P0 §6.7 流程 2）。
+// L7 收编到 AuditRepo：target 与事件投影一致为 ticket:{id}。
 func (r *DecisionRepo) AuditDenied(ctx context.Context, scope model.Scope, t TicketRow, code string) error {
 	summary, err := json.Marshal(map[string]any{"ticket_id": t.ID, "order_id": t.OrderID, "code": code})
 	if err != nil {
 		return fmt.Errorf("repository: encode audit summary: %w", err)
 	}
-	sum := sha256.Sum256(summary)
-	err = r.db.WithContext(ctx).Exec(
-		`INSERT INTO audit_log (created_at, tenant_id, farm_id, run_id, actor_type, actor_id, action, target, payload_digest, summary, result) VALUES (?, ?, ?, ?, ?, ?, 'APPROVAL', ?, ?, ?, 'DENIED')`,
-		r.clock.Now(), scope.TenantID, scope.FarmID, t.RunID, string(model.ActorUser), scope.UserID,
-		"approval_ticket:"+strconv.FormatUint(t.ID, 10), hex.EncodeToString(sum[:]), string(summary)).Error
-	if err != nil {
-		return fmt.Errorf("repository: insert audit_log APPROVAL DENIED ticket %d: %w", t.ID, err)
+	runID := t.RunID
+	rec := NewAuditRecord(scope, &runID, model.Actor{Type: model.ActorUser, ID: scope.UserID}, model.AuditApproval,
+		ref("ticket", t.ID), summary, model.AuditResultDenied, r.clock.Now())
+	if err := (AuditRepo{DB: r.db}).Append(ctx, rec); err != nil {
+		return fmt.Errorf("repository: APPROVAL DENIED ticket %d: %w", t.ID, err)
 	}
 	return nil
 }

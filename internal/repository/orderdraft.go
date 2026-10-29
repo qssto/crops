@@ -74,7 +74,7 @@ func (r *OrderDraftRepo) CreateDraft(ctx context.Context, scope model.Scope, o m
 	}
 	now := r.clock.Now()
 	var orderID uint64
-	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	err := inTx(ctx, r.db, func(tx *gorm.DB) error {
 		res, err := execInTx(ctx, tx,
 			`INSERT INTO work_order (tenant_id, farm_id, field_id, advice_id, run_id, work_type, device_type, payload, time_window_from, time_window_to, status, dispatch_mode, schema_ver, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id)`,

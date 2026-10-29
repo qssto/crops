@@ -52,6 +52,9 @@ type infra struct {
 	deps   evalkit.DepsFunc
 	// question 把样本情境解析为种子农场下的 Scope / FieldID。
 	question evalkit.QuestionFunc
+	// objects / evalBucket 供 L7 transcript 上传（cfg.MinIO.BucketEval）。
+	objects    repository.ObjectPutter
+	evalBucket string
 }
 
 // open 依次连 agri_eval、Redis、trial 池；任一不可用都返回错误（不静默跳过）。
@@ -110,6 +113,7 @@ func (f *infraFlags) open(ctx context.Context, logW io.Writer, ls *loadedSamples
 		return nil, err
 	}
 	putter := repository.MinIOPutter{Client: mc}
+	in.objects, in.evalBucket = putter, cfg.MinIO.BucketEval
 	tenantID, farmID := data.Farm.TenantID, data.Farm.FarmID
 	in.question = seedQuestion(tenantID, farmID)
 	in.deps = func(ctx context.Context, s *env.Slot, smp *sample.Sample) (app.Deps, error) {

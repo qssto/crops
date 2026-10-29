@@ -202,6 +202,17 @@ func (r *recordingEvents) list() []model.EventType {
 	return out
 }
 
+// countType 统计某类事件条数。
+func countType(types []model.EventType, want model.EventType) int {
+	n := 0
+	for _, t := range types {
+		if t == want {
+			n++
+		}
+	}
+	return n
+}
+
 // withHITL 注入 L6 依赖。
 func withHITL(st *hitlStore, ev agent.EventSink) func(*graph.Config) {
 	return func(c *graph.Config) {

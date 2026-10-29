@@ -50,7 +50,8 @@ type Outcome struct {
 // Exec 是被托管的执行体：用 Runner 提供的 ctx 与回调运行图。返回 error 时 run 记 FAILED。
 type Exec func(ctx context.Context, cb callbacks.Handler) (Outcome, error)
 
-// Config 是 Runner 的依赖。Logger 可空（默认丢弃）；Gate 可空（不激活票据）；Resumes 可空（Resume 不可用）。
+// Config 是 Runner 的依赖。Logger 可空（默认丢弃）；Gate 可空（不激活票据）；Resumes 可空（Resume 不可用）；
+// Events 可空（L7：非空时由 Runner 统一发 RUN_FAILED / RUN_INTERRUPTED，图内不再发）。
 type Config struct {
 	Locker     agent.RunLocker
 	Runs       agent.RunStateStore
@@ -59,6 +60,7 @@ type Config struct {
 	Logger     *slog.Logger
 	Gate       agent.ApprovalGate
 	Resumes    agent.RunResumeStore
+	Events     agent.EventSink
 }
 
 // Runner 是线程安全的；每次 Run 独立持锁与守卫。
@@ -70,6 +72,7 @@ type Runner struct {
 	log        *slog.Logger
 	gate       agent.ApprovalGate
 	resumes    agent.RunResumeStore
+	events     agent.EventSink
 }
 
 // New 校验依赖并构造 Runner。
@@ -99,7 +102,7 @@ func New(cfg Config) (*Runner, error) {
 		log = slog.New(slog.DiscardHandler)
 	}
 	return &Runner{locker: cfg.Locker, runs: cfg.Runs, clk: cfg.Clock, renewEvery: every, log: log,
-		gate: cfg.Gate, resumes: cfg.Resumes}, nil
+		gate: cfg.Gate, resumes: cfg.Resumes, events: cfg.Events}, nil
 }
 
 // guard 记录一次 run 的执行权与回调中的写入错误。
@@ -221,7 +224,7 @@ func (r *Runner) execute(ctx context.Context, scope model.Scope, runID uint64, l
 		execErr = g.firstSaveErr()
 	}
 	if execErr == nil && out.Status == model.RunInterrupted {
-		return r.interrupted(ctx, scope, runID, out)
+		return r.interrupted(ctx, scope, runID, out, epoch > 0)
 	}
 	if execErr != nil {
 		if !failOnErr {
@@ -232,14 +235,20 @@ func (r *Runner) execute(ctx context.Context, scope model.Scope, runID uint64, l
 	if err := r.runs.FinishRun(ctx, scope, runID, out.Status, out.ReasonCode); err != nil {
 		return out, errors.Join(execErr, fmt.Errorf("runner: finish run %d: %w", runID, err))
 	}
+	if out.Status == model.RunFailed {
+		r.emitEnd(ctx, scope, runID, model.EventRunFailed,
+			model.RunEndPayload{Status: string(model.RunFailed), Reason: failReason(out.ReasonCode), Resumed: epoch > 0})
+	}
 	return out, execErr
 }
 
 // interrupted 处理中断收尾：不 FinishRun（检查点落库时已置 INTERRUPTED）；WAIT_APPROVAL 时激活票据（先持久化再开放审批）。
-func (r *Runner) interrupted(ctx context.Context, scope model.Scope, runID uint64, out Outcome) (Outcome, error) {
+func (r *Runner) interrupted(ctx context.Context, scope model.Scope, runID uint64, out Outcome, resumed bool) (Outcome, error) {
 	if out.Interrupt == "" {
 		return out, fmt.Errorf("run %d: %w", runID, ErrBadInterrupt)
 	}
+	r.emitEnd(ctx, scope, runID, model.EventRunInterrupted, model.RunEndPayload{Status: string(model.RunInterrupted),
+		Reason: out.ReasonCode, InterruptType: string(out.Interrupt), Resumed: resumed})
 	if out.Interrupt != model.InterruptWaitApproval || r.gate == nil {
 		return out, nil
 	}

@@ -19,7 +19,6 @@ import (
 // fakeAsker 记录收到的 Scope / 输入，按配置返回。
 type fakeAsker struct {
 	askErr   error
-	runErr   error
 	gotScope model.Scope
 	gotIn    service.AskInput
 }
@@ -32,15 +31,7 @@ func (f *fakeAsker) Ask(ctx context.Context, scope model.Scope, in service.AskIn
 	return 77, nil
 }
 
-func (f *fakeAsker) GetRun(_ context.Context, scope model.Scope, runID uint64) (service.RunView, error) {
-	f.gotScope = scope
-	if f.runErr != nil {
-		return service.RunView{}, f.runErr
-	}
-	return service.RunView{Run: model.RunSummary{RunID: runID, Status: model.RunRunning}}, nil
-}
-
-func TestAskAndRunHandlers(t *testing.T) {
+func TestAskHandler(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	now := time.Date(2026, 7, 15, 1, 0, 0, 0, time.UTC)
 	grants := map[uint64][]model.Grant{1001: {{TenantID: 1, FarmID: 1, Roles: []model.Role{model.RoleFarmManager}}}}
@@ -84,14 +75,6 @@ func TestAskAndRunHandlers(t *testing.T) {
 			asker: &fakeAsker{askErr: service.ErrRateLimited}, wantStatus: http.StatusTooManyRequests},
 		{name: "ask internal 500", method: http.MethodPost, path: "/api/v1/farms/1/ask", auth: bearer, body: okBody,
 			asker: &fakeAsker{askErr: errors.New("db down")}, wantStatus: http.StatusInternalServerError},
-		{name: "run 200", method: http.MethodGet, path: "/api/v1/farms/1/runs/77", auth: bearer,
-			asker: &fakeAsker{}, wantStatus: http.StatusOK},
-		{name: "run bad id 400", method: http.MethodGet, path: "/api/v1/farms/1/runs/x", auth: bearer,
-			asker: &fakeAsker{}, wantStatus: http.StatusBadRequest},
-		{name: "run not found 404", method: http.MethodGet, path: "/api/v1/farms/1/runs/78", auth: bearer,
-			asker: &fakeAsker{runErr: model.ErrNotFound}, wantStatus: http.StatusNotFound},
-		{name: "run no token 401", method: http.MethodGet, path: "/api/v1/farms/1/runs/77",
-			asker: &fakeAsker{}, wantStatus: http.StatusUnauthorized},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

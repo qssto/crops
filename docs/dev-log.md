@@ -196,3 +196,38 @@
 - P3：Decide 到期收尾失败时记 error 日志。
 - 未改（P3）：checkpoint 超 3 份删除时 MinIO 对象不回收；ExpireTicket 用调用方 row_ver，扫描用 `expires_at < now`（文档 SQL）而 Decide 用 `≤`，边界差 0 秒；recordTransitions 只读原 run 的迁移。
 - 待确认：复检会重跑 LLM classify（§6.7 只要求重取时效数据），模型抖动可能误取消；state_machine_legal 只校验迁移表合法；无检查点的 stuck_run 直接 FAILED 而非整跑重来。
+
+## L7-B · 读路径与指标（2026-10-29）
+
+- 交付：run 详情、看板指标、amis 看板、对账命令、评测 transcript。只读，无新迁移，未动 run_event / audit_log DDL 与 L7-A 的文件。
+- run 详情：`repository.RunDetailRepo.Load` 每表一条按 run_id 的 SQL（run_step / run_event / tool_call / approval_ticket / approval_decision / work_order / work_order_transition / audit_log），无 N+1。`service.RunDetailService.Get` 用纯函数 `assembleRunDetail` 组成 question → steps（run → step → tool_call / llm_call / event_seqs）→ evidence（KB_LOADED + 卡片 citations）→ approvals → execution（orders + transitions + DISPATCHED）→ timeline / audit。缺表数据不报错，空表编码为 `[]`，坏 payload 记 `warnings`。
+- 指标：`repository.MetricsRepo.Facts` 六条事实 SQL，`service.MetricsService.Daily` 用纯函数 `computeMetrics` 按 UTC 自然日出稠密序列和 total。口径与 SQL 见 docs/metrics.md：作业类只算 REAL，DRY_RUN 计 `dry_run_excluded`；审批 OPEN 时间取 APPROVAL_PENDING 事件；恢复成功指首个 RUN_RESUMED 之后有 RUN_COMPLETED；P95 用最近秩。
+- 路由：`controller.RunRoutes` 挂 `GET /api/v1/farms/:farm_id/runs/:run_id` 与 `GET .../metrics?from=&to=`（最多 31 天，非法日期 400）。`controller.MountDashboard` 挂 `GET /dashboard`（amis CDN 外壳）与 `GET /dashboard/:file`（只服务目录下一层的 .json）。文件缺失返回 404，不影响启动。cmd/server 传 `-repo/web/amis`。
+- 看板：`web/amis/dashboard.json`（gitignore）。输入 token / farm_id / from / to，展示指标趋势折线、按日明细与窗口合计；填 run_id 后弹窗显示完整链路 JSON。
+- 对账：`cmd/reconcile`（`make reconcile GO=go DAY=…`）对比 Daily 与直接 COUNT/SUM，共 12 项，不一致时退出码为 1。单元级对账写入 docs/reconcile/L7.md。
+- transcript：`Runner.ask` 在归还槽位前经 App.RunDetail 读 trial 库，结果存入 `Trial.Detail` / `Trial.Scope`。`report.BuildTranscript` 输出三层 JSONL（root / agent_step / atomic_step，用 id / parent_id 串联）。`report.UploadTranscripts` 上传到 `cfg.MinIO.BucketEval`，键为 `transcript/{exp_id}/{sample_id}/{trial}.jsonl`，并回写 `Trial.Transcript`。报告 trial 明细新增 run_id 列，链接到该对象键。
+- 隔离（验收 6）：`TestReadPathSQL_NoCrossSchema` 断言指标 / 详情 SQL 无库名前缀、不含 agri_eval / agri_steward，且都带 tenant_id / farm_id。生产 App 只用注入的 agri_steward 连接；trial 详情只读槽位库。
+- 测试：service rundetail / metrics 表驱动单测，controller RunRoutes / MountDashboard，report transcript / upload，cmd/reconcile compare。`repository/readpath_integration_test.go` 只编译。
+- 偏差：
+  - `/runs/:run_id` 由 RunDetail 接管，保留 run / card 两键兼容 L4。删除 `controller.RunHandler` / `Asker.GetRun`，`AskService.GetRun` 保留。
+  - run_event 没有 raw_object_id 列，LLM 原文 id 按 audit_log(LLM_CALL) 顺序关联，条数不等时不关联。
+  - 报告 run_id 链接指向 transcript 对象键，不指向 API，因为 trial 的 run 不在生产库。
+  - 会话类指标按 run 创建日归日，票按决策日归日。
+- TODO：
+  - 协调者在真实库跑 `make reconcile` 并补 docs/reconcile/L7.md 第 2 节。
+  - 集成测试未连库运行。
+  - 指标与详情依赖 L7-A 写入 audit_log / RUN_STARTED / APPROVAL_PENDING，合并前这些字段可能为空。
+  - P0 全是 DRY_RUN，作业比率恒为 null。
+
+## L7-A · 审计写路径（2026-10-29）
+
+- 审计投影：`EventRepo.AppendTx` 同事务先 `ProjectAudit` 再插 run_event，命中投影的事件同事务写 audit_log（`repository/audit.go`）；raw_object_id 只落 audit_log。
+- SSE：`repository/aftercommit.go` 用 ctx 内的 `inTx` / `onCommit` 挂钩，提交成功后才 `PUBLISH sse:run:{run_id}`（`rediskey.SSERun`、`repository/sse.go`）；回滚不发；外部事务（非 repository 开启）里调用时跳过发布并告警。eventsink / db / orderdraft / decision 改走 inTx。
+- llm：`Config.Observer func(ctx, llm.Call)` + `Config.Clock`（`llm/observe.go`），限流 / 未知档位的调用不观测。
+- callbacks（`harness/callbacks/`）：STEP_STARTED / STEP_ENDED（status OK / ERROR / INTERRUPTED）、LLM_CALL_END（请求响应写 LLM_IO raw 对象），`Tracer` 小接口 + `SlogTracer`（PII 掩码）。
+- 事件发出位置（各一处）：RUN_STARTED（graph Ask，actor=user，问题脱敏）、KB_LOADED（load_knowledge）、ADVICE_READY（persist）在 `graph/events.go`；RUN_FAILED（FinishRun(FAILED) 成功后）、RUN_INTERRUPTED（`interrupted()` 内 Activate 前）在 `runner/events.go`；RUN_COMPLETED / RUN_RESUMED 仍在 graph finalize / Resume。finalize payload 增 `status` / `reason`；workorder / decision 事件补 ActorID。
+- 原文读取：`GET /runs/:run_id/raw/:raw_id` → `AuditService.ReadRaw`：仅 farm_manager / agronomist / platform_admin；同事务查 raw_object（按租户 / 农场）→ 校验 run → 预签名 5 分钟 → 写 RAW_READ/OK（summary 不含 URL）；拒绝时另起写 RAW_READ/DENIED（code：ROLE_INSUFFICIENT / RAW_NOT_FOUND / RUN_MISMATCH）并返回 403；响应 `Cache-Control: no-store`。
+- 分区：`PartitionMaintainer`（`service/partition.go`）每小时检查，CST 每月 25 日起持锁 `scan:partition`，对 audit_log / run_event 用 `REORGANIZE PARTITION pmax` 补齐到当月 +2，pmax 有行只记 error；同月成功后不再执行。cmd/server serve 内起 goroutine，退出等待。
+- 偏差：OTel 依赖未引入，trace 走 run_event + Tracer；AuditDenied target 改 `ticket:N`；不存在 / 他农场的 raw 返回 403 而非 404；未新增 DDL（无 0005）；分区 DDL 用应用账号执行。
+- 测试：repository audit / service ReadRaw / partition / controller raw / callbacks / llm observe / runner events / graph L7 事件；集成测试 `repository/l7_integration_test.go`、`service/audit_integration_test.go` 仅编译。
+- TODO：连库跑集成测试；核对投影事件 audit_log 与 run_event 条数一致；验证 PUBLISH 在提交后、MinIO 预签名可用、应用账号有 ALTER 权限；真实模型未验证（ONEAPI_* 未设置）。

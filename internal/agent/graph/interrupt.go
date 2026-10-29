@@ -117,9 +117,12 @@ func (a *Agent) finalize(ctx context.Context, s *state) (*state, error) {
 	if s.card == nil {
 		return nil, errors.New("graph: finalize without card")
 	}
-	summary := map[string]any{"outcome": s.card.Outcome, "advice_id": s.card.AdviceID, "resumed": runner.Epoch(ctx) > 0}
+	// status / reason 对齐 model.RunEndPayload 契约，其余字段为附加摘要
+	summary := map[string]any{"status": model.RunCompleted, "outcome": s.card.Outcome, "advice_id": s.card.AdviceID,
+		"resumed": runner.Epoch(ctx) > 0}
 	if s.card.RefuseReason != "" {
 		summary["refuse_reason"] = s.card.RefuseReason
+		summary["reason"] = s.card.RefuseReason
 	}
 	if s.order != nil {
 		summary["order_id"] = s.order.OrderID
@@ -132,19 +135,7 @@ func (a *Agent) finalize(ctx context.Context, s *state) (*state, error) {
 	return s, nil
 }
 
-// emit 经 Config.Events 发 run 级事件；Events 为空或执行权已丢失时跳过，发送失败只告警（事件是观测，不夺执行）。
+// emit 发 actor=system 的 run 级事件（RUN_RESUMED / RUN_COMPLETED），见 emitAs。
 func (a *Agent) emit(ctx context.Context, s *state, typ model.EventType, payload map[string]any) {
-	if a.cfg.Events == nil || runner.Alive(ctx) != nil {
-		return
-	}
-	body, err := json.Marshal(payload)
-	if err != nil {
-		a.log.WarnContext(ctx, "encode run event", "run_id", s.runID, "type", typ, "err", err)
-		return
-	}
-	e := model.RunEvent{TenantID: s.q.Scope.TenantID, FarmID: s.q.Scope.FarmID, RunID: s.runID, Type: typ,
-		Actor: model.ActorSystem, Payload: body, CreatedAt: a.cfg.Clock.Now()}
-	if _, err := a.cfg.Events.Emit(context.WithoutCancel(ctx), e); err != nil {
-		a.log.WarnContext(ctx, "emit run event", "run_id", s.runID, "type", typ, "err", err)
-	}
+	a.emitAs(ctx, s, model.RunEvent{Type: typ, Actor: model.ActorSystem}, payload)
 }

@@ -99,12 +99,12 @@ func requireTx(tx *gorm.DB) error {
 // Transactor 在 DB 上开事务执行 fn（fn 返回错误即回滚），供 service 层定事务边界而不 import gorm。
 type Transactor struct{ DB *gorm.DB }
 
-// InTx 开事务执行 fn。
+// InTx 开事务执行 fn；提交成功后执行事务内登记的提交后动作（SSE 发布）。
 func (t Transactor) InTx(ctx context.Context, fn func(tx *gorm.DB) error) error {
 	if t.DB == nil {
 		return errors.New("repository: transactor has no DB")
 	}
-	return t.DB.WithContext(ctx).Transaction(fn)
+	return inTx(ctx, t.DB, fn)
 }
 
 // nullIfEmpty 把空串写成 NULL。

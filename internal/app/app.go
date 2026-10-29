@@ -44,6 +44,11 @@ type Deps struct {
 	Adapter adapter.DeviceAdapter
 	// HITL 是 L6 检查点与记忆的可选依赖（零值：不中断、记忆关闭）。
 	HITL HITLDeps
+	// DashboardDir 是看板 amis 页面目录（可选，如 web/amis）；为空不挂 /dashboard，文件缺失时 /dashboard 返回 404。
+	DashboardDir string
+	// Presign 是 L7 原文读取的预签名器（生产：repository.MinIOPresigner，与 RawStore 同一 bucket）；
+	// 为空时不挂 GET /runs/:run_id/raw/:raw_id。
+	Presign repository.Presigner
 }
 
 // metaer 是能报告自身版本信息的主链路（graph.Agent）。
@@ -77,6 +82,15 @@ type App struct {
 	Adapter adapter.DeviceAdapter
 	// L6：检查点 / 记忆供主链路注入；审批决策入口与扫描任务（cmd/server 启动 Scanner.Run）。
 	HITL *HITL
+	// L7 读路径：run 详情与看板指标，只读 Deps.DB（生产为 agri_steward）。
+	RunDetail    *service.RunDetailService
+	Metrics      *service.MetricsService
+	DashboardDir string
+	// L7：带授权审计的原文读取（Deps.Presign 为空时 nil）；分区维护（cmd/server 启动 Partitions.Run）。
+	Audit      *service.AuditService
+	Partitions *service.PartitionMaintainer
+	// eventRepo 是唯一的 run_event 写入口（同事务 audit_log 投影 + 提交后 PUBLISH sse:run:{run_id}）。
+	eventRepo repository.EventRepo
 }
 
 // 缺依赖时返回的错误。
@@ -115,7 +129,8 @@ func Build(deps Deps) (*App, error) {
 	locker := repository.NewLocker(deps.Redis)
 	runs := repository.NewRunRepo(deps.DB, deps.Clock)
 	advice := repository.NewAdviceRepo(deps.DB, deps.Clock)
-	orders, events := repository.WorkOrderRepo{}, repository.EventRepo{}
+	orders := repository.WorkOrderRepo{}
+	events := repository.EventRepo{Pub: repository.RedisPublisher{Client: deps.Redis}, Keys: deps.Keys, Log: deps.Logger}
 	workOrders := service.NewWorkOrderService(deps.Clock, orders, events)
 	approvals, err := service.NewApprovalService(service.ApprovalDeps{Clock: deps.Clock, DB: deps.DB,
 		Tx: repository.Transactor{DB: deps.DB}, Tickets: repository.ApprovalRepo{}, Orders: orders,
@@ -136,6 +151,11 @@ func Build(deps Deps) (*App, error) {
 		Events:     repository.EventSink{DB: deps.DB, Events: events},
 		Adapter:    deps.Adapter,
 		HITL:       buildHITLStores(deps),
+		RunDetail:  service.NewRunDetailService(repository.NewRunDetailRepo(deps.DB, runs, advice)),
+		Metrics:    service.NewMetricsService(repository.NewMetricsRepo(deps.DB), deps.Clock),
+		eventRepo:  events,
+
+		DashboardDir: deps.DashboardDir,
 	}
 	if deps.NewAgent != nil {
 		ag, err := deps.NewAgent(a)
@@ -154,10 +174,40 @@ func Build(deps Deps) (*App, error) {
 		Runs:    runs, Advice: advice, Agent: a.Agent, Meta: meta, Logger: deps.Logger,
 	})
 	a.buildHITLServices()
+	if err := a.buildAudit(deps); err != nil {
+		return nil, err
+	}
 	return a, nil
 }
 
-// Handler 返回 HTTP 路由（gin），鉴权由 auth 提供。
+// buildAudit 装配 L7 原文读取（有 Presign 时）与分区维护。
+func (a *App) buildAudit(deps Deps) error {
+	if deps.Presign != nil {
+		svc, err := service.NewAuditService(service.AuditDeps{Store: repository.RawAccessRepo{DB: a.DB},
+			Presign: deps.Presign, Clock: a.Clock, Logger: a.Logger})
+		if err != nil {
+			return fmt.Errorf("app: build audit: %w", err)
+		}
+		a.Audit = svc
+	}
+	pm, err := service.NewPartitionMaintainer(service.PartitionDeps{Store: repository.PartitionRepo{DB: a.DB},
+		Locks: a.Locker, Keys: a.Keys, Clock: a.Clock, Logger: a.Logger})
+	if err != nil {
+		return fmt.Errorf("app: build partition maintainer: %w", err)
+	}
+	a.Partitions = pm
+	return nil
+}
+
+// Handler 返回 HTTP 路由（gin），鉴权由 auth 提供；DashboardDir 非空时挂 /dashboard。
 func (a *App) Handler(auth *service.AuthService) http.Handler {
-	return controller.NewRouter(auth, a.Ask, controller.ApprovalRoutes(a.HITL.Decisions))
+	mounts := []controller.Mount{controller.ApprovalRoutes(a.HITL.Decisions), controller.RunRoutes(a.RunDetail, a.Metrics)}
+	if a.Audit != nil {
+		mounts = append(mounts, controller.AuditRoutes(a.Audit))
+	}
+	r := controller.NewRouter(auth, a.Ask, mounts...)
+	if a.DashboardDir != "" {
+		controller.MountDashboard(r, a.DashboardDir)
+	}
+	return r
 }

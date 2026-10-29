@@ -16,6 +16,7 @@ import (
 
 	"agri-steward/internal/agent"
 	"agri-steward/internal/agent/calc"
+	harnesscb "agri-steward/internal/agent/harness/callbacks"
 	"agri-steward/internal/agent/harness/checkpoint"
 	"agri-steward/internal/agent/harness/runner"
 	"agri-steward/internal/agent/knowledge"
@@ -57,6 +58,7 @@ type Config struct {
 	Checkpoints agent.CheckpointStore // L6：compose.WithCheckPointStore，只在中断时写；与 Gate 同时非空才在审批点中断
 	Resumes     agent.RunResumeStore  // L6：Resume 的状态守卫；空则 Resume 不可用
 	Memory      agent.MemoryStore     // L6：记忆注入；空即关闭
+	Trace       callbacks.Handler     // L7：附加 Eino 回调（harness/callbacks 的 STEP_* 事件）；空则不挂
 
 	RenewEvery  time.Duration // 租约续期间隔，0 取 runner 默认
 	OrderWindow time.Duration // 建议作业窗口长度，0 取 24h
@@ -111,7 +113,7 @@ func New(ctx context.Context, cfg Config) (*Agent, error) {
 		a.log = slog.Default()
 	}
 	r, err := runner.New(runner.Config{Locker: cfg.Locker, Runs: cfg.Runs, Clock: cfg.Clock,
-		RenewEvery: cfg.RenewEvery, Logger: a.log, Gate: cfg.Gate, Resumes: cfg.Resumes})
+		RenewEvery: cfg.RenewEvery, Logger: a.log, Gate: cfg.Gate, Resumes: cfg.Resumes, Events: cfg.Events})
 	if err != nil {
 		return nil, fmt.Errorf("graph: %w", err)
 	}
@@ -154,9 +156,13 @@ func (a *Agent) compile(ctx context.Context) (compose.Runnable[*state, *state], 
 	return g.Compile(ctx, opts...)
 }
 
-// invokeOpts 是一次 Invoke 的选项：回调 + 配置了检查点时的 checkpoint_id（= run_id）。
+// invokeOpts 是一次 Invoke 的选项：runner 回调（+ L7 Trace）+ 配置了检查点时的 checkpoint_id（= run_id）。
 func (a *Agent) invokeOpts(runID uint64, cb callbacks.Handler) []compose.Option {
-	opts := []compose.Option{compose.WithCallbacks(cb)}
+	hs := []callbacks.Handler{cb}
+	if a.cfg.Trace != nil {
+		hs = append(hs, a.cfg.Trace)
+	}
+	opts := []compose.Option{compose.WithCallbacks(hs...)}
 	if a.cfg.Checkpoints != nil {
 		opts = append(opts, compose.WithCheckPointID(checkpoint.ID(runID)))
 	}
@@ -189,11 +195,13 @@ func (a *Agent) Ask(ctx context.Context, q agent.Question) (agent.Answer, error)
 	var final *state
 	out, err := a.run.Run(ctx, q.Scope, runID, func(rctx context.Context, cb callbacks.Handler) (out runner.Outcome, err error) {
 		defer recoverOutcome(&out, &err)
+		rctx = harnesscb.WithRun(rctx, harnesscb.Run{Scope: q.Scope, RunID: runID})
 		s, err := a.newState(rctx, q, runID)
 		if err != nil {
 			return runner.Outcome{ReasonCode: stepGraphError}, err
 		}
 		final = s // 节点原地修改同一 *state：中断时 Invoke 无返回值，卡片 / 单 / 票据仍在 s 上
+		a.emitRunStarted(rctx, s)
 		tctx := agent.WithCheckpointTarget(rctx, agent.CheckpointTarget{Scope: q.Scope, RunID: runID,
 			Interrupt: model.InterruptWaitApproval})
 		res, err := a.graph.Invoke(tctx, s, a.invokeOpts(runID, cb)...)
@@ -241,6 +249,7 @@ func (a *Agent) Resume(ctx context.Context, scope model.Scope, runID uint64) (ag
 	_, err := a.run.Resume(ctx, scope, agent.ResumeRequest{RunID: runID, GraphVersion: GraphVersion},
 		func(rctx context.Context, cb callbacks.Handler) (out runner.Outcome, err error) {
 			defer recoverOutcome(&out, &err)
+			rctx = harnesscb.WithRun(rctx, harnesscb.Run{Scope: scope, RunID: runID})
 			res, err := a.graph.Invoke(rctx, nil, a.invokeOpts(runID, cb)...)
 			if err != nil {
 				return runner.Outcome{ReasonCode: stepGraphError}, err

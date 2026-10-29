@@ -9,6 +9,8 @@ import (
 
 	"agri-steward/internal/agent"
 	"agri-steward/internal/agent/graph"
+	"agri-steward/internal/agent/guardrail/pii"
+	"agri-steward/internal/agent/harness/callbacks"
 	"agri-steward/internal/agent/knowledge"
 	"agri-steward/internal/agent/llm"
 	"agri-steward/internal/config"
@@ -42,14 +44,21 @@ func GraphAgent(ctx context.Context, gc GraphConfig) func(*App) (agent.Agent, er
 			tiers[llm.Tier(name)] = llm.TierConfig{Temperature: t.Temperature, MaxTokens: t.MaxTokens,
 				Timeout: t.Timeout, MaxRetries: t.MaxRetries}
 		}
-		c, err := llm.New(llm.Config{Model: gc.Chat, Prompts: prompts, Tiers: tiers, Backoff: m.Backoff})
+		// L7 trace：STEP_* / LLM_CALL_END（LLM_IO 原文进 raw_store），Tracer 属性经 pii.MaskAttrs
+		rec, err := callbacks.New(callbacks.Config{Events: a.Events, Raw: a.RawStore, Clock: a.Clock, Logger: a.Logger,
+			Tracer: callbacks.SlogTracer{Log: a.Logger, Mask: pii.MaskAttrs}})
+		if err != nil {
+			return nil, fmt.Errorf("app: build trace recorder: %w", err)
+		}
+		c, err := llm.New(llm.Config{Model: gc.Chat, Prompts: prompts, Tiers: tiers, Backoff: m.Backoff,
+			Observer: rec.ObserveLLM, Clock: a.Clock})
 		if err != nil {
 			return nil, err
 		}
 		cfg := graph.Config{LLM: c, Tier: llm.Tier(m.DefaultTier), Tools: a.Tools,
 			Runs: a.Runs, Advice: a.Advice, Drafts: a.Drafts, Locker: a.RunLocker, Clock: a.Clock,
 			KB: gc.KB, Taxonomy: gc.Taxonomy, Crop: m.Crop, Region: m.Region, Logger: a.Logger,
-			Gate: a.Approvals, Events: a.Events}
+			Gate: a.Approvals, Events: a.Events, Trace: rec.Handler()}
 		a.HITL.withHITL(&cfg, a.Runs)
 		return graph.New(ctx, cfg)
 	}

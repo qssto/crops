@@ -75,6 +75,13 @@ func TestAgent_InterruptThenResume(t *testing.T) {
 	if toolsBefore == 0 {
 		t.Fatal("operation sample made no tool calls")
 	}
+	// L7：图内事件 RUN_STARTED / KB_LOADED / ADVICE_READY 与 runner 的 RUN_INTERRUPTED 各一条
+	for _, typ := range []model.EventType{model.EventRunStarted, model.EventKBLoaded, model.EventAdviceReady,
+		model.EventRunInterrupted} {
+		if n := countType(r.ev.list(), typ); n != 1 {
+			t.Fatalf("%s events = %d, want 1; events=%v", typ, n, r.ev.list())
+		}
+	}
 
 	// 未审批时不可续跑，run 保持 INTERRUPTED
 	if _, err := r.newA().Resume(context.Background(), testScope, ans.RunID); !errors.Is(err, agent.ErrNotResumable) {

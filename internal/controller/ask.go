@@ -7,7 +7,6 @@ import (
 	"errors"
 	"net/http"
 	"regexp"
-	"strconv"
 
 	"github.com/gin-gonic/gin"
 
@@ -23,10 +22,9 @@ const requestIDBytes = 16
 // requestIDPattern 限定外部传入的 request id，避免日志注入。
 var requestIDPattern = regexp.MustCompile(`^[A-Za-z0-9._-]{1,64}$`)
 
-// Asker 是 ask 入口需要的能力，service.AskService 实现。
+// Asker 是 ask 入口需要的能力，service.AskService 实现。GET /runs/{run_id} 自 L7 由 RunRoutes 提供（RunDetail ⊇ RunView）。
 type Asker interface {
 	Ask(ctx context.Context, scope model.Scope, in service.AskInput) (uint64, error)
-	GetRun(ctx context.Context, scope model.Scope, runID uint64) (service.RunView, error)
 }
 
 // askRequest 是 POST /ask 请求体；farm_id 只取路径。
@@ -80,28 +78,6 @@ func AskHandler(svc Asker) gin.HandlerFunc {
 			return
 		}
 		c.JSON(http.StatusAccepted, askResponse{RunID: runID})
-	}
-}
-
-// RunHandler 是 GET /api/v1/farms/:farm_id/runs/:run_id：run 状态 + 建议卡。
-func RunHandler(svc Asker) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		scope, ok := service.ScopeFrom(c.Request.Context())
-		if !ok {
-			abort(c, http.StatusUnauthorized, "unauthenticated")
-			return
-		}
-		runID, err := strconv.ParseUint(c.Param("run_id"), 10, 64)
-		if err != nil || runID == 0 {
-			abort(c, http.StatusBadRequest, "bad run_id")
-			return
-		}
-		view, err := svc.GetRun(c.Request.Context(), scope, runID)
-		if err != nil {
-			abortErr(c, err)
-			return
-		}
-		c.JSON(http.StatusOK, view)
 	}
 }
 

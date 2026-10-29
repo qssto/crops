@@ -63,5 +63,10 @@ func (k Keys) RateFarmAsk(farmID uint64) string {
 	return k.prefix + "rl:farm:" + strconv.FormatUint(farmID, 10) + ":ask"
 }
 
+// SSERun 是 SSE 频道 sse:run:{run_id}（P0 L7：run_event 提交后 PUBLISH）。
+func (k Keys) SSERun(runID uint64) string {
+	return k.prefix + "sse:run:" + strconv.FormatUint(runID, 10)
+}
+
 // Raw 拼接其他层文档中的键名（如 cache:mcp:...），各层落地时再补专用方法。
 func (k Keys) Raw(name string) string { return k.prefix + name }

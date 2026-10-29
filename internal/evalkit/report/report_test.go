@@ -26,9 +26,11 @@ func testExperiment() *evalkit.Experiment {
 		StartedAt: start, FinishedAt: start.Add(time.Second),
 		Trials: []evalkit.Trial{
 			{SampleID: "s-1", Tags: []string{"L4", "protect.timing"}, TrialIndex: 0, Expected: model.OutcomeRefused,
-				Outcome: model.OutcomeRefused, RefuseReason: "KB_MISS", Latency: 2 * time.Millisecond, Scores: scPass},
+				Outcome: model.OutcomeRefused, RefuseReason: "KB_MISS", Latency: 2 * time.Millisecond, Scores: scPass,
+				RunID: 41, Transcript: "transcript/20261028T010000-abcdef/s-1/0.jsonl"},
 			{SampleID: "s-1", Tags: []string{"L4", "protect.timing"}, TrialIndex: 1, Expected: model.OutcomeRefused,
-				Outcome: model.OutcomeAdvice, Latency: 4 * time.Millisecond, UnexpectedCalls: []string{"device.list", "weather.alert"}, Scores: scFail},
+				Outcome: model.OutcomeAdvice, Latency: 4 * time.Millisecond, UnexpectedCalls: []string{"device.list", "weather.alert"}, Scores: scFail,
+				RunID: 42},
 			{SampleID: "s-2", Tags: []string{"L2"}, TrialIndex: 0, Expected: model.OutcomeAdvice,
 				Error: "trial s-2#0: a|b\nc", Latency: time.Millisecond},
 			{SampleID: "s-3", TrialIndex: 0, Expected: model.OutcomeRefused, Outcome: model.OutcomeRefused, Scores: scGrErr},
@@ -58,9 +60,9 @@ func TestRender(t *testing.T) {
 		{name: "pass^k grader error counts as fail", want: "| s-3 | 0/1 → 0.00 | 0/1 → 0.00 |"},
 		{name: "tag L4", want: "| L4 | 1 | 2 | 1 | 1 | 0 | 1 | 3.000ms |"},
 		{name: "tag L2", want: "| L2 | 1 | 1 | 0 | 0 | 1 | 0 | 1.000ms |"},
-		{name: "trial row", want: "| s-1 | 0 | REFUSED | REFUSED | KB_MISS | 2.000ms | - | - | PASS | - |"},
-		{name: "unexpected calls", want: "| s-1 | 1 | REFUSED | ADVICE | - | 4.000ms | device.list, weather.alert | - | FAIL | outcome_match: outcome = \"ADVICE\" |"},
-		{name: "error escaped", want: `| s-2 | 0 | ADVICE | - | - | 1.000ms | - | trial s-2#0: a\|b c | INFRA_ERROR | - |`},
+		{name: "trial row", want: "| s-1 | 0 | [41](transcript/20261028T010000-abcdef/s-1/0.jsonl) | REFUSED | REFUSED | KB_MISS | 2.000ms | - | - | PASS | - |"},
+		{name: "unexpected calls", want: "| s-1 | 1 | 42 | REFUSED | ADVICE | - | 4.000ms | device.list, weather.alert | - | FAIL | outcome_match: outcome = \"ADVICE\" |"},
+		{name: "error escaped", want: `| s-2 | 0 | - | ADVICE | - | - | 1.000ms | - | trial s-2#0: a\|b c | INFRA_ERROR | - |`},
 		{name: "grader error row", want: "| GRADER_ERROR | schema_valid: grader_error grader schema_valid on s-3#0: boom |"},
 	}
 	for _, tt := range tests {

@@ -52,8 +52,12 @@ type RunEvent struct {
 	ToolCallID *uint64 // nil 写 NULL
 	Type       EventType
 	Actor      ActorType
-	Payload    json.RawMessage // 只含控制字段与脱敏摘要，≤ 8KB
-	CreatedAt  time.Time
+	// ActorID 是 audit_log.actor_id：user 为用户 id，agent / system 为 0（L7）。
+	ActorID uint64
+	Payload json.RawMessage // 只含控制字段与脱敏摘要，≤ 8KB
+	// RawObjectID 关联回放原文（如 LLM_CALL_END 的模型输入输出），投影到 audit_log.raw_object_id（L7）。
+	RawObjectID *uint64
+	CreatedAt   time.Time
 }
 
 // RawPut 是 RawStore.Put 的入参。对象 key 为
