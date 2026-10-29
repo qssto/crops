@@ -90,37 +90,48 @@ func parseDay(s string) (time.Time, error) {
 	return time.ParseInLocation(service.DateLayout, s, time.UTC)
 }
 
-// DashboardFile 是看板 amis 页面 JSON 的文件名。
-const DashboardFile = "dashboard.json"
+// 两个 amis 页面 JSON 的文件名：看板（L7）与管家页（L8，对话 / 待审批 / run 详情）。
+const (
+	DashboardFile = "dashboard.json"
+	StewardFile   = "steward.json"
+)
 
-// dashboardShell 是承载 amis 页面的最小 HTML（amis SDK 走 CDN，页面结构全部在 dashboard.json）。
-const dashboardShell = `<!doctype html>
+// amisShell 是承载 amis 页面的最小 HTML（amis SDK 走 CDN，页面结构全部在 /dashboard/{file}）。
+// title 与 file 只取本包常量，不拼接请求输入。
+func amisShell(title, file string) []byte {
+	return []byte(`<!doctype html>
 <html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>agri-steward 看板</title>
+<title>` + title + `</title>
 <link rel="stylesheet" href="https://unpkg.com/amis@6.13.0/sdk/sdk.css">
 <link rel="stylesheet" href="https://unpkg.com/amis@6.13.0/sdk/helper.css">
 <script src="https://unpkg.com/amis@6.13.0/sdk/sdk.js"></script>
 <style>html,body{margin:0;background:#fff}</style></head>
 <body><div id="root"></div>
 <script>
-fetch('/dashboard/` + DashboardFile + `').then(function (r) { return r.json(); })
+fetch('/dashboard/` + file + `').then(function (r) { return r.json(); })
   .then(function (schema) { amisRequire('amis/embed').embed('#root', schema); });
-</script></body></html>`
+</script></body></html>`)
+}
 
-// MountDashboard 在 r 上挂 GET /dashboard（HTML 外壳）与 GET /dashboard/:file（dir 下的 .json 页面）。
-// 启动时不检查文件；dashboard.json 缺失时两者都返回 404。页面只含结构，数据经带 Bearer 的 /api/v1 接口读取。
+// MountDashboard 在 r 上挂 GET /dashboard 与 GET /steward（HTML 外壳）以及 GET /dashboard/:file（dir 下的 .json 页面）。
+// 启动时不检查文件；对应 JSON 缺失时外壳返回 404。页面只含结构，数据经带 Bearer 的 /api/v1 接口读取。
 func MountDashboard(r *gin.Engine, dir string) {
 	exists := func(name string) bool {
 		info, err := os.Stat(filepath.Join(dir, name))
 		return err == nil && info.Mode().IsRegular()
 	}
-	r.GET("/dashboard", func(c *gin.Context) {
-		if !exists(DashboardFile) {
-			abort(c, http.StatusNotFound, "dashboard not installed")
-			return
+	shell := func(title, file string) gin.HandlerFunc {
+		html := amisShell(title, file)
+		return func(c *gin.Context) {
+			if !exists(file) {
+				abort(c, http.StatusNotFound, strings.TrimSuffix(file, ".json")+" not installed")
+				return
+			}
+			c.Data(http.StatusOK, "text/html; charset=utf-8", html)
 		}
-		c.Data(http.StatusOK, "text/html; charset=utf-8", []byte(dashboardShell))
-	})
+	}
+	r.GET("/dashboard", shell("agri-steward 看板", DashboardFile))
+	r.GET("/steward", shell("agri-steward 管家", StewardFile))
 	r.GET("/dashboard/:file", func(c *gin.Context) {
 		name := c.Param("file")
 		// 只服务目录下一层的 .json 文件（:file 不含 /；再排除 .. 与隐藏文件）。

@@ -176,6 +176,8 @@ type Experiment struct {
 	FinishedAt time.Time
 	Samples    int
 	Trials     []Trial
+	// Snapshot 是配置快照（L8，cmd/eval 填写；单测与 Runner 不填为零值，报告不输出快照节）。
+	Snapshot Snapshot
 }
 
 // Options 是一次评测的参数。

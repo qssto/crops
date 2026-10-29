@@ -55,6 +55,8 @@ type infra struct {
 	// objects / evalBucket 供 L7 transcript 上传（cfg.MinIO.BucketEval）。
 	objects    repository.ObjectPutter
 	evalBucket string
+	// model 是实际装配用的模型配置（provider 已强制为桩），L8 写入配置快照。
+	model *config.Model
 }
 
 // open 依次连 agri_eval、Redis、trial 池；任一不可用都返回错误（不静默跳过）。
@@ -91,7 +93,7 @@ func (f *infraFlags) open(ctx context.Context, logW io.Writer, ls *loadedSamples
 	if err != nil {
 		return nil, err
 	}
-	in := &infra{}
+	in := &infra{model: mcfg}
 	defer func() {
 		if err != nil {
 			err = errors.Join(err, in.close())

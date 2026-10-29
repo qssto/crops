@@ -5,9 +5,11 @@ package main
 import (
 	"bytes"
 	"context"
+	"os"
 	"path/filepath"
 	"regexp"
 	"strconv"
+	"strings"
 	"testing"
 
 	"agri-steward/internal/app"
@@ -74,5 +76,63 @@ func TestRun_WritesExperiment_Integration(t *testing.T) {
 	}
 	if done != 1 || trials != samples*trialsPerSample {
 		t.Fatalf("experiment DONE=%d trials=%d, want 1 and %d", done, trials, samples*trialsPerSample)
+	}
+}
+
+// TestRun_Baseline_Integration：--baseline 上传 report/{exp_id}/ 并写 yaml，experiment.report_key 同步写入。
+func TestRun_Baseline_Integration(t *testing.T) {
+	cfgFile := filepath.Join(repoRoot, "configs/app.yaml")
+	envFile := filepath.Join(repoRoot, "deploy/.env")
+	baselines := t.TempDir()
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"run", "--suites-dir", filepath.Join(repoRoot, defaultDir),
+		"--taxonomy", filepath.Join(repoRoot, defaultTax), "--repo", repoRoot, "--out", t.TempDir(),
+		"--config", cfgFile, "--env-file", envFile,
+		"--migrations", filepath.Join(repoRoot, "migrations"), "--seed", filepath.Join(repoRoot, "configs/seed/fields.yaml"),
+		"--model", filepath.Join(repoRoot, "configs/model.yaml"), "--prompts", filepath.Join(repoRoot, "prompts"),
+		"--risk", filepath.Join(repoRoot, "policy/risk_matrix.yaml"),
+		"--suite", "regression", "--n", "3", "--tags", "irrigate.amount",
+		"--baseline", "it_baseline", "--baselines-dir", baselines}, &stdout, &stderr)
+	if code != exitOK {
+		t.Fatalf("code = %d stderr=%s", code, stderr.String())
+	}
+	m := regexp.MustCompile(`exp_id=(\d+) `).FindStringSubmatch(stdout.String())
+	if m == nil {
+		t.Fatalf("stdout = %s", stdout.String())
+	}
+	raw, err := os.ReadFile(filepath.Join(baselines, "it_baseline.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantKey := "report/" + m[1] + "/report.md"
+	for _, want := range []string{"exp_id: \"" + m[1] + "\"", "model: stub", "report_key: " + wantKey} {
+		if !strings.Contains(string(raw), want) {
+			t.Fatalf("baseline yaml missing %q:\n%s", want, raw)
+		}
+	}
+
+	cfg, err := config.Load(cfgFile, envFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	logger, err := app.NewLogger(&stderr, "warn")
+	if err != nil {
+		t.Fatal(err)
+	}
+	db, err := app.OpenMySQL(context.Background(), cfg, cfg.MySQL.EvalDatabase, clock.System{}, logger)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := repository.Close(db); err != nil {
+			t.Error(err)
+		}
+	})
+	var key string
+	if err := db.Raw("SELECT report_key FROM experiment WHERE id = ?", m[1]).Scan(&key).Error; err != nil {
+		t.Fatal(err)
+	}
+	if key != wantKey {
+		t.Fatalf("report_key = %q, want %q", key, wantKey)
 	}
 }

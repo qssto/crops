@@ -39,6 +39,7 @@ func (a *Agent) Recheck(ctx context.Context, req agent.RecheckRequest) (agent.Re
 	if err != nil {
 		return res, fmt.Errorf("graph: recheck run %d: %w", runID, err)
 	}
+	res.Checks = preDispatchChecks(a.constraintChecks(s))
 	a.log.InfoContext(ctx, "pre-dispatch recheck", "run_id", runID, "epoch", req.Epoch, "changed", res.Changed, "detail", res.Detail)
 	return res, nil
 }
@@ -66,4 +67,12 @@ func recheckVerdict(s *state, card model.AdviceCard) (agent.RecheckResult, error
 
 func changed(format string, args ...any) agent.RecheckResult {
 	return agent.RecheckResult{Changed: true, Detail: fmt.Sprintf(format, args...)}
+}
+
+// preDispatchChecks 把规则层判定的约束标为下发前复检阶段（同一判定逻辑，阶段不同）。
+func preDispatchChecks(checks []model.ConstraintCheck) []model.ConstraintCheck {
+	for i := range checks {
+		checks[i].Phase = model.PhasePreDispatch
+	}
+	return checks
 }

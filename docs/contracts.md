@@ -83,3 +83,4 @@ stateDiagram-v2
 - model 只能 import 标准库。controller 在模块内只能 import service 和 model。
 - gorm 只允许 repository、app、cmd import。viper 只允许 config import。gin 只允许 controller import。
 - `time.Now` 只允许出现在 `internal/clock/system.go`，其他代码一律通过注入的 `clock.Clock` 取时间。
+- 设备 Adapter（internal/adapter）只允许下发器 `internal/service/workorder_dispatch.go` import；app、cmd 装配与 evalkit 注入 RecordingAdapter 除外（L8）。

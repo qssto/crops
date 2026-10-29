@@ -135,7 +135,8 @@ func run() (err error) {
 	return serve(ctx, &http.Server{Addr: cfg.HTTP.Addr, Handler: a.Handler(auth), ReadHeaderTimeout: readHeaderTimeout}, a)
 }
 
-// serve 启动 L6 扫描任务（approval_expire / ticket_activate / run_finalize / stuck_run）并监听直到 ctx 取消，然后优雅关闭。
+// serve 启动 L6 扫描任务（approval_expire / ticket_activate / run_finalize / stuck_run）、L7 分区维护与 L8 outbox 轮询，
+// 并监听直到 ctx 取消，然后优雅关闭。
 func serve(ctx context.Context, srv *http.Server, a *app.App) error {
 	// Scanner.Run 退出前自行等待其异步 Resume；这里等它返回，避免在扫描轮次中途与 wg.Add 并发 Wait。
 	scanDone := make(chan struct{})
@@ -149,6 +150,14 @@ func serve(ctx context.Context, srv *http.Server, a *app.App) error {
 		defer close(partDone)
 		a.Partitions.Run(ctx)
 	}()
+	// L8 outbox 轮询（每 1s；order.dispatch → WorkOrderService.Dispatch），Run 同步处理，返回即无进行中的消息。
+	outboxDone := make(chan struct{})
+	go func() {
+		defer close(outboxDone)
+		a.Outbox.Run(ctx)
+	}()
+	// SSE 长连接不随 Shutdown 结束，关闭开始时让推送返回
+	srv.RegisterOnShutdown(a.EventStream.Shutdown)
 	errCh := make(chan error, 1)
 	go func() {
 		a.Logger.Info("http listening", "addr", srv.Addr)
@@ -171,6 +180,7 @@ func serve(ctx context.Context, srv *http.Server, a *app.App) error {
 	a.Ask.Wait()
 	<-scanDone
 	<-partDone
+	<-outboxDone
 	a.HITL.Decisions.Wait()
 	return nil
 }

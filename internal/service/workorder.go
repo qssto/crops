@@ -25,11 +25,12 @@ type EventStore interface {
 	AppendTx(ctx context.Context, tx *repository.DB, e model.RunEvent) (int64, error)
 }
 
-// WorkOrderService 持有作业单唯一迁移入口。
+// WorkOrderService 持有作业单唯一迁移入口与 order.dispatch 下发器（dispatch 由 SetDispatch 装配）。
 type WorkOrderService struct {
-	clock  clock.Clock
-	orders WorkOrderStore
-	events EventStore
+	clock    clock.Clock
+	orders   WorkOrderStore
+	events   EventStore
+	dispatch *DispatchDeps
 }
 
 // NewWorkOrderService 构造 WorkOrderService。

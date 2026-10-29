@@ -39,8 +39,8 @@ type Deps struct {
 	RunMeta agent.RunMeta
 	// Risk 是审批风险矩阵（policy/risk_matrix.yaml，policy.LoadRiskMatrix），开票定级与票据 TTL 用。
 	Risk service.RiskPolicy
-	// Adapter 是设备下发接缝（可选）：评测注入 env.RecordingAdapter 记录调用；生产在 L8 接 MockAdapter，
-	// 只允许 service/workorder 在作业单 APPROVED 后调用。
+	// Adapter 是设备下发接缝（可选）：评测注入 env.RecordingAdapter 记录调用；为空取 adapter.MockAdapter（L8，dry-run）。
+	// 只允许 service/workorder_dispatch.go 在作业单 APPROVED 后调用（archtest 守卫）。
 	Adapter adapter.DeviceAdapter
 	// HITL 是 L6 检查点与记忆的可选依赖（零值：不中断、记忆关闭）。
 	HITL HITLDeps
@@ -78,8 +78,11 @@ type App struct {
 	// L5：审批闸门（主链路 Gate）与待审批列表；Events 是图内事件（VALIDATION_FAILED）出口。
 	Approvals *service.ApprovalService
 	Events    agent.EventSink
-	// Adapter 即 Deps.Adapter（可为 nil）。
+	// Adapter 即 Deps.Adapter，为空时是 adapter.MockAdapter。
 	Adapter adapter.DeviceAdapter
+	// L8：outbox 轮询器（cmd/server 启动 Outbox.Run；评测不跑，见 dev-log L8-A）与 run 事件流（SSE）。
+	Outbox      *service.OutboxPoller
+	EventStream *service.EventService
 	// L6：检查点 / 记忆供主链路注入；审批决策入口与扫描任务（cmd/server 启动 Scanner.Run）。
 	HITL *HITL
 	// L7 读路径：run 详情与看板指标，只读 Deps.DB（生产为 agri_steward）。
@@ -125,6 +128,9 @@ func Build(deps Deps) (*App, error) {
 	check(deps.Risk == nil, ErrMissingRisk)
 	if err := errors.Join(errs...); err != nil {
 		return nil, err
+	}
+	if deps.Adapter == nil {
+		deps.Adapter = adapter.MockAdapter{}
 	}
 	locker := repository.NewLocker(deps.Redis)
 	runs := repository.NewRunRepo(deps.DB, deps.Clock)
@@ -174,6 +180,9 @@ func Build(deps Deps) (*App, error) {
 		Runs:    runs, Advice: advice, Agent: a.Agent, Meta: meta, Logger: deps.Logger,
 	})
 	a.buildHITLServices()
+	if err := a.buildDispatch(); err != nil {
+		return nil, err
+	}
 	if err := a.buildAudit(deps); err != nil {
 		return nil, err
 	}
@@ -201,7 +210,8 @@ func (a *App) buildAudit(deps Deps) error {
 
 // Handler 返回 HTTP 路由（gin），鉴权由 auth 提供；DashboardDir 非空时挂 /dashboard。
 func (a *App) Handler(auth *service.AuthService) http.Handler {
-	mounts := []controller.Mount{controller.ApprovalRoutes(a.HITL.Decisions), controller.RunRoutes(a.RunDetail, a.Metrics)}
+	mounts := []controller.Mount{controller.ApprovalRoutes(a.HITL.Decisions), controller.RunRoutes(a.RunDetail, a.Metrics),
+		controller.EventRoutes(a.EventStream)}
 	if a.Audit != nil {
 		mounts = append(mounts, controller.AuditRoutes(a.Audit))
 	}
@@ -210,4 +220,24 @@ func (a *App) Handler(auth *service.AuthService) http.Handler {
 		controller.MountDashboard(r, a.DashboardDir)
 	}
 	return r
+}
+
+// buildDispatch 装配 L8 下发器（WorkOrderService.Dispatch）、outbox 轮询器与 SSE 事件流。
+// 主链路不支持复检（a.HITL.Recheck 为空）时下发跳过 ④ 并告警。
+func (a *App) buildDispatch() error {
+	store := repository.NewDispatchRepo(a.DB)
+	d := service.DispatchDeps{Adapter: a.Adapter, Store: store, Tx: a.HITL.decisions, Cards: a.Advice, Epochs: a.Runs,
+		Locks: a.Locker, Keys: a.Keys, Logger: a.Logger}
+	if a.HITL.Recheck != nil {
+		d.Recheck = a.HITL.Recheck
+	}
+	if err := a.WorkOrders.SetDispatch(d); err != nil {
+		return fmt.Errorf("app: build dispatch: %w", err)
+	}
+	a.Outbox = service.NewOutboxPoller(service.OutboxDeps{Store: store.OutboxRepo,
+		Handlers: map[string]service.OutboxHandler{repository.TopicOrderDispatch: a.WorkOrders.Dispatch},
+		Clock:    a.Clock, Logger: a.Logger})
+	a.EventStream = service.NewEventService(service.EventDeps{Subscriber: repository.RedisSubscriber{Client: a.Redis},
+		Backfill: repository.EventBackfillRepo{DB: a.DB}, Runs: a.Runs, Keys: a.Keys, Logger: a.Logger})
+	return nil
 }

@@ -231,3 +231,60 @@
 - 偏差：OTel 依赖未引入，trace 走 run_event + Tracer；AuditDenied target 改 `ticket:N`；不存在 / 他农场的 raw 返回 403 而非 404；未新增 DDL（无 0005）；分区 DDL 用应用账号执行。
 - 测试：repository audit / service ReadRaw / partition / controller raw / callbacks / llm observe / runner events / graph L7 事件；集成测试 `repository/l7_integration_test.go`、`service/audit_integration_test.go` 仅编译。
 - TODO：连库跑集成测试；核对投影事件 audit_log 与 run_event 条数一致；验证 PUBLISH 在提交后、MinIO 预签名可用、应用账号有 ALTER 权限；真实模型未验证（ONEAPI_* 未设置）。
+
+## L8-B · 管家页与评测收口（2026-10-29）
+
+- 管家页：`web/amis/steward.json`（gitignore，需单独部署），由 `GET /steward` 外壳加载，外壳与 `/dashboard` 共用 `controller.amisShell`。页面分三块：
+  - 对话区：`POST /ask`，再用 custom 组件内联 EventSource 订阅 events（`?access_token=` 与 `?last_event_id=`，按 seq 去重，收到 `end` 后关闭，可重新订阅）。每条事件触发审批与详情刷新（`_ev` 只是防缓存参数）。
+  - 待审批区：`approvals?status=OPEN`，展示 work_order 快照、constraint_checks 通过数和明细。通过 / 驳回带页面生成的 X-Request-Id 与 snapshot_digest；HIGH 票显示「待第二人确认」。
+  - run 详情区：建议卡 Citation 可点开（kb 引用显示 kb_id@version 与 KB_LOADED；measured 引用显示工具调用与 result_summary；都有 raw 原文按钮）。详情 tabs：trace 按 step 分组、审批与执行（dry-run 显示醒目的「dry-run · 未触达真实设备」以及 commands / params）、审计、时间线、原始 JSON。
+- reduce：新包 `internal/evalkit/reduce` 按样本聚合，输出：
+  - 红线 pass^k（k = n）与 PassHatK；
+  - 质量维度均值（先按样本求均值，再在样本间平均）；
+  - flaky 清单、unexpected_call 清单、infra / grader error 清单；
+  - 引用覆盖率、拒答率、P95（最近秩）、token；
+  - `Gate0()` 对 #1 #2 #5 给出 通过 / 未通过 / 不可判定（有 grader_error、n < 3 或缺维度时不可判定）。
+- report 改用 reduce（删除 scores.go，原 pass^k 逻辑并入 reduce），首行是门禁行「Gate 0 自动项」，并新增配置快照、Gate 0、baseline 指标、flaky / unexpected_call / 错误统计各节。
+- baseline：`cmd/eval run --n 3 --baseline baseline_p0`（Makefile 加 `BASELINE=`）。流程：
+  - 把报告与 snapshot.json 上传到 `agri-steward-eval/report/{exp_id}/`；
+  - 写 `eval/baselines/baseline_p0.yaml`（exp_id、对象 key、快照、生成时间、`model: stub`、待签字备注）；
+  - 回写 `experiment.report_key`（`store.SetReportKey`）。
+  - 快照 = git_sha / dirty / prompt_version / model_tier / model / knowledge_ref / samples_hash（`evalkit.Snapshot`）。
+- 文档：`docs/gate0.md`、`docs/drill/`（README + feedback-template）、`docs/phase0-acceptance.md`、`docs/phase1-kickoff.md`。人工项一律写「待签字 / 待演练」。
+- 测试：reduce 表驱动；baseline 发布与错误表；report 门禁行与快照；`controller/steward_page_test.go`（合法 JSON、接口路径与冻结契约一致、关键标注齐全，文件缺失时 Skip）；cmd 的 baseline 参数校验。`TestRun_Baseline_Integration` 只编译。
+- 偏差：
+  - outcome_match 等质量均值口径从「按 trial」改为「按样本」（报告测试中 0.67 → 0.75）。
+  - baseline 要求 n ≥ 3，名称限 `[a-z0-9._-]`。
+  - infra_error 只报比例，不设阈值。
+  - 没有知识条目原文接口，Citation(kb) 只能显示加载记录与 LLM_IO 原文。
+  - `?access_token=` 可能进入访问日志（L8-A 路由）。
+- TODO：
+  - 调度方连库跑 `make eval GO=go N=3 BASELINE=baseline_p0`，核对 MinIO 对象与 report_key，并填写 gate0 / 验收报告占位；
+  - 连库跑集成测试；
+  - 人工签字与演练；
+
+## L8-A · 下发与事件流（2026-10-29）
+
+- Adapter：`adapter.MockAdapter`（Name=mock）。DryRun 按作业类型生成指令：SPRAY / FERTILIZE 是 LOAD→SPRAY|SPREAD→RETURN，IRRIGATE 是 VALVE_OPEN→VALVE_CLOSE。Dispatch 恒返回 `ErrRealDispatchDisabled`。生产 `Deps.Adapter` 缺省取 MockAdapter，评测仍注入 RecordingAdapter。archtest 新规则：只有 `service/workorder_dispatch.go`（以及 adapter / app / evalkit / cmd）可以 import adapter。
+- outbox：`repository/outbox.go` 照抄 ② 的 SQL（Claim 用 FOR UPDATE SKIP LOCKED 加 60s 租约，MarkDone / MarkDoneTx，MarkRetry 第 5 次失败转 DEAD）。`service.OutboxPoller` 每 1s 同步跑一轮，退避 1s / 5s / 30s / 2min / 10min，DEAD 时打 error 日志告警；handler 的 panic 转成错误走退避。cmd/server serve 启动 Poller，退出时等它返回。
+- 下发：`WorkOrderService.Dispatch(ctx, OutboxMessage)`，由 `SetDispatch(DispatchDeps)` 装配，按 ①-⑦ 执行：
+  - ① 读单：已终态视为重复投递，返回 nil。DISPATCHED 且无结果时从 ⑥ 续跑。PENDING_APPROVAL 的消息丢弃。过了 dispatch_deadline_at 时持锁同事务 APPROVED→EXPIRED，并置 outbox DONE。
+  - ② 只接受 DRY_RUN。
+  - ④ 锁外调 `RecheckService.PreDispatch`，PRE_DISPATCH 校验写入 constraint_check。结论变化时原单已取消，再写旧 run 的 superseded_by_run_id。
+  - ⑤ 持 lock:order 同事务 APPROVED→DISPATCHED 并写 DISPATCHED(INTENT)。
+  - ⑦ 一个事务内：写 dispatch_result（`DryRunDispatchResult`，dry_run=true / device_touched=false）→ DONE → outbox DONE → DISPATCHED(RESULT)，audit 记 DISPATCH，summary 带 dry_run。不写 episodic_memory，不回写 field.history。
+- SSE：`GET /api/v1/farms/:farm_id/runs/:run_id/events`（`controller/events.go` → `service.EventService.Stream`）。游标取 Last-Event-ID 头，其次 `?last_event_id=`，都没有从 0 开始。流程是先 SUBSCRIBE `sse:run:{id}`，再读 run（不存在返回 404），再补读 seq > 游标，之后实时推送。seq ≤ 已推的丢弃，断档时补读。RUN_COMPLETED / FAILED / INTERRUPTED 之后发 `event: end`，run 已终态或中断时补读完即 end。每 15s 发 `: ping`。帧格式按 L8 契约。**`?access_token=` 只在本路由、且没有 Authorization 头时接受**（FarmAuth 按 EventsPath 判断）。`EventService.Shutdown` 挂在 `RegisterOnShutdown` 上。
+- 审批列表：`GET /approvals?status=OPEN`（其他 status 返回 400）。每项新增 snapshot_digest、first_approver、awaiting_confirm、work_order（含 constraint_checks[]）。作业单与校验各用一条 IN 查询批量读取，无 N+1。
+- 复检接缝：`agent.RecheckResult.Checks` 和 `service.PreDispatchResult.Checks` 透传 PRE_DISPATCH 约束。
+- 测试：Dispatch 表驱动（重复投递、过期、复检变化取消、正常 dry-run、DISPATCHED 无结果续跑、DONE 直接返回、坏消息 / REAL / 锁占用 / 复检无结论 / 写库失败回滚），outbox 退避与 DEAD，SSE 去重 / 断档 / 游标 / end / ping / Shutdown，controller 帧格式与 access_token 范围，archtest。`service/dispatch_integration_test.go` 只编译。
+- 偏差：
+  - 复检的问题文本取 RUN_STARTED 中脱敏后的 question。
+  - SupersedeRun 只填 NULL，不加 row_ver。
+  - EventsAfter / ListPending 的 SELECT 比文档多几列（SSE 契约和列表字段需要）。
+  - 10min 退避只体现在 DEAD 行的 next_run_at 上。
+  - Recheck 未装配时跳过 ④，只告警。
+  - 无新迁移。
+- 评测：评测不跑 Poller（不调 `a.Outbox.Run`），仍在 evalkit 中直接调 PreDispatch，所以 stop_at_approval / no_model_actuate 不受影响。
+- TODO：
+  - 连库跑集成测试，核对 SKIP LOCKED、MarkRetry 的 IF 赋值顺序、`dispatch_result IS NOT NULL AS has_result` 扫描、GORM IN 切片展开、PUBLISH→SUBSCRIBE 端到端。
+  - 真实模型未验证（ONEAPI_* 未设置）。

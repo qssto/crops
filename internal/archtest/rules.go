@@ -117,4 +117,13 @@ var Rules = []Rule{
 	{Name: "only controller may import gin",
 		Applies: notIn("internal/controller"), Bad: hasPrefix("github.com/gin-gonic/gin")},
 	{Name: "time.Now only in internal/clock/system.go (use clock.Clock)", NowOnly: "internal/clock/system.go"},
+	// L8：设备 Adapter 只由下发器调用（母文档 §4.6.2-2）；app / cmd 装配、evalkit 注入 RecordingAdapter 除外。
+	{Name: "only service/workorder_dispatch.go may import adapter",
+		Applies: func(f File) bool {
+			return f.Rel != adapterCaller && notIn("internal/adapter", "internal/app", "internal/evalkit", "cmd")(f)
+		},
+		Bad: importsAny("internal/adapter")},
 }
+
+// adapterCaller 是唯一可调用设备 Adapter 的业务文件（WorkOrderService.Dispatch）。
+const adapterCaller = "internal/service/workorder_dispatch.go"

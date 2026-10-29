@@ -1,6 +1,7 @@
 // Package report 把一次评测实验汇总为 Markdown，写到 eval/out/{exp_id}/report.md。
 // L4 起列出各打分维度与红线 pass^k（k = n）；L7 起每个 trial 的三层 transcript 上传 MinIO agri-steward-eval
-// （transcript.go），明细表 run_id 列链到对象键；L8 补 flaky 统计与门禁。
+// （transcript.go），明细表 run_id 列链到对象键；L8 起聚合交给 reduce（flaky / unexpected_call / error 清单、
+// Gate 0 自动项），--baseline 时报告与快照上传 report/{exp_id}/ 并写 baseline yaml（baseline.go）。
 package report
 
 import (
@@ -14,6 +15,7 @@ import (
 	"time"
 
 	"agri-steward/internal/evalkit"
+	"agri-steward/internal/evalkit/reduce"
 	"agri-steward/internal/model"
 )
 
@@ -88,8 +90,10 @@ func (s *stats) meanLatency() time.Duration {
 	return s.latencies / time.Duration(s.trials)
 }
 
-// Render 输出 Markdown：总览、分项打分、红线 pass^k、按 tag 分组统计、trial 明细。
+// Render 输出 Markdown：首行门禁结论，然后配置快照、总览、Gate 0 自动项、baseline 指标、分项打分、红线 pass^k、
+// flaky / unexpected_call / error 清单、按 tag 分组统计、trial 明细。聚合一律取 reduce.Reduce 的结果。
 func Render(w io.Writer, exp *evalkit.Experiment) error {
+	r := reduce.Reduce(exp.Trials)
 	total := newStats()
 	byTag := make(map[string]*stats)
 	for _, t := range exp.Trials {
@@ -106,7 +110,8 @@ func Render(w io.Writer, exp *evalkit.Experiment) error {
 
 	ew := &errWriter{w: w}
 	ew.printf("# 评测报告 %s\n\n", exp.ID)
-	ew.printf("> 门禁结论：无（L4 只报告分项与红线 pass^k，阈值门禁 L8 定）\n\n")
+	ew.printf("> %s\n\n", GateLine(r))
+	renderSnapshot(ew, exp.Snapshot)
 
 	ew.printf("## 总览\n\n")
 	ew.printf("| 项 | 值 |\n|----|----|\n")
@@ -124,7 +129,10 @@ func Render(w io.Writer, exp *evalkit.Experiment) error {
 	ew.printf("| 开始时间（UTC） | %s |\n", exp.StartedAt.UTC().Format(time.RFC3339))
 	ew.printf("| 总耗时 | %s |\n\n", fmtLatency(exp.FinishedAt.Sub(exp.StartedAt)))
 
-	renderScores(ew, exp.Trials)
+	renderGate(ew, r)
+	renderMetrics(ew, r)
+	renderScores(ew, r)
+	renderIssues(ew, r)
 
 	ew.printf("## 按 tag 分组\n\n")
 	ew.printf("| tag | 样本 | trial | ADVICE | REFUSED | error | 与期望一致 | 平均延迟 |\n")
@@ -152,34 +160,6 @@ func Render(w io.Writer, exp *evalkit.Experiment) error {
 		return fmt.Errorf("report: render: %w", ew.err)
 	}
 	return nil
-}
-
-// renderScores 输出分项打分与红线 pass^k（k = 样本 trial 数）；无打分时不输出。
-func renderScores(ew *errWriter, trials []evalkit.Trial) {
-	dims, redLines := collectDims(trials)
-	if len(dims) == 0 {
-		return
-	}
-	ew.printf("## 分项打分\n\n")
-	ew.printf("| 维度 | 红线 | 通过 | 失败 | grader_error | 平均 value |\n|------|------|------|------|--------------|------------|\n")
-	for _, d := range dims {
-		ew.printf("| %s | %s | %d | %d | %d | %.2f |\n", d.name, yesNo(d.redLine), d.pass, d.fail, d.errored, d.meanValue())
-	}
-	ew.printf("\n")
-	if len(redLines) == 0 {
-		return
-	}
-	ew.printf("## 红线 pass^k（k = n）\n\n")
-	ew.printf("| sample_id | %s | 全部红线 |\n|-----------|%s----------|\n",
-		strings.Join(redLines, " | "), strings.Repeat("------|", len(redLines)))
-	for _, s := range collectRedLines(trials, redLines) {
-		cells := make([]string, 0, len(redLines))
-		for _, name := range redLines {
-			cells = append(cells, fmtPassK(s.n, s.pass[name]))
-		}
-		ew.printf("| %s | %s | %s |\n", s.id, strings.Join(cells, " | "), fmtPassK(s.n, s.all))
-	}
-	ew.printf("\n")
 }
 
 // runCell 是 trial 明细的 run_id 列：已上传 transcript 时链接到 eval bucket 内的对象键

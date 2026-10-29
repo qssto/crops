@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -150,5 +151,19 @@ func TestMountDashboard(t *testing.T) {
 	}
 	if rec := get("/dashboard/" + DashboardFile); rec.Body.String() != `{"type":"page"}` {
 		t.Errorf("dashboard.json body = %q", rec.Body.String())
+	}
+	// /steward 外壳：steward.json 缺失时 404，装好后返回加载 steward.json 的 HTML。
+	if rec := get("/steward"); rec.Code != http.StatusNotFound {
+		t.Fatalf("missing steward: status %d", rec.Code)
+	}
+	if err := os.WriteFile(filepath.Join(dir, StewardFile), []byte(`{"type":"page"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	rec := get("/steward")
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "/dashboard/"+StewardFile) {
+		t.Fatalf("GET /steward = %d %q", rec.Code, rec.Body.String())
+	}
+	if rec := get("/dashboard"); !strings.Contains(rec.Body.String(), "/dashboard/"+DashboardFile) {
+		t.Errorf("dashboard shell must load %s", DashboardFile)
 	}
 }

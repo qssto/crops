@@ -226,9 +226,11 @@ type RecheckRequest struct {
 }
 
 // RecheckResult 是复检结论：Changed 为 true 时原作业单须 CANCELED(CONDITION_CHANGED) 并新建 run；Detail 为变化说明。
+// Checks 是本次重取数据判定的约束（phase=PRE_DISPATCH，P0 只记录、不拦截；L8 起）。
 type RecheckResult struct {
 	Changed bool
 	Detail  string
+	Checks  []model.ConstraintCheck
 }
 
 // Rechecker 是下发前复检接缝。实现：agent/graph（L6）；调用方：service.RecheckService（L8 下发 worker 接入）。

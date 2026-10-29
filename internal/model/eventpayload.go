@@ -1,5 +1,10 @@
 package model
 
+import (
+	"encoding/json"
+	"time"
+)
+
 // 图内事件的 payload 契约（L7 冻结）：callbacks 写入，指标 / run 详情 / transcript 读取。
 // 只含 ID 与控制字段；文本类字段写入前须经 pii.Mask。
 
@@ -48,6 +53,35 @@ type RunEndPayload struct {
 	Reason        string `json:"reason,omitempty"`
 	InterruptType string `json:"interrupt_type,omitempty"`
 	Resumed       bool   `json:"resumed,omitempty"`
+}
+
+// DispatchedPayload 是 DISPATCHED（投影为 DISPATCH，target=order:{order_id}）：recordIntent 时写入（L8 冻结）。
+// P0 恒为 dry_run=true、device_touched=false，审计 summary 即此 payload。
+type DispatchedPayload struct {
+	OrderID       uint64       `json:"order_id"`
+	TicketID      uint64       `json:"ticket_id,omitempty"`
+	DispatchMode  DispatchMode `json:"dispatch_mode"`
+	DryRun        bool         `json:"dry_run"`
+	DeviceTouched bool         `json:"device_touched"`
+	// Phase：INTENT（⑤ recordIntent）/ RESULT（⑦ recordResult）。
+	Phase string `json:"phase"`
+}
+
+// DispatchedPayload.Phase 取值。
+const (
+	DispatchPhaseIntent = "INTENT"
+	DispatchPhaseResult = "RESULT"
+)
+
+// DryRunDispatchResult 是 dry-run 下 work_order.dispatch_result 的 JSON（L8 冻结）：
+// Web 页「dry-run 可视化」与 run 详情直接展示，页面据 device_touched=false 标注「未触达真实设备」。
+type DryRunDispatchResult struct {
+	DryRun        bool            `json:"dry_run"`
+	DeviceTouched bool            `json:"device_touched"`
+	Adapter       string          `json:"adapter"`  // 如 mock
+	Commands      json.RawMessage `json:"commands"` // MockAdapter.DryRun 返回的将下发指令（数组）
+	Params        json.RawMessage `json:"params"`   // 预期作业参数（work_order.payload 摘要：药剂 / 用量 / 面积 / 时间窗）
+	SimulatedAt   time.Time       `json:"simulated_at"`
 }
 
 // StepPayload.Status / LLMCallPayload.Status 取值（L7-A 追加，只加不改）。

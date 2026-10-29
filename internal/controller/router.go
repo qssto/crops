@@ -29,11 +29,15 @@ type errorBody struct {
 
 // FarmAuth 校验 Bearer token 并按路径 :farm_id 解析 Scope：无 token / 验签失败 → 401，
 // 农场不在授权内 → 403。请求体中的 farm_id 一律忽略。
+// 例外：只有 SSE 路由（EventsPath）在没有 Authorization 头时接受 ?access_token=（EventSource 无法带头）。
 func FarmAuth(a Authenticator) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		token, ok := strings.CutPrefix(c.GetHeader("Authorization"), bearerPrefix)
 		if !ok {
 			token = ""
+			if c.FullPath() == EventsPath {
+				token = c.Query("access_token")
+			}
 		}
 		uid, err := a.Authenticate(strings.TrimSpace(token))
 		if err != nil {

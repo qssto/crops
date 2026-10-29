@@ -2,6 +2,7 @@ GO      ?= go
 SUITE   ?= regression
 N       ?= 3
 TAGS    ?=
+BASELINE ?=
 
 # 密钥只从 deploy/.env（不入库）或环境变量取；文件不存在时只读环境变量
 -include deploy/.env
@@ -50,8 +51,9 @@ reconcile:
 	$(GO) run ./cmd/reconcile $(if $(DAY),--day $(DAY))
 
 # 一键回放评测集：默认 regression 套件、每样本 3 次；TAGS=L2 只回放某层样本。写 agri_eval.experiment / trial
+# BASELINE=baseline_p0 时上传报告与快照到 report/{exp_id}/ 并写 eval/baselines/{BASELINE}.yaml（须 N ≥ 3）
 eval:
-	$(GO) run ./cmd/eval run --suite $(SUITE) --n $(N) $(if $(TAGS),--tags $(TAGS))
+	$(GO) run ./cmd/eval run --suite $(SUITE) --n $(N) $(if $(TAGS),--tags $(TAGS)) $(if $(BASELINE),--baseline $(BASELINE))
 
 # 只做样本静态校验，不装配 agent
 validate:

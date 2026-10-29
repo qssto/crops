@@ -58,6 +58,12 @@ func TestDetectsViolations(t *testing.T) {
 			src: "import tm \"time\"\nvar f = tm.Now", wantRule: "time.Now only in"},
 		{name: "time.Now in clock/system.go", path: "internal/clock/system.go",
 			src: "import \"time\"\nvar _ = time.Now()"},
+		{name: "service imports adapter", path: "internal/service/x.go",
+			src: `import _ "agri-steward/internal/adapter"`, wantRule: "may import adapter"},
+		{name: "dispatcher may import adapter", path: "internal/service/workorder_dispatch.go",
+			src: `import _ "agri-steward/internal/adapter"`},
+		{name: "agent imports adapter", path: "internal/agent/graph/x.go",
+			src: `import _ "agri-steward/internal/adapter"`, wantRule: "may import adapter"},
 		{name: "time.Since is fine", path: "internal/service/x.go",
 			src: "import \"time\"\nvar _ = time.Duration(1)"},
 	}

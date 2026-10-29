@@ -100,13 +100,18 @@ func TestDecideHandler(t *testing.T) {
 		})
 	}
 
-	// 待审批列表
+	// 待审批列表：status 缺省或 OPEN 返回列表，其他取值 400
 	router := NewRouter(auth, &fakeAsker{}, ApprovalRoutes(&fakeDecider{}))
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/farms/1/approvals", nil)
-	req.Header.Set("Authorization", "Bearer "+tok)
-	rec := httptest.NewRecorder()
-	router.ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"ticket_id":7`) {
-		t.Fatalf("pending = %d %s", rec.Code, rec.Body.String())
+	for _, tc := range []struct {
+		query string
+		want  int
+	}{{"", http.StatusOK}, {"?status=OPEN", http.StatusOK}, {"?status=APPROVED", http.StatusBadRequest}} {
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/farms/1/approvals"+tc.query, nil)
+		req.Header.Set("Authorization", "Bearer "+tok)
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+		if rec.Code != tc.want || (tc.want == http.StatusOK && !strings.Contains(rec.Body.String(), `"ticket_id":7`)) {
+			t.Fatalf("pending%s = %d %s", tc.query, rec.Code, rec.Body.String())
+		}
 	}
 }

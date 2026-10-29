@@ -3,7 +3,9 @@ package repository
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -66,4 +68,63 @@ func (r EventRepo) warn(ctx context.Context, msg string, e model.RunEvent, seq i
 		attrs = append(attrs, "err", err)
 	}
 	r.Log.WarnContext(ctx, msg, attrs...)
+}
+
+// Subscription 是一个已确认的 Redis 频道订阅；Messages 在 Close 后关闭。
+type Subscription interface {
+	Messages() <-chan []byte
+	Close() error
+}
+
+// RedisSubscriber 用 go-redis 实现 SSE 订阅（SUBSCRIBE sse:run:{run_id}）。
+type RedisSubscriber struct{ Client redis.UniversalClient }
+
+// sseSubscribeBuffer 是订阅缓冲；溢出时 go-redis 丢弃消息，订阅端靠 seq 断档补读兜底。
+const sseSubscribeBuffer = 256
+
+// Subscribe 订阅 channel，等到 Redis 确认订阅后返回（此后发布的消息不会落在补读与订阅之间的空隙里）。
+func (s RedisSubscriber) Subscribe(ctx context.Context, channel string) (Subscription, error) {
+	ps := s.Client.Subscribe(ctx, channel)
+	if _, err := ps.Receive(ctx); err != nil {
+		if cerr := ps.Close(); cerr != nil {
+			err = errors.Join(err, cerr)
+		}
+		return nil, fmt.Errorf("repository: subscribe %s: %w", channel, err)
+	}
+	out := make(chan []byte, sseSubscribeBuffer)
+	done := make(chan struct{})
+	src := ps.Channel()
+	go func() {
+		defer close(out)
+		for m := range src {
+			select {
+			case out <- []byte(m.Payload):
+			case <-done:
+				return
+			}
+		}
+	}()
+	return &redisSubscription{ps: ps, ch: out, done: done}, nil
+}
+
+type redisSubscription struct {
+	ps   *redis.PubSub
+	ch   chan []byte
+	done chan struct{}
+	once sync.Once
+}
+
+// Messages 实现 Subscription。
+func (r *redisSubscription) Messages() <-chan []byte { return r.ch }
+
+// Close 实现 Subscription（可重复调用）。
+func (r *redisSubscription) Close() error {
+	var err error
+	r.once.Do(func() {
+		close(r.done)
+		if cerr := r.ps.Close(); cerr != nil {
+			err = fmt.Errorf("repository: unsubscribe: %w", cerr)
+		}
+	})
+	return err
 }

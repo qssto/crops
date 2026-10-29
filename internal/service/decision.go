@@ -70,6 +70,7 @@ type DecisionStore interface {
 	InsertRejectedMemoryTx(ctx context.Context, tx *repository.DB, t repository.TicketRow, summary string, now time.Time) error
 	AuditDenied(ctx context.Context, scope model.Scope, t repository.TicketRow, code string) error
 	ListPending(ctx context.Context, scope model.Scope) ([]repository.PendingRow, error)
+	OrdersWithChecks(ctx context.Context, scope model.Scope, ids []uint64) (map[uint64]model.WorkOrder, error)
 }
 
 // OrderTransitioner 是作业单唯一迁移入口，WorkOrderService 实现。
@@ -146,6 +147,26 @@ func (s *DecisionService) Pending(ctx context.Context, scope model.Scope) ([]Pen
 	rows, err := s.d.Store.ListPending(ctx, scope)
 	if err != nil {
 		return nil, fmt.Errorf("service: pending approvals: %w", err)
+	}
+	if len(rows) == 0 {
+		return rows, nil
+	}
+	ids := make([]uint64, 0, len(rows))
+	for _, r := range rows {
+		ids = append(ids, r.OrderID)
+	}
+	orders, err := s.d.Store.OrdersWithChecks(ctx, scope, ids)
+	if err != nil {
+		return nil, fmt.Errorf("service: pending approvals orders: %w", err)
+	}
+	for i := range rows {
+		r := &rows[i]
+		r.AwaitingConfirm = needsConfirm(repository.TicketRow{ConfirmRequired: r.ConfirmRequired, RiskLevel: r.RiskLevel}) &&
+			r.FirstApproverID != nil
+		if o, ok := orders[r.OrderID]; ok {
+			o.ApprovalExpiresAt = r.ExpiresAt
+			r.WorkOrder = &o
+		}
 	}
 	return rows, nil
 }

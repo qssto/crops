@@ -36,12 +36,20 @@ type decideRequest struct {
 	Comment        string `json:"comment"`
 }
 
-// PendingHandler 是 GET /api/v1/farms/:farm_id/approvals：本农场 OPEN 票列表。
+// pendingStatus 是待审批列表唯一支持的 status 过滤值（PREPARING 等不展示）。
+const pendingStatus = "OPEN"
+
+// PendingHandler 是 GET /api/v1/farms/:farm_id/approvals[?status=OPEN]：本农场 ORDER 类 OPEN 票列表
+// （每项带 snapshot_digest / work_order / awaiting_confirm / first_approver）；status 取其他值返回 400。
 func PendingHandler(d Decider) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		scope, ok := service.ScopeFrom(c.Request.Context())
 		if !ok {
 			abort(c, http.StatusUnauthorized, "unauthenticated")
+			return
+		}
+		if st, has := c.GetQuery("status"); has && st != pendingStatus {
+			abort(c, http.StatusBadRequest, "status must be "+pendingStatus)
 			return
 		}
 		rows, err := d.Pending(c.Request.Context(), scope)

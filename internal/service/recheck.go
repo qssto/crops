@@ -48,11 +48,12 @@ type PreDispatchInput struct {
 	Epoch    int
 }
 
-// PreDispatchResult 是复检结论：Changed 时原单已取消，NewRunID 为新建的 run。
+// PreDispatchResult 是复检结论：Changed 时原单已取消，NewRunID 为新建的 run；Checks 为复检判定的 PRE_DISPATCH 约束。
 type PreDispatchResult struct {
 	Changed  bool
 	Detail   string
 	NewRunID uint64
+	Checks   []model.ConstraintCheck
 }
 
 // PreDispatch 复检并按结论处置。结论未变返回 Changed=false，调用方继续下发；
@@ -63,7 +64,7 @@ func (s *RecheckService) PreDispatch(ctx context.Context, in PreDispatchInput) (
 	if err != nil {
 		return PreDispatchResult{}, fmt.Errorf("service: recheck order %d: %w", in.Order.OrderID, err)
 	}
-	out := PreDispatchResult{Changed: res.Changed, Detail: res.Detail}
+	out := PreDispatchResult{Changed: res.Changed, Detail: res.Detail, Checks: res.Checks}
 	if !res.Changed {
 		return out, nil
 	}

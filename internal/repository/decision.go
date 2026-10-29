@@ -283,23 +283,83 @@ func (r *DecisionRepo) AuditDenied(ctx context.Context, scope model.Scope, t Tic
 	return nil
 }
 
-// PendingRow 是待审批列表的一行。
+// PendingRow 是待审批列表的一行。L8 起补 snapshot_digest / first_approver / awaiting_confirm 与作业单快照（含约束校验），
+// 后两项由 service 填。
 type PendingRow struct {
-	ID        uint64     `json:"ticket_id"`
-	OrderID   uint64     `json:"order_id"`
-	RiskLevel string     `json:"risk_level"`
-	ExpiresAt *time.Time `json:"expires_at"`
+	ID              uint64           `json:"ticket_id"`
+	OrderID         uint64           `json:"order_id"`
+	RiskLevel       string           `json:"risk_level"`
+	ExpiresAt       *time.Time       `json:"expires_at"`
+	SnapshotDigest  string           `json:"snapshot_digest"`
+	FirstApproverID *uint64          `json:"first_approver"`
+	ConfirmRequired int              `json:"-"`
+	AwaitingConfirm bool             `json:"awaiting_confirm" gorm:"-"`
+	WorkOrder       *model.WorkOrder `json:"work_order" gorm:"-"`
 }
 
-// ListPending 照抄 P0 §6.6 待审批列表 SQL。
+// ListPending 照抄 P0 §6.6 待审批列表 SQL；L8 在 SELECT 列上补 snapshot_digest / first_approver_id / confirm_required
+// （WHERE / ORDER / LIMIT 不变）。
 func (r *DecisionRepo) ListPending(ctx context.Context, scope model.Scope) ([]PendingRow, error) {
 	rows := []PendingRow{}
 	if err := r.db.WithContext(ctx).Raw(
-		`SELECT id, order_id, risk_level, expires_at FROM approval_ticket WHERE tenant_id=? AND farm_id=? AND ticket_kind='ORDER' AND status='OPEN' ORDER BY created_at LIMIT 50`,
+		`SELECT id, order_id, risk_level, expires_at, snapshot_digest, first_approver_id, confirm_required FROM approval_ticket WHERE tenant_id=? AND farm_id=? AND ticket_kind='ORDER' AND status='OPEN' ORDER BY created_at LIMIT 50`,
 		scope.TenantID, scope.FarmID).Scan(&rows).Error; err != nil {
 		return nil, fmt.Errorf("repository: list pending approval_ticket: %w", err)
 	}
 	return rows, nil
+}
+
+// OrdersWithChecks 批量读作业单快照及其全部约束校验（待审批列表用，两条 IN 查询、无 N+1；文档未给 SQL）。
+// 返回按 order_id 索引；ids 为空返回空表。
+func (r *DecisionRepo) OrdersWithChecks(ctx context.Context, scope model.Scope, ids []uint64) (map[uint64]model.WorkOrder, error) {
+	out := make(map[uint64]model.WorkOrder, len(ids))
+	if len(ids) == 0 {
+		return out, nil
+	}
+	var orders []struct {
+		DispatchOrder
+		PayloadRaw        []byte `gorm:"column:payload"`
+		DispatchResultRaw []byte `gorm:"column:dispatch_result"`
+	}
+	if err := r.db.WithContext(ctx).Raw(
+		`SELECT id, tenant_id, farm_id, field_id, advice_id, run_id, work_type, device_type, payload, time_window_from, time_window_to,
+  status, dispatch_mode, dispatch_result FROM work_order WHERE tenant_id=? AND farm_id=? AND id IN (?)`,
+		scope.TenantID, scope.FarmID, ids).Scan(&orders).Error; err != nil {
+		return nil, fmt.Errorf("repository: list pending work_order: %w", err)
+	}
+	for _, row := range orders {
+		o := row.DispatchOrder
+		o.Payload = rawJSON(row.PayloadRaw)
+		w := o.WorkOrder()
+		w.DispatchResult = rawJSON(row.DispatchResultRaw)
+		w.ConstraintChecks = []model.ConstraintCheck{}
+		out[o.ID] = w
+	}
+	var checks []struct {
+		OrderID   uint64
+		Phase     string
+		Attempt   int
+		RuleID    string
+		Passed    bool
+		Observed  []byte
+		Threshold []byte
+	}
+	if err := r.db.WithContext(ctx).Raw(
+		`SELECT order_id, phase, attempt, rule_id, passed, observed, threshold FROM constraint_check
+ WHERE tenant_id=? AND farm_id=? AND order_id IN (?) ORDER BY order_id, phase, attempt, id`,
+		scope.TenantID, scope.FarmID, ids).Scan(&checks).Error; err != nil {
+		return nil, fmt.Errorf("repository: list pending constraint_check: %w", err)
+	}
+	for _, c := range checks {
+		w, ok := out[c.OrderID]
+		if !ok {
+			continue
+		}
+		w.ConstraintChecks = append(w.ConstraintChecks, model.ConstraintCheck{Phase: model.ConstraintPhase(c.Phase),
+			Attempt: c.Attempt, RuleID: c.RuleID, Passed: c.Passed, Observed: rawJSON(c.Observed), Threshold: rawJSON(c.Threshold)})
+		out[c.OrderID] = w
+	}
+	return out, nil
 }
 
 // ListExpired 照抄 P0 §6.7 过期扫描（idx_expire）：OPEN 且 expires_at 早于 now。

@@ -55,3 +55,11 @@ func TestStart_BadGitSHA(t *testing.T) {
 		t.Fatalf("err = %v, want ErrBadGitSHA", err)
 	}
 }
+
+func TestSetReportKey_Bad(t *testing.T) {
+	for _, key := range []string{"", strings.Repeat("k", reportKeyMax+1)} {
+		if err := New(nil).SetReportKey(t.Context(), 1, key); !errors.Is(err, ErrBadReportKey) {
+			t.Fatalf("key len %d: err = %v, want ErrBadReportKey", len(key), err)
+		}
+	}
+}

@@ -29,6 +29,10 @@ type memDecisions struct {
 	deadline  *time.Time
 	audits    []string
 	failOn    string // 指定一步返回错误，验证回滚
+	// 待审批列表
+	pending    []repository.PendingRow
+	orders     map[uint64]model.WorkOrder
+	orderCalls [][]uint64
 }
 
 func (m *memDecisions) snapshot() memDecisions {
@@ -136,7 +140,18 @@ func (m *memDecisions) AuditDenied(_ context.Context, _ model.Scope, _ repositor
 }
 
 func (m *memDecisions) ListPending(context.Context, model.Scope) ([]repository.PendingRow, error) {
-	return nil, nil
+	return append([]repository.PendingRow(nil), m.pending...), nil
+}
+
+func (m *memDecisions) OrdersWithChecks(_ context.Context, _ model.Scope, ids []uint64) (map[uint64]model.WorkOrder, error) {
+	m.orderCalls = append(m.orderCalls, ids)
+	out := map[uint64]model.WorkOrder{}
+	for _, id := range ids {
+		if o, ok := m.orders[id]; ok {
+			out[id] = o
+		}
+	}
+	return out, m.fail("orders")
 }
 
 // memTransitions 记录作业单迁移（Transition 的状态机校验由 WorkOrderService 单测覆盖）。
@@ -410,5 +425,59 @@ func TestDecide_BadInputAndBusy(t *testing.T) {
 	}
 	if _, ok := busy.idem.m[busy.keys.IdemApprove("r1")]; ok {
 		t.Error("idem key kept after lock failure")
+	}
+}
+
+// 待审批列表：一次批量读作业单（无 N+1），HIGH 票第一人通过后 awaiting_confirm，LOW 票恒 false；读单失败整体报错。
+func TestPending_Enrich(t *testing.T) {
+	first := uint64(approverA)
+	exp := decideNow.Add(time.Hour)
+	rows := []repository.PendingRow{
+		{ID: 1, OrderID: 10, RiskLevel: string(model.RiskHigh), ConfirmRequired: 1, FirstApproverID: &first, ExpiresAt: &exp},
+		{ID: 2, OrderID: 11, RiskLevel: string(model.RiskHigh), ConfirmRequired: 1},
+		{ID: 3, OrderID: 12, RiskLevel: string(model.RiskLow), FirstApproverID: &first},
+	}
+	orders := map[uint64]model.WorkOrder{
+		10: {OrderID: 10, ConstraintChecks: []model.ConstraintCheck{{Phase: model.PhasePreApproval, RuleID: "wind", Passed: true}}},
+		11: {OrderID: 11}, 12: {OrderID: 12},
+	}
+	tests := []struct {
+		name     string
+		failOn   string
+		wantErr  bool
+		awaiting []bool
+	}{
+		{name: "enriched", awaiting: []bool{true, false, false}},
+		{name: "orders read fails", failOn: "orders", wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := newDecideFixture(t, model.RiskLow, time.Hour, false)
+			f.store.pending, f.store.orders, f.store.failOn = rows, orders, tt.failOn
+			got, err := f.svc.Pending(context.Background(), model.Scope{TenantID: 1, FarmID: 1})
+			if tt.wantErr {
+				if err == nil {
+					t.Fatal("want error")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(f.store.orderCalls) != 1 || len(f.store.orderCalls[0]) != len(rows) {
+				t.Fatalf("order reads = %v, want one batch of %d", f.store.orderCalls, len(rows))
+			}
+			for i, r := range got {
+				if r.AwaitingConfirm != tt.awaiting[i] {
+					t.Errorf("ticket %d awaiting_confirm = %t, want %t", r.ID, r.AwaitingConfirm, tt.awaiting[i])
+				}
+				if r.WorkOrder == nil || r.WorkOrder.OrderID != r.OrderID {
+					t.Fatalf("ticket %d work_order = %+v", r.ID, r.WorkOrder)
+				}
+			}
+			if w := got[0].WorkOrder; len(w.ConstraintChecks) != 1 || w.ApprovalExpiresAt == nil || !w.ApprovalExpiresAt.Equal(exp) {
+				t.Errorf("ticket 1 work_order = %+v", w)
+			}
+		})
 	}
 }

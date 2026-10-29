@@ -129,3 +129,24 @@ func trialInsert(id uint64, exp *evalkit.Experiment) (string, []any, error) {
 
 // FormatID 把 experiment id 转为报告中的 exp_id。
 func FormatID(id uint64) string { return strconv.FormatUint(id, 10) }
+
+// reportKeyMax 是 experiment.report_key 的列宽 varchar(255)。
+const reportKeyMax = 255
+
+// ErrBadReportKey 表示 report_key 为空或超出列宽。
+var ErrBadReportKey = errors.New("store: report_key must be 1..255 chars")
+
+// SetReportKey 记下报告在 agri-steward-eval 内的对象键（L8 baseline 上传后写入）。
+func (s *Experiments) SetReportKey(ctx context.Context, id uint64, key string) error {
+	if key == "" || len(key) > reportKeyMax {
+		return fmt.Errorf("%w: %q", ErrBadReportKey, key)
+	}
+	res := s.db.WithContext(ctx).Exec("UPDATE experiment SET report_key = ? WHERE id = ?", key, id)
+	if res.Error != nil {
+		return fmt.Errorf("store: set report_key: %w", res.Error)
+	}
+	if res.RowsAffected != 1 {
+		return fmt.Errorf("store: set report_key: experiment %d not found", id)
+	}
+	return nil
+}
