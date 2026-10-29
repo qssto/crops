@@ -85,7 +85,8 @@ func (g grading) openKB(ctx context.Context, s *sample.Sample) (grader.Knowledge
 // grade 对一次回答跑全部打分器；打分器报错包装为 "grader <name> on <id>#<i>: ..." 记入 Score.Error。
 func (g grading) grade(ctx context.Context, t *Trial, s *sample.Sample, ans agent.Answer, kb grader.KnowledgeIndex) {
 	gt := &grader.Trial{Sample: s, Index: t.TrialIndex, Outcome: ans.Outcome, RefuseReason: ans.RefuseReason,
-		Card: ans.Card, KB: kb, ToolCalls: t.ToolCalls}
+		Card: ans.Card, KB: kb, ToolCalls: t.ToolCalls, ToolFailures: t.ToolFailures,
+		Approval: t.Approval, DeviceCalls: t.DeviceCalls, Logs: t.Logs, Stored: t.Stored, OrderTransitions: t.OrderTransitions}
 	t.Scores = make([]Score, 0, len(g.graders))
 	for _, gr := range g.graders {
 		sc := Score{Name: gr.Name(), RedLine: gr.RedLine()}

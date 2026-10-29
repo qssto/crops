@@ -50,22 +50,23 @@ func (r *RunRepo) CreateRun(ctx context.Context, s model.RunState, userID, field
 
 // runRow 是 agent_run 的读取列。
 type runRow struct {
-	ID         uint64
-	TenantID   uint64
-	FarmID     uint64
-	FieldID    uint64
-	UserID     uint64
-	Status     string
-	ReasonCode *string
-	RowVer     int
-	CreatedAt  time.Time
-	UpdatedAt  time.Time
+	ID            uint64
+	TenantID      uint64
+	FarmID        uint64
+	FieldID       uint64
+	UserID        uint64
+	Status        string
+	InterruptType *string
+	ReasonCode    *string
+	RowVer        int
+	CreatedAt     time.Time
+	UpdatedAt     time.Time
 }
 
 func (r *RunRepo) getRun(ctx context.Context, db *gorm.DB, scope model.Scope, runID uint64) (runRow, error) {
 	var row runRow
 	res := db.WithContext(ctx).Raw(
-		`SELECT id, tenant_id, farm_id, field_id, user_id, status, reason_code, row_ver, created_at, updated_at FROM agent_run WHERE id=? AND tenant_id=? AND farm_id=?`,
+		`SELECT id, tenant_id, farm_id, field_id, user_id, status, interrupt_type, reason_code, row_ver, created_at, updated_at FROM agent_run WHERE id=? AND tenant_id=? AND farm_id=?`,
 		runID, scope.TenantID, scope.FarmID).Scan(&row)
 	if res.Error != nil {
 		return runRow{}, fmt.Errorf("repository: get agent_run %d: %w", runID, res.Error)
@@ -84,6 +85,9 @@ func (r *RunRepo) Summary(ctx context.Context, scope model.Scope, runID uint64) 
 	}
 	s := model.RunSummary{RunID: row.ID, FieldID: row.FieldID, UserID: row.UserID,
 		Status: model.RunStatus(row.Status), CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt}
+	if row.InterruptType != nil {
+		s.Interrupt = model.InterruptType(*row.InterruptType)
+	}
 	if row.ReasonCode != nil {
 		s.ReasonCode = *row.ReasonCode
 	}

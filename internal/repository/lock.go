@@ -88,6 +88,24 @@ func (k *Lock) Release(ctx context.Context) error {
 	return nil
 }
 
+// AcquireLease 同 Acquire，以 agent.Lease 返回（service 依赖接口而非 *Lock）。
+func (l *Locker) AcquireLease(ctx context.Context, key string, ttl time.Duration) (agent.Lease, error) {
+	lk, err := l.Acquire(ctx, key, ttl)
+	if err != nil {
+		return nil, err
+	}
+	return lk, nil
+}
+
+// Held 判断 key 当前是否被持有（stuck_run 扫描确认 lock:run 不存在）。
+func (l *Locker) Held(ctx context.Context, key string) (bool, error) {
+	n, err := l.rdb.Exists(ctx, key).Result()
+	if err != nil {
+		return false, fmt.Errorf("repository: exists %s: %w", key, err)
+	}
+	return n > 0, nil
+}
+
 // RunLockTTL 是 lock:run:{run_id} 的 TTL（P0 L4：30s，持有者每 10s 续期）。
 const RunLockTTL = 30 * time.Second
 

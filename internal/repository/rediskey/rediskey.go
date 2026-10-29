@@ -45,6 +45,9 @@ func (k Keys) LockScan(task string) string { return k.prefix + "lock:scan:" + ta
 // IdemTool 是 idem:tool:{call_key}（P0 L2，PENDING 9s / DONE 24h）。
 func (k Keys) IdemTool(callKey string) string { return k.prefix + "idem:tool:" + callKey }
 
+// IdemApprove 是 idem:approve:{request_id}（P0 L6，PENDING:{token} 10s / DONE:{decision_id} 24h）。
+func (k Keys) IdemApprove(requestID string) string { return k.prefix + "idem:approve:" + requestID }
+
 // CacheMCP 是 cache:mcp:{tool}:{args_digest}（P0 L2，weather 10min / crop 24h）。
 func (k Keys) CacheMCP(tool, argsDigest string) string {
 	return k.prefix + "cache:mcp:" + tool + ":" + argsDigest

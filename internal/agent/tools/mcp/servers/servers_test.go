@@ -11,6 +11,7 @@ import (
 
 	"github.com/santhosh-tekuri/jsonschema/v6"
 
+	"agri-steward/internal/agent/harness/policy"
 	"agri-steward/internal/agent/tools/mcp"
 	"agri-steward/internal/agent/tools/mcp/servers/kit"
 	"agri-steward/internal/config"
@@ -94,6 +95,31 @@ func TestBuild_AllToolsDeclared(t *testing.T) {
 	}
 	if got := kit.SortedNames(list); strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Fatalf("tools = %v, want %v", got, want)
+	}
+}
+
+// TestRepoToolPolicy_MatchesRegistry 是验收 1 的仓库级自检：configs/tools.yaml 定级后的注册表
+// 与 policy/tool_policy.yaml 一致（生产 gateway 构造时做同样比对，不符即启动失败）。
+func TestRepoToolPolicy_MatchesRegistry(t *testing.T) {
+	cfg, err := config.LoadTools(filepath.Join(repoRoot, "configs", "tools.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	tp, err := policy.Load(filepath.Join(repoRoot, "policy", "tool_policy.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	levels := map[string]policy.Level{}
+	for _, s := range cfg.Servers() {
+		levels[s.Name] = policy.Level(s.Level)
+	}
+	var registry []policy.Spec
+	for name := range buildMock(t) {
+		server, _, _ := strings.Cut(name, ".")
+		registry = append(registry, policy.Spec{Tool: name, Level: levels[server]})
+	}
+	if err := tp.Check(registry); err != nil {
+		t.Fatal(err)
 	}
 }
 

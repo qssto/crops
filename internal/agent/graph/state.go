@@ -55,6 +55,14 @@ type reason struct {
 	Facts []string // 支撑的实测事实名（measured 引用）
 }
 
+// judged 是一次阈值判定：条目 kb_id、阈值定义、所用实测事实名与是否满足阈值条件。
+type judged struct {
+	KB   string
+	Th   knowledge.Threshold
+	Fact string
+	Met  bool
+}
+
 // decision 是规则层的结论：建议类型、作业类型、决策句（不含数字）、规则理由与候选约束。
 type decision struct {
 	AdviceType model.AdviceType
@@ -62,6 +70,7 @@ type decision struct {
 	Text       string // 交给 explain 的决策句，不得含数字
 	Reasons    []reason
 	Evaluated  int      // 实际判定过的阈值数（降级前提：有明确阈值结论）
+	Judged     []judged // L5：判定过的阈值，作业单开票时写 constraint_check(PRE_APPROVAL)，P0 只展示
 	Cites      []string // 结论引用的知识条目 kb_id（去重保序）
 	Sprayer    calc.Sprayer
 
@@ -98,8 +107,9 @@ type state struct {
 	usage    llm.Usage
 	detail   string // 拒答 / 校验失败的细节（日志，不进卡片）
 
-	card  *model.AdviceCard
-	order *model.WorkOrder
+	card   *model.AdviceCard
+	order  *model.WorkOrder
+	ticket *model.ApprovalTicket // L5：to_order 开票结果（PREPARING）；非空即须以 WAIT_APPROVAL 中断（L6）
 }
 
 // stopped 表示已拒答（后续节点直通到 assemble / persist）。

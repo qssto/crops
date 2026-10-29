@@ -1,31 +1,38 @@
 package graph
 
 import (
-	"regexp"
+	"math"
 	"slices"
 	"strconv"
 	"strings"
 
 	"agri-steward/internal/agent/calc"
+	"agri-steward/internal/agent/guardrail"
 	"agri-steward/internal/agent/knowledge"
 )
 
 func fmtNum(v float64) string { return strconv.FormatFloat(v, 'f', -1, 64) }
 
+// factDecimals 是理由文本里实测值的显示小数位。派生事实（如由时间差折算的调查时效天数）
+// 不做显示截断会写出 0.7083333333333334 这类长数字串，既难读，又会被脱敏规则当作账号形态。
+const factDecimals = 2
+
+// fmtFact 把实测值按 factDecimals 位小数显示（去掉末尾 0）；阈值判定仍用原值，只影响理由文本。
+func fmtFact(v float64) string {
+	return fmtNum(math.Round(v*math.Pow10(factDecimals)) / math.Pow10(factDecimals))
+}
+
 func joinNums(vals []float64, unit string) string {
 	parts := make([]string, len(vals))
 	for i, v := range vals {
-		parts[i] = fmtNum(v)
+		parts[i] = fmtFact(v)
 	}
 	return "[" + strings.Join(parts, ", ") + "] " + unit
 }
 
-// digitRun 匹配数字（含小数、百分号），用于生成交给模型的无数字摘要。
-var digitRun = regexp.MustCompile(`[0-9０-９]+(?:\.[0-9]+)?%?`)
-
-// noDigits 去掉文本中的数字，保证交给 explain 的摘要不含数字。
+// noDigits 去掉文本中的数字（与 guardrail numbers 校验同一口径），保证交给 explain 的摘要不含数字。
 func noDigits(s string) string {
-	return strings.Join(strings.Fields(digitRun.ReplaceAllString(s, "")), " ")
+	return strings.Join(strings.Fields(guardrail.RemoveDigits(s)), " ")
 }
 
 // addNumber 追加一个数值（Field 唯一，重复时保留先到的）并引用其知识条目。

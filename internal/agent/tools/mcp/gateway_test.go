@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"agri-steward/internal/agent"
+	"agri-steward/internal/agent/harness/policy"
 	"agri-steward/internal/agent/tools/mcp"
 	"agri-steward/internal/model"
 	"agri-steward/internal/repository/rediskey"
@@ -29,6 +30,26 @@ var (
 	fieldArgs = json.RawMessage(`{"field_id":1}`)
 )
 
+// testToolPolicy 是 newEnv 注册表对应的 tool_policy；dev.dispatch 是不注册的 actuate 工具。
+const testToolPolicy = `version: 1
+tools:
+  - {name: weather.now, level: read}
+  - {name: crop.info, level: read}
+  - {name: field.get, level: read}
+  - {name: dev.write, level: write}
+  - {name: dev.once, level: read}
+  - {name: dev.dispatch, level: actuate}
+`
+
+func toolPolicy(t *testing.T, src string) *policy.ToolPolicy {
+	t.Helper()
+	tp, err := policy.ParseToolPolicy([]byte(src))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return tp
+}
+
 func spec(name, input string, level mcp.Level, f func(*mcp.ToolSpec)) mcp.ToolSpec {
 	s := mcp.ToolSpec{Name: name, InputSchema: json.RawMessage(input), OutputSchema: json.RawMessage(vOutput), Level: level}
 	if f != nil {
@@ -45,7 +66,7 @@ func okResult(v int) mcp.Result {
 func okHandler(context.Context, json.RawMessage, int) (mcp.Result, error) { return okResult(1), nil }
 
 // testEnv 是一套 gateway + 内存依赖。servers：weather（时效、缓存）、crop（缓存，无 field_id）、
-// field（不缓存）、dev（write / 未声明等级 / 非幂等 read）。
+// field（不缓存）、dev（write / 非幂等 read）。
 type testEnv struct {
 	gw     *mcp.Gateway
 	srv    map[string]*fakeServer
@@ -81,14 +102,13 @@ func newEnv(t *testing.T, mod func(*mcp.Options)) *testEnv {
 				s.Idempotent, s.Cacheable = true, true
 			})),
 			"field": mk("field", spec("field.get", fieldInput, mcp.LevelRead, idem)),
-			"dev": mk("dev", spec("dev.write", fieldInput, mcp.LevelWrite, nil), spec("dev.nolevel", fieldInput, "", idem),
-				spec("dev.once", fieldInput, mcp.LevelRead, nil)),
+			"dev":   mk("dev", spec("dev.write", fieldInput, mcp.LevelWrite, nil), spec("dev.once", fieldInput, mcp.LevelRead, nil)),
 		},
 		idem: newMemIdem(), cache: newMemCache(), calls: &memCalls{}, raw: &memRaw{}, events: &memEvents{},
 		clk: &fakeClock{now: t0}, keys: keys,
 	}
 	opt := mcp.Options{
-		Clock: e.clk, Logger: slog.New(slog.NewTextHandler(io.Discard, nil)), Keys: keys,
+		Clock: e.clk, Logger: slog.New(slog.NewTextHandler(io.Discard, nil)), Keys: keys, ToolPolicy: toolPolicy(t, testToolPolicy),
 		Idem: e.idem, Cache: e.cache, Calls: e.calls, Raw: e.raw, Events: e.events,
 		Fields:      memFields{owner: map[uint64][2]uint64{1: {1, 1}, 2: {2, 1}, 3: {1, 2}}},
 		Timeouts:    map[string]time.Duration{"weather": testTimeout, "crop": testTimeout, "field": testTimeout, "dev": testTimeout},
@@ -96,6 +116,9 @@ func newEnv(t *testing.T, mod func(*mcp.Options)) *testEnv {
 	}
 	if mod != nil {
 		mod(&opt)
+	}
+	if opt.Mask != nil && opt.RawReader == nil { // 生产配了 Mask 就必须配 RawReader；测试默认读本 env 的 memRaw
+		opt.RawReader = e.raw
 	}
 	srvs := []mcp.Server{e.srv["weather"], e.srv["crop"], e.srv["field"], e.srv["dev"]}
 	if e.gw, err = mcp.NewGateway(srvs, opt); err != nil {
@@ -129,8 +152,14 @@ func TestNewGateway_Errors(t *testing.T) {
 		t.Fatal(err)
 	}
 	full := mcp.Options{Clock: &fakeClock{}, Logger: slog.Default(), Keys: keys, Idem: newMemIdem(), Cache: newMemCache(),
-		Calls: &memCalls{}, Raw: &memRaw{}, Fields: memFields{}}
+		Calls: &memCalls{}, Raw: &memRaw{}, Fields: memFields{},
+		ToolPolicy: toolPolicy(t, "version: 1\ntools:\n  - {name: a.x, level: read}\n  - {name: a.act, level: actuate}\n")}
 	a := &fakeServer{name: "a", specs: []mcp.ToolSpec{spec("a.x", fieldInput, mcp.LevelRead, nil)}}
+	with := func(specs ...mcp.ToolSpec) []mcp.Server { return []mcp.Server{&fakeServer{name: "a", specs: specs}} }
+	levels := full
+	levels.Levels = map[string]mcp.Level{"a": mcp.LevelWrite}
+	noPolicy := full
+	noPolicy.ToolPolicy = nil
 	tests := []struct {
 		name string
 		srv  []mcp.Server
@@ -141,6 +170,15 @@ func TestNewGateway_Errors(t *testing.T) {
 		{"bad input schema", []mcp.Server{&fakeServer{name: "a", specs: []mcp.ToolSpec{spec("a.x", `{"type":`, mcp.LevelRead, nil)}}},
 			full, "not JSON"},
 		{"missing deps", []mcp.Server{a}, mcp.Options{}, "Clock is required"},
+		{"missing tool policy", []mcp.Server{a}, noPolicy, "ToolPolicy is required"},
+		// 验收 1：启动期自检，任一不符即构造失败。
+		{"tool not declared in policy", with(spec("a.x", fieldInput, mcp.LevelRead, nil), spec("a.new", fieldInput, mcp.LevelRead, nil)),
+			full, "a.new is registered but not declared"},
+		{"registry level empty", with(spec("a.x", fieldInput, "", nil)), full, "a.x has no level in the registry"},
+		{"level mismatch via Levels override", []mcp.Server{a}, levels, "a.x is write in registry, read in tool_policy"},
+		{"actuate visible to model", with(spec("a.x", fieldInput, mcp.LevelRead, nil), spec("a.act", fieldInput, mcp.LevelActuate, nil)),
+			full, "actuate tool is visible"},
+		{"policy entry not registered", with(), full, "declared tool not in registry: a.x"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -157,7 +195,7 @@ func TestCall_PolicyBeforeRejects(t *testing.T) {
 		name, tool, args string
 	}{
 		{"undeclared tool", "weather.nope", `{"field_id":1}`},
-		{"level undeclared", "dev.nolevel", `{"field_id":1}`},
+		{"actuate reserved in policy", "dev.dispatch", `{"field_id":1}`},
 		{"write level denied", "dev.write", `{"field_id":1}`},
 		{"schema type mismatch", "weather.now", `{"field_id":"1"}`},
 		{"schema missing required", "weather.now", `{}`},
@@ -186,7 +224,10 @@ func TestCall_PolicyBeforeRejects(t *testing.T) {
 }
 
 func TestCall_LevelsOverride(t *testing.T) {
-	e := newEnv(t, func(o *mcp.Options) { o.Levels = map[string]mcp.Level{"dev": mcp.LevelRead} })
+	e := newEnv(t, func(o *mcp.Options) {
+		o.Levels = map[string]mcp.Level{"dev": mcp.LevelRead}
+		o.ToolPolicy = toolPolicy(t, strings.Replace(testToolPolicy, "{name: dev.write, level: write}", "{name: dev.write, level: read}", 1))
+	})
 	if res := e.call(t, agent.ToolCall{Tool: "dev.write", Args: fieldArgs}); res.Status != model.ToolStatusOK {
 		t.Fatalf("res = %+v, want OK after level override", res)
 	}
@@ -303,5 +344,35 @@ func TestCall_RetryAndNormalize(t *testing.T) {
 				t.Fatalf("idem = %q, want DONE:", v)
 			}
 		})
+	}
+}
+
+// TestCall_ActuateAlert：来自模型的 actuate 调用 REJECTED、不调 Server，并以 ERROR 级别告警；其他拒绝不告警。
+func TestCall_ActuateAlert(t *testing.T) {
+	var buf strings.Builder
+	e := newEnv(t, func(o *mcp.Options) { o.Logger = slog.New(slog.NewJSONHandler(&buf, nil)) })
+
+	if res := e.call(t, agent.ToolCall{Tool: "dev.write", Args: fieldArgs}); res.Status != model.ToolStatusRejected {
+		t.Fatalf("write res = %+v", res)
+	}
+	if strings.Contains(buf.String(), "ACTUATE_FROM_AGENT") {
+		t.Fatalf("write rejection must not raise actuate alert: %s", buf.String())
+	}
+	res := e.call(t, agent.ToolCall{Tool: "dev.dispatch", Args: fieldArgs})
+	if res.Status != model.ToolStatusRejected || res.ErrorCode != string(mcp.ErrRejected) {
+		t.Fatalf("actuate res = %+v", res)
+	}
+	var alert map[string]any
+	for _, line := range strings.Split(strings.TrimSpace(buf.String()), "\n") {
+		var m map[string]any
+		if err := json.Unmarshal([]byte(line), &m); err != nil {
+			t.Fatalf("log line %q: %v", line, err)
+		}
+		if m["alert"] == "ACTUATE_FROM_AGENT" {
+			alert = m
+		}
+	}
+	if alert == nil || alert["level"] != "ERROR" || alert["tool"] != "dev.dispatch" || alert["run_id"] != float64(7) {
+		t.Fatalf("alert = %v, logs:\n%s", alert, buf.String())
 	}
 }

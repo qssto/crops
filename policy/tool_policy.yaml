@@ -1,0 +1,30 @@
+# 工具策略 v1（P0 §6.6 功能任务 1-2，母文档 §4.6.2-2）。由 internal/agent/harness/policy.Load 加载，
+# mcp gateway 构造时与工具注册表逐项比对，任一不符即启动失败：
+#   - 注册表里的工具必须在此声明等级，且与注册表（ToolSpec.Level / configs/tools.yaml level）一致；不默认放行。
+#   - read / write 条目必须在注册表中存在（防止策略与注册表漂移）。
+#   - actuate 条目不得出现在注册表（模型可见工具集）中。
+# 等级：read 直通；write 记录留痕（P0 未开放）；actuate 不注册给模型，只允许 service/workorder 状态机
+# 在作业单 APPROVED 后经 adapter.DeviceAdapter 调用。来自模型的 actuate 调用由策略层兜底拒绝并告警。
+version: 1
+tools:
+  # weather（L2 mock）
+  - {name: weather.realtime, level: read}
+  - {name: weather.forecast, level: read}
+  - {name: weather.alert, level: read}
+  - {name: weather.history, level: read}
+  # crop
+  - {name: crop.phenology, level: read}
+  - {name: crop.variety, level: read}
+  - {name: crop.pest_spectrum, level: read}
+  - {name: crop.threshold, level: read}
+  # field
+  - {name: field.profile, level: read}
+  - {name: field.history, level: read}
+  - {name: field.pest_survey, level: read}
+  - {name: field.soil, level: read}
+  # device：只读查询
+  - {name: device.list, level: read}
+  - {name: device.status, level: read}
+  # device：执行动作，对应 adapter.DeviceAdapter，不进模型工具集
+  - {name: device.dry_run, level: actuate}
+  - {name: device.dispatch, level: actuate}

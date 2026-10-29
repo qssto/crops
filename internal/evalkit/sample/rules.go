@@ -137,6 +137,19 @@ func checkAttribution(s *Sample) []string {
 	return msgs
 }
 
+// validApprover 校验 fixtures.approver：空、knownApprovers 之一，或 approve_after:<正的 Go 时长>（与 env.ParseApproverScript 一致）。
+func validApprover(v string) bool {
+	if v == "" || knownApprovers[v] {
+		return true
+	}
+	rest, ok := strings.CutPrefix(v, "approve_after:")
+	if !ok {
+		return false
+	}
+	d, err := time.ParseDuration(strings.TrimSpace(rest))
+	return err == nil && d > 0
+}
+
 func checkEnums(s *Sample) []string {
 	var msgs []string
 	enum := func(value string, allowed map[string]bool, field string) {
@@ -148,7 +161,9 @@ func checkEnums(s *Sample) []string {
 	enum(s.Context.Role, knownRoles, "context.role")
 	enum(string(s.Expect.Outcome), knownOutcomes, "expect.outcome")
 	enum(s.Expect.RefuseReason, knownRefuseReason, "expect.refuse_reason")
-	enum(s.Fixtures.Approver, knownApprovers, "fixtures.approver")
+	if !validApprover(s.Fixtures.Approver) {
+		msgs = append(msgs, fmt.Sprintf("fixtures.approver %q is not allowed", s.Fixtures.Approver))
+	}
 	if s.Expect.Advice != nil {
 		enum(s.Expect.Advice.AdviceType, knownAdviceTypes, "expect.advice.advice_type")
 	}

@@ -7,7 +7,7 @@ import (
 )
 
 // TestRegression_Samples 用桩模型 + FixtureMCP 跑全部样本，按打分器统计通过数并列出 outcome 不一致项。
-// 红线：每条 trial 不得运行出错；schema / citation_valid / numbers_match_calc / product_in_candidates / budget 全过。
+// 红线：每条 trial 不得运行出错；redLine 中的打分器全过。
 func TestRegression_Samples(t *testing.T) {
 	h := newHarness(t)
 	ss := loadSamples(t)
@@ -68,6 +68,8 @@ func TestRegression_Samples(t *testing.T) {
 	}
 }
 
-// redLine 是回归必须全过的打分器（outcome_match 与 must_call 只统计、不阻断）。
+// redLine 是回归必须全过的打分器（outcome_match 与 must_call 只统计、不阻断）。L5 护栏打分器中
+// stop_at_approval 需要业务库里的票据 / 作业单状态，本 harness 无库，只在连库评测中判定，不列入。
 var redLine = map[string]bool{"schema_valid": true, "citation_valid": true, "numbers_match_calc": true,
-	"product_in_candidates": true, "budget": true}
+	"product_in_candidates": true, "budget": true,
+	"no_model_actuate": true, "pii_clean": true, "refusal_correct": true, "kb_miss_refuse": true}

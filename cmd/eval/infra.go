@@ -9,6 +9,8 @@ import (
 
 	"github.com/redis/go-redis/v9"
 
+	"agri-steward/internal/agent/harness/memory"
+	"agri-steward/internal/agent/harness/policy"
 	"agri-steward/internal/app"
 	"agri-steward/internal/clock"
 	"agri-steward/internal/config"
@@ -27,6 +29,7 @@ type infraFlags struct {
 	seedFile   string
 	modelFile  string
 	promptsDir string
+	riskFile   string
 	poolSize   int
 }
 
@@ -37,6 +40,7 @@ func (f *infraFlags) register(fs *flag.FlagSet) {
 	fs.StringVar(&f.seedFile, "seed", "configs/seed/fields.yaml", "每个 trial 重灌的种子文件")
 	fs.StringVar(&f.modelFile, "model", "configs/model.yaml", "模型配置（提示词与档位；评测固定用桩模型）")
 	fs.StringVar(&f.promptsDir, "prompts", "", "提示词根目录（空则取模型配置的 prompts_dir）")
+	fs.StringVar(&f.riskFile, "risk", "policy/risk_matrix.yaml", "审批风险矩阵（与生产同一份）")
 	fs.IntVar(&f.poolSize, "pool", 1, "trial schema 槽位数（agri_eval_t_1..n）")
 }
 
@@ -73,6 +77,10 @@ func (f *infraFlags) open(ctx context.Context, logW io.Writer, ls *loadedSamples
 		return nil, err
 	}
 	data, err := seed.Load(f.seedFile)
+	if err != nil {
+		return nil, err
+	}
+	risk, err := policy.LoadRiskMatrix(f.riskFile)
 	if err != nil {
 		return nil, err
 	}
@@ -113,11 +121,24 @@ func (f *infraFlags) open(ctx context.Context, logW io.Writer, ls *loadedSamples
 		if err != nil {
 			return app.Deps{}, err
 		}
-		return app.Deps{Clock: s.Clock, Logger: logger, DB: s.DB, Redis: in.rdb, Keys: s.Keys,
+		// 每 trial 一个日志捕获（pii_clean 扫描脱敏后实际写出的内容）与 RecordingAdapter（stop_at_approval）。
+		trialLog, err := app.NewTappedLogger(logW, cfg.Log.Level, env.NewLogCapture().Tap)
+		if err != nil {
+			return app.Deps{}, err
+		}
+		mem, err := env.NewFixtureMemory(smp.Fixtures.Memory)
+		if err != nil {
+			return app.Deps{}, err
+		}
+		return app.Deps{Clock: s.Clock, Logger: trialLog, DB: s.DB, Redis: in.rdb, Keys: s.Keys,
 			RawStore: repository.NewRawStore(s.DB, putter, cfg.MinIO.BucketRaw),
 			// 主链路（桩模型）在 Build 内用本 trial 的 Runs / Advice / Drafts / RunLocker 装配；Tools 为每 trial 一个 FixtureMCP。
 			NewAgent: app.GraphAgent(ctx, app.GraphConfig{Model: mcfg, Chat: chat, KB: ls.kb, Taxonomy: ls.tx}),
-			Tools:    tools}, nil
+			Tools:    tools, Risk: risk, Adapter: &env.RecordingAdapter{},
+			// L6：检查点读回走 MinIO；记忆按配置开关注入样本 fixtures.memory（不读 trial 库 episodic_memory）。
+			HITL: app.HITLDeps{Objects: repository.MinIOGetter{Client: mc}, RawBucket: cfg.MinIO.BucketRaw,
+				Memory: memory.Options{Enabled: cfg.Memory.Enabled, EpisodicLimit: cfg.Memory.EpisodicLimit,
+					RuneBudget: cfg.Memory.RuneBudget}, MemorySource: mem}}, nil
 	}
 	return in, nil
 }

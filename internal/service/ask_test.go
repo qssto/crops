@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"strings"
@@ -10,6 +11,7 @@ import (
 	"testing"
 
 	"agri-steward/internal/agent"
+	"agri-steward/internal/agent/harness/runner"
 	"agri-steward/internal/model"
 )
 
@@ -123,6 +125,9 @@ func TestAskService_Ask(t *testing.T) {
 		{name: "async agent error -> FAILED", in: AskInput{FieldID: 3, Text: "x"},
 			fields: fakeFields{ok: true}, limiter: fakeLimiter{allow: true}, agent: &fakeAgent{err: errors.New("llm down")},
 			wantFinish: []finishCall{{model.RunFailed, reasonAgentError}}},
+		{name: "async lease lost -> no FAILED", in: AskInput{FieldID: 3, Text: "x"},
+			fields: fakeFields{ok: true}, limiter: fakeLimiter{allow: true},
+			agent: &fakeAgent{err: fmt.Errorf("graph: run 77: %w", runner.ErrLeaseLost)}},
 		{name: "async agent panic -> FAILED", in: AskInput{FieldID: 3, Text: "x"},
 			fields: fakeFields{ok: true}, limiter: fakeLimiter{allow: true}, agent: &fakeAgent{panics: true},
 			wantFinish: []finishCall{{model.RunFailed, reasonAgentPanic}}},

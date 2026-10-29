@@ -18,6 +18,7 @@ func TestKeys(t *testing.T) {
 		{k.RateFarmAsk(1), "as:dev:rl:farm:1:ask"},
 		{k.Raw("sse:run:7"), "as:dev:sse:run:7"},
 		{k.IdemTool("abc"), "as:dev:idem:tool:abc"},
+		{k.IdemApprove("r-1"), "as:dev:idem:approve:r-1"},
 		{k.CacheMCP("weather.forecast", "d1"), "as:dev:cache:mcp:weather.forecast:d1"},
 		{EvalTrialEnv(3), "eval-t3"},
 	}

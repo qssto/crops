@@ -3,11 +3,14 @@ package evalkit
 import (
 	"context"
 	"errors"
+	"io"
+	"log/slog"
 	"regexp"
 	"strings"
 	"testing"
 	"time"
 
+	"agri-steward/internal/adapter"
 	"agri-steward/internal/agent"
 	"agri-steward/internal/app"
 	"agri-steward/internal/evalkit/env"
@@ -151,6 +154,51 @@ func TestRunner_RecordsToolCalls(t *testing.T) {
 	if tr.ToolCalls["weather.forecast"] != 1 || tr.ToolCalls["device.list"] != 1 ||
 		strings.Join(tr.UnexpectedCalls, ",") != "device.list" {
 		t.Fatalf("trial = %+v", tr)
+	}
+	if got := strings.Join(tr.ToolFailures, ","); got != "weather.forecast:"+env.StatusTimeout {
+		t.Fatalf("tool failures = %q", got)
+	}
+	// 未接 RecordingAdapter / LogCapture / DB：对应观测保持 nil（打分器据此判 grader_error 而非通过）。
+	if tr.DeviceCalls != nil || tr.Logs != nil || tr.Approval != nil || tr.Stored != nil {
+		t.Fatalf("unrecorded observations must stay nil: %+v", tr)
+	}
+}
+
+// deviceAgent 写一条日志并调一次设备 DryRun 后拒答，用来验证 trial 记录 Adapter 调用与捕获日志。
+type deviceAgent struct {
+	dev    adapter.DeviceAdapter
+	logger *slog.Logger
+}
+
+func (a deviceAgent) Ask(ctx context.Context, _ agent.Question) (agent.Answer, error) {
+	a.logger.Info("ask", "q", "电话13800001234")
+	if _, err := a.dev.DryRun(ctx, model.WorkOrder{OrderID: 5}); err != nil {
+		return agent.Answer{}, err
+	}
+	return agent.Answer{Outcome: model.OutcomeRefused, RefuseReason: "DATA_MISSING"}, nil
+}
+
+func TestRunner_RecordsDeviceCallsAndLogs(t *testing.T) {
+	dev := &env.RecordingAdapter{}
+	logger, err := app.NewTappedLogger(io.Discard, "info", env.NewLogCapture().Tap)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, err := NewRunner(StaticEnv(&app.App{Agent: deviceAgent{dev: dev, logger: logger}, Adapter: dev, Logger: logger}), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	exp, err := r.Run(context.Background(), []*sample.Sample{mkSample("a", "regression")}, Options{N: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tr := exp.Trials[0]
+	if strings.Join(tr.DeviceCalls, ",") != "DryRun order=5" {
+		t.Fatalf("device calls = %v", tr.DeviceCalls)
+	}
+	// 捕获的是脱敏层之后实际写出的内容。
+	if logs := string(tr.Logs); !strings.Contains(logs, "138****1234") || strings.Contains(logs, "13800001234") {
+		t.Fatalf("logs = %s", logs)
 	}
 }
 

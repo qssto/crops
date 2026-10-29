@@ -6,8 +6,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"time"
 
+	"agri-steward/internal/adapter"
 	"agri-steward/internal/agent"
 	"agri-steward/internal/app"
 	"agri-steward/internal/clock"
@@ -15,6 +17,7 @@ import (
 	"agri-steward/internal/evalkit/grader"
 	"agri-steward/internal/evalkit/sample"
 	"agri-steward/internal/model"
+	"agri-steward/internal/repository"
 )
 
 // DefaultTrials 是每个样本默认运行次数（P0 §6.1 技术实现 3）。
@@ -35,16 +38,38 @@ type Trial struct {
 	Error        string
 	// Scores 按打分器顺序列出各维度结果；运行出错（Error 非空）时为空。
 	Scores []Score
-	// ToolCalls 是工具名 → 调用次数；UnexpectedCalls 是未在 fixtures.mcp 声明的调用（按顺序的工具名）。
-	// 仅当 App.Tools 实现 ToolRecorder（FixtureMCP）时填充。
+	// ToolCalls 是工具名 → 调用次数；UnexpectedCalls 是未在 fixtures.mcp 声明的调用（按顺序的工具名）；
+	// ToolFailures 是返回故障状态的调用（"tool:STATUS"）。仅当 App.Tools 实现 ToolRecorder（FixtureMCP）时填充。
 	ToolCalls       map[string]int
 	UnexpectedCalls []string
+	ToolFailures    []string
+	// L5 护栏观测：Approval 取自 trial 库（App.DB 非空时）；DeviceCalls 仅当 App.Adapter 实现 DeviceRecorder；
+	// Logs 仅当 App.Logger 的 Handler 链上有 LogRecorder（env.LogCapture），不写入报告与 agri_eval。
+	Approval    *grader.ApprovalState
+	DeviceCalls []string
+	Logs        []byte
+	// Stored 是该 run 写入 trial 库的 tool_call.result_summary 与 run_event.payload（App.DB 非空时，
+	// 归还槽位前读取），供 pii_clean 扫描；不写入报告与 agri_eval。
+	Stored []grader.StoredText
+	// L6：OrderTransitions 是该 run 的作业单迁移（脚本审批人动作之后读 trial 库），App.DB 为空时为 nil。
+	OrderTransitions []model.OrderTransition
 }
 
 // ToolRecorder 是评测工具接缝的调用记录（env.FixtureMCP 实现）。
 type ToolRecorder interface {
+	Calls() []env.ToolCallRecord
 	CallCounts() map[string]int
 	UnexpectedCalls() []env.ToolCallRecord
+}
+
+// DeviceRecorder 是评测设备接缝的调用记录（env.RecordingAdapter 实现）。
+type DeviceRecorder interface {
+	DeviceCalls() []env.DeviceCall
+}
+
+// LogRecorder 是 trial 应用日志捕获（env.LogCapture.Tap 返回的 Handler 实现）。
+type LogRecorder interface {
+	Logs() []byte
 }
 
 // recordTools 把 trial 的工具调用记录写入 t（Tools 不记录时不动）。
@@ -57,6 +82,81 @@ func recordTools(t *Trial, tools agent.ToolProvider) {
 	for _, c := range rec.UnexpectedCalls() {
 		t.UnexpectedCalls = append(t.UnexpectedCalls, c.Tool)
 	}
+	t.ToolFailures = []string{}
+	for _, c := range rec.Calls() {
+		if c.Status != env.StatusOK && c.Status != env.StatusRejected {
+			t.ToolFailures = append(t.ToolFailures, c.Tool+":"+c.Status)
+		}
+	}
+}
+
+// recordDevice 把 RecordingAdapter 的调用写入 t（Adapter 不记录时不动；记录为空时是空切片）。
+func recordDevice(t *Trial, a adapter.DeviceAdapter) {
+	rec, ok := a.(DeviceRecorder)
+	if !ok {
+		return
+	}
+	t.DeviceCalls = []string{}
+	for _, c := range rec.DeviceCalls() {
+		t.DeviceCalls = append(t.DeviceCalls, c.String())
+	}
+}
+
+// recordLogs 沿 Handler 链（Unwrap）找 LogRecorder 并取日志；找不到时不动。
+func recordLogs(t *Trial, l *slog.Logger) {
+	if l == nil {
+		return
+	}
+	for h := l.Handler(); h != nil; {
+		if rec, ok := h.(LogRecorder); ok {
+			t.Logs = rec.Logs()
+			return
+		}
+		u, ok := h.(interface{ Unwrap() slog.Handler })
+		if !ok {
+			return
+		}
+		h = u.Unwrap()
+	}
+}
+
+// recordApproval 从 trial 库读该 run 的状态、最新一张 ORDER 票与作业单当前状态（App.DB 为空时不动）。
+// 作业单取 Answer.Order，无单时取票据指向的单；agent.Answer.Order.Status 是出单时的 DRAFT，不能代替库中状态。
+func recordApproval(ctx context.Context, t *Trial, a *app.App, scope model.Scope, ans agent.Answer) error {
+	if a.DB == nil {
+		return nil
+	}
+	st := &grader.ApprovalState{}
+	var ref model.OrderRef
+	if o := ans.Order; o != nil {
+		ref = model.OrderRef{TenantID: o.TenantID, FarmID: o.FarmID, OrderID: o.OrderID}
+	}
+	if ans.RunID != 0 {
+		run, err := a.Runs.Summary(ctx, scope, ans.RunID)
+		if err != nil {
+			return fmt.Errorf("read run: %w", err)
+		}
+		st.RunStatus, st.Interrupt = run.Status, run.Interrupt
+		tk, ok, err := (repository.ApprovalRepo{}).TicketByRun(ctx, a.DB, scope, ans.RunID)
+		if err != nil {
+			return fmt.Errorf("read approval: %w", err)
+		}
+		if ok {
+			st.Ticket = &tk
+			if ref.OrderID == 0 {
+				ref = model.OrderRef{TenantID: tk.TenantID, FarmID: tk.FarmID, OrderID: tk.OrderID}
+			}
+		}
+	}
+	if ref.OrderID != 0 {
+		cur, err := (repository.WorkOrderRepo{}).GetState(ctx, a.DB, ref)
+		if err != nil {
+			return fmt.Errorf("read work order: %w", err)
+		}
+		st.OrderStatus = cur.Status
+	}
+	t.Approval = st
+	return nil
 }
 
 // Experiment 是一次评测的全部 trial。
@@ -99,6 +199,7 @@ type Runner struct {
 	env      EnvFunc
 	now      func() time.Time
 	question QuestionFunc
+	approve  ApproveFunc
 	grading  grading
 }
 
@@ -113,6 +214,11 @@ func WithGraders(kb sample.KnowledgeOpener, graders ...grader.Grader) RunnerOpti
 // WithQuestion 设置提问构造函数。
 func WithQuestion(fn QuestionFunc) RunnerOption {
 	return func(r *Runner) { r.question = fn }
+}
+
+// WithApprover 设置脚本审批人（L6）：在 Ask 返回后、读迁移与打分前执行（见 ScriptApprover）。
+func WithApprover(fn ApproveFunc) RunnerOption {
+	return func(r *Runner) { r.approve = fn }
 }
 
 // NewRunner 构造 Runner；now 为 nil 时用系统时钟；未配置打分器时只跑 outcome_match。
@@ -199,7 +305,7 @@ func (r *Runner) runTrial(ctx context.Context, s *sample.Sample, index int, kb g
 	return t
 }
 
-// ask 构造提问并调用被测 agent，记录延迟与工具调用。
+// ask 构造提问并调用被测 agent，记录延迟、工具 / 设备调用、日志与审批状态（须在归还槽位前读库）。
 func (r *Runner) ask(ctx context.Context, t *Trial, a *app.App, s *sample.Sample) (agent.Answer, error) {
 	q, err := r.question(ctx, a, s)
 	if err != nil {
@@ -208,8 +314,53 @@ func (r *Runner) ask(ctx context.Context, t *Trial, a *app.App, s *sample.Sample
 	start := r.now()
 	ans, err := a.Agent.Ask(ctx, q)
 	t.Latency = r.now().Sub(start)
+	if err == nil && r.approve != nil {
+		if err = r.approve(ctx, a, s, q, ans); err != nil {
+			err = fmt.Errorf("approver: %w", err)
+		}
+	}
 	recordTools(t, a.Tools)
-	return ans, err
+	recordDevice(t, a.Adapter)
+	recordLogs(t, a.Logger)
+	if err != nil {
+		return ans, err
+	}
+	if err := recordApproval(ctx, t, a, q.Scope, ans); err != nil {
+		return ans, err
+	}
+	if err := recordStored(ctx, t, a, q.Scope, ans.RunID); err != nil {
+		return ans, err
+	}
+	return ans, recordTransitions(ctx, t, a, q.Scope, ans.RunID)
+}
+
+// recordStored 从 trial 库读该 run 落库的摘要（App.DB 为空或无 run 时不动；有库无行时是空切片）。
+func recordStored(ctx context.Context, t *Trial, a *app.App, scope model.Scope, runID uint64) error {
+	if a.DB == nil || runID == 0 {
+		return nil
+	}
+	rows, err := repository.SummaryRepo{}.ByRun(ctx, a.DB, scope, runID)
+	if err != nil {
+		return fmt.Errorf("record stored summaries: %w", err)
+	}
+	t.Stored = make([]grader.StoredText, 0, len(rows))
+	for _, r := range rows {
+		t.Stored = append(t.Stored, grader.StoredText{Source: fmt.Sprintf("%s#%d", r.Source, r.ID), Text: r.Text})
+	}
+	return nil
+}
+
+// recordTransitions 从 trial 库读该 run 的作业单迁移（App.DB 为空或无 run 时不动）。
+func recordTransitions(ctx context.Context, t *Trial, a *app.App, scope model.Scope, runID uint64) error {
+	if a.DB == nil || runID == 0 {
+		return nil
+	}
+	ts, err := repository.WorkOrderRepo{}.TransitionsByRun(ctx, a.DB, scope, runID)
+	if err != nil {
+		return fmt.Errorf("record transitions: %w", err)
+	}
+	t.OrderTransitions = ts
+	return nil
 }
 
 func defaultQuestion(_ context.Context, _ *app.App, s *sample.Sample) (agent.Question, error) {

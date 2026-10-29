@@ -17,13 +17,14 @@ const envPrefix = "AS"
 
 // Config 是进程配置。
 type Config struct {
-	Env   string `mapstructure:"env"`
-	HTTP  HTTP   `mapstructure:"http"`
-	MySQL MySQL  `mapstructure:"mysql"`
-	Redis Redis  `mapstructure:"redis"`
-	MinIO MinIO  `mapstructure:"minio"`
-	Auth  Auth   `mapstructure:"auth"`
-	Log   Log    `mapstructure:"log"`
+	Env    string `mapstructure:"env"`
+	HTTP   HTTP   `mapstructure:"http"`
+	MySQL  MySQL  `mapstructure:"mysql"`
+	Redis  Redis  `mapstructure:"redis"`
+	MinIO  MinIO  `mapstructure:"minio"`
+	Auth   Auth   `mapstructure:"auth"`
+	Log    Log    `mapstructure:"log"`
+	Memory Memory `mapstructure:"memory"`
 }
 
 // HTTP 是 server 监听配置。
@@ -69,6 +70,13 @@ type Auth struct {
 // Log 是日志配置。
 type Log struct {
 	Level string `mapstructure:"level"`
+}
+
+// Memory 是记忆注入开关（P0 §6.7 功能任务 6）；关闭后 explain 不读记忆，主链路不受影响。
+type Memory struct {
+	Enabled       bool `mapstructure:"enabled"`
+	EpisodicLimit int  `mapstructure:"episodic_limit"` // episodic 条数上限；0 取默认
+	RuneBudget    int  `mapstructure:"rune_budget"`    // 注入摘要总字数上限；0 取默认
 }
 
 // secrets 是只允许来自环境变量的键，及其可接受的变量名（先 AS_ 前缀，再 deploy/.env 中的原名）。

@@ -165,9 +165,10 @@ func (e *env) judge(s *state, en *knowledge.Entry, id string) verdict {
 			return notApplicable
 		}
 		hit, key = compare(th.Op, v, th.Value), th.Metric
-		observed = fmtNum(v) + " " + th.Unit
+		observed = fmtFact(v) + " " + th.Unit
 	}
 	s.dec.Evaluated++
+	s.dec.Judged = append(s.dec.Judged, judged{KB: en.KBID, Th: th, Fact: key, Met: hit})
 	cond := fmt.Sprintf("%s %s %s", th.Op, fmtNum(th.Value), th.Unit)
 	if th.DurationDays > 0 {
 		cond = fmt.Sprintf("%s 且连续 ≥ %d 天", cond, th.DurationDays)

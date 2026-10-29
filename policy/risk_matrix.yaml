@@ -1,0 +1,15 @@
+# 审批风险矩阵 v1（P0 §6.6 流程 4，母文档 §4.6.2-12）。由 internal/agent/harness/policy.LoadRiskMatrix 加载，
+# service.ApprovalService 开票时按作业类型定 risk_level / required_role / confirm_required。
+# 约束（加载时校验，违反即启动失败）：
+#   - 必须列出 SPRAY，且 SPRAY 一律 HIGH 且 confirm_required: true（P0 定版）；HIGH 必须 confirm_required: true。
+#   - required_role 非空，取值 farm_manager / agronomist / operator（platform_admin 不审批农场作业单）。
+#   - 未列出的作业类型开票失败（不默认放行）。
+# approval_ttl 是票据 PREPARING → OPEN 时写入 expires_at 的时长（文档未定数值，草拟，待业务确认）。
+version: 1
+work_types:
+  SPRAY: {risk_level: HIGH, required_role: [agronomist], confirm_required: true}
+  FERTILIZE: {risk_level: LOW, required_role: [agronomist, farm_manager], confirm_required: false}
+  IRRIGATE: {risk_level: LOW, required_role: [farm_manager, agronomist], confirm_required: false}
+approval_ttl:
+  HIGH: 2h
+  LOW: 6h

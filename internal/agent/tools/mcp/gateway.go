@@ -27,20 +27,25 @@ const (
 // DefaultCacheTTL 是 cache:mcp 的默认 TTL（server 名 → TTL）；field / device 不缓存。
 var DefaultCacheTTL = map[string]time.Duration{"weather": 10 * time.Minute, "crop": 24 * time.Hour}
 
-// Options 是 gateway 的依赖与参数。Events、Mask、Levels、Timeouts、CacheTTL、PendingPoll 可省略。
+// Options 是 gateway 的依赖与参数。Events、Mask、Levels、Timeouts、CacheTTL、PendingPoll 可省略；
+// 给了 Mask 就必须给 RawReader。
 type Options struct {
 	Clock  clock.Clock
 	Logger *slog.Logger
-	Keys   Keys
-	Idem   IdemStore
-	Cache  Cache
-	Calls  agent.ToolCallStore
-	Raw    agent.RawStore
-	Fields FieldScope
+	// ToolPolicy 是 policy/tool_policy.yaml；构造时与注册表逐项比对，不符即构造失败（启动失败）。
+	ToolPolicy *policy.ToolPolicy
+	Keys       Keys
+	Idem       IdemStore
+	Cache      Cache
+	Calls      agent.ToolCallStore
+	Raw        agent.RawStore
+	Fields     FieldScope
 	// Events 非 nil 时每次调用发 TOOL_CALL_END（L7 接 EventRepo）。
 	Events agent.EventSink
-	// Mask 对 result_summary 脱敏；nil 时原样。TODO(L5)：注入 pii.Mask。
+	// Mask 对 result_summary 脱敏；nil 时原样（生产注入 pii.MaskJSON）。
 	Mask func(json.RawMessage) json.RawMessage
+	// RawReader 读回 RawStore 写入的原始结果，去重命中时向模型返回原值而非脱敏摘要；Mask 非 nil 时必填。
+	RawReader RawReader
 	// Levels 是 server 名 → 策略等级，覆盖 ToolSpec.Level（来自 configs/tools.yaml 的 level）。
 	Levels map[string]Level
 	// Timeouts 是 server 名 → 单次调用超时，缺省 DefaultTimeout。
@@ -60,12 +65,16 @@ func (o Options) validate() error {
 	}
 	req(o.Clock == nil, "Clock")
 	req(o.Logger == nil, "Logger")
+	req(o.ToolPolicy == nil, "ToolPolicy")
 	req(o.Keys == nil, "Keys")
 	req(o.Idem == nil, "Idem")
 	req(o.Cache == nil, "Cache")
 	req(o.Calls == nil, "Calls")
 	req(o.Raw == nil, "Raw")
 	req(o.Fields == nil, "Fields")
+	if o.Mask != nil && o.RawReader == nil {
+		errs = append(errs, errors.New("mcp gateway: RawReader is required when Mask is set (dedup replay must return unmasked results)"))
+	}
 	return errors.Join(errs...)
 }
 
@@ -102,7 +111,8 @@ type Gateway struct {
 // allowedLevels 是 P0 Agent 可直接调用的等级：write / actuate 只经 service/workorder（母文档 §4.6.2-2）。
 var allowedLevels = []policy.Level{policy.LevelRead}
 
-// NewGateway 注册全部 Server 的工具：工具重名、schema 编译失败都报错；未声明等级的工具照常注册，调用时由 Before 拒绝。
+// NewGateway 注册全部 Server 的工具：工具重名、schema 编译失败都报错；再与 ToolPolicy 做启动期自检
+// （注册表工具未声明等级或等级不符、模型可见工具集含 actuate、策略 read / write 条目不在注册表，任一即报错）。
 func NewGateway(servers []Server, opt Options) (*Gateway, error) {
 	if err := opt.validate(); err != nil {
 		return nil, err
@@ -133,7 +143,7 @@ func NewGateway(servers []Server, opt Options) (*Gateway, error) {
 	if err := errors.Join(errs...); err != nil {
 		return nil, err
 	}
-	p, err := policy.New(specs, allowedLevels...)
+	p, err := opt.ToolPolicy.Bind(specs, allowedLevels...)
 	if err != nil {
 		return nil, fmt.Errorf("mcp gateway: %w", err)
 	}

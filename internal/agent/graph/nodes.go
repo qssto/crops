@@ -10,6 +10,7 @@ import (
 	"sync"
 
 	"agri-steward/internal/agent"
+	"agri-steward/internal/agent/harness/runner"
 	"agri-steward/internal/agent/knowledge"
 	"agri-steward/internal/agent/llm"
 	"agri-steward/internal/model"
@@ -104,7 +105,8 @@ func (a *Agent) enrich(ctx context.Context, s *state) (*state, error) {
 
 // callTool 调用一个工具并解码数据；只有 ctx 取消或网关内部错误返回 error。
 func (a *Agent) callTool(ctx context.Context, s *state, name string, args json.RawMessage) (*toolOut, error) {
-	res, err := a.cfg.Tools.Call(ctx, s.q.Scope, agent.ToolCall{RunID: s.runID, StepID: NodeEnrich, Tool: name, Args: args})
+	res, err := a.cfg.Tools.Call(ctx, s.q.Scope, agent.ToolCall{RunID: s.runID, StepID: NodeEnrich, Tool: name, Args: args,
+		Epoch: runner.Epoch(ctx)}) // L6：重入重跑时带新 resume_epoch，时效工具不读缓存、重取
 	if err != nil {
 		return nil, fmt.Errorf("tool %s: %w", name, err)
 	}
@@ -216,6 +218,7 @@ func (a *Agent) explain(ctx context.Context, s *state) (*state, error) {
 	for _, r := range s.dec.Reasons {
 		in.Reasons = append(in.Reasons, noDigits(r.Brief))
 	}
+	in.Reasons = append(in.Reasons, a.memoryHints(ctx, s)...) // L6 记忆注入（开关关闭为空）
 	for i, n := range s.numbers {
 		in.Numbers = append(in.Numbers, llm.NumberSlot{Placeholder: placeholder(i), Field: n.Field, Label: noDigits(n.Label)})
 	}

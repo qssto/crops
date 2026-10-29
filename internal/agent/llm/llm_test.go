@@ -161,6 +161,32 @@ func TestClient_Redacts(t *testing.T) {
 	}
 }
 
+// TestClient_DefaultRedactsPII：未配置 Redact 时默认 pii.ForModel，模型入参无手机号 / 身份证 / 精确坐标明文。
+func TestClient_DefaultRedactsPII(t *testing.T) {
+	var seen string
+	m := modelFunc(func(msgs []*schema.Message) string {
+		seen = msgs[len(msgs)-1].Content
+		return `{"product_id":"a"}`
+	})
+	c, err := New(Config{Model: m, Prompts: testPrompts(t), Tiers: map[Tier]TierConfig{tierStd: {MaxTokens: 1, Timeout: time.Second}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out ChooseOutput
+	q := "电话13800138000，身份证110101199001011234，地块31.234567,120.567890"
+	if _, err := c.Do(context.Background(), tierStd, TaskChoose, ChooseInput{Question: q}, &out); err != nil {
+		t.Fatal(err)
+	}
+	for _, leak := range []string{"13800138000", "110101199001011234", "31.234567", "120.567890"} {
+		if strings.Contains(seen, leak) {
+			t.Errorf("model input leaks %q: %s", leak, seen)
+		}
+	}
+	if !strings.Contains(seen, "[FIELD_REF]") || !json.Valid([]byte(seen)) {
+		t.Fatalf("model input = %s", seen)
+	}
+}
+
 type modelFunc func([]*schema.Message) string
 
 func (f modelFunc) Generate(_ context.Context, msgs []*schema.Message, _ ...einomodel.Option) (*schema.Message, error) {

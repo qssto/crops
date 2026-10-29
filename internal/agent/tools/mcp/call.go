@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"agri-steward/internal/agent"
+	"agri-steward/internal/agent/harness/policy"
 	"agri-steward/internal/model"
 )
 
@@ -48,6 +49,16 @@ type outcome struct {
 	from string
 }
 
+// alertActuateFromAgent 是告警日志的 alert 字段：模型发起了 actuate 调用（执行动作只允许 service/workorder 经 adapter 调用）。
+const alertActuateFromAgent = "ACTUATE_FROM_AGENT"
+
+// alertActuate 以 ERROR 级别记录来自模型的 actuate 调用（兜底拒绝已由 policy.Before 完成，这里只告警）。
+func (g *Gateway) alertActuate(ctx context.Context, scope model.Scope, call agent.ToolCall, err error) {
+	g.opt.Logger.ErrorContext(ctx, "mcp actuate call from agent rejected",
+		"alert", alertActuateFromAgent, "tool", call.Tool, "tenant_id", scope.TenantID, "farm_id", scope.FarmID,
+		"run_id", call.RunID, "step_id", call.StepID, "err", err)
+}
+
 func failed(code ErrorCode, from, format string, a ...any) outcome {
 	return outcome{code: code, from: from, msg: fmt.Sprintf(format, a...)}
 }
@@ -60,6 +71,9 @@ func (g *Gateway) Call(ctx context.Context, scope model.Scope, call agent.ToolCa
 	}
 	c := g.newState(scope, call)
 	if _, err := g.policy.Before(call.Tool, call.Args); err != nil {
+		if errors.Is(err, policy.ErrActuateDenied) {
+			g.alertActuate(ctx, scope, call, err)
+		}
 		return g.finish(ctx, c, failed(ErrRejected, fromPolicy, "%v", err))
 	}
 	if err := g.checkScope(ctx, scope, call.Args); errors.Is(err, errNotOwned) {
@@ -72,7 +86,10 @@ func (g *Gateway) Call(ctx context.Context, scope model.Scope, call agent.ToolCa
 		return agent.ToolResult{}, fmt.Errorf("mcp %s: %w", call.Tool, err)
 	}
 	if hit != nil {
-		return g.replay(ctx, c, *hit), nil
+		if res, ok := g.replay(ctx, c, *hit); ok {
+			return res, nil
+		}
+		// 取不回原始结果：不占位直接重做（P0 模型可调工具只有 read 级），落一行新 attempt。
 	}
 	c.claim = cl
 	o, err := g.fetch(ctx, c)

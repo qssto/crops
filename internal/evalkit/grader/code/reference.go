@@ -25,7 +25,9 @@ const (
 )
 
 // Reference 由样本 expect 构造参考解 trial：卡片字段取 expect（引用取 must_cite，数值引用指向首条 must_cite），
-// 工具调用取 must_call 各一次。skip 为不判定的打分器名 → 原因；notes 为部分构造的原因（每条至多一次）。
+// 工具调用取 must_call 各一次；fixtures 注入的故障记为工具故障；L5 观测取理想值（设备零调用、日志为空、
+// 作业单处于 work_order.final_status，断言 stop_at_approval 时有一张 PREPARING 票）。
+// skip 为不判定的打分器名 → 原因；notes 为部分构造的原因（每条至多一次）。
 func Reference(s *sample.Sample, tx *knowledge.Taxonomy, kb grader.KnowledgeIndex) (t *grader.Trial, skip map[string]string, notes []string) {
 	exp := s.Expect
 	card := &model.AdviceCard{AdviceID: refID, RunID: refID, TenantID: refID, FarmID: refID, FieldID: refID,
@@ -49,7 +51,79 @@ func Reference(s *sample.Sample, tx *knowledge.Taxonomy, kb grader.KnowledgeInde
 		calls[tool] = 1
 	}
 	return &grader.Trial{Sample: s, Outcome: exp.Outcome, RefuseReason: exp.RefuseReason,
-		Card: card, KB: kb, ToolCalls: calls}, skip, notes
+		Card: card, KB: kb, ToolCalls: calls, ToolFailures: referenceFailures(s),
+		Approval: referenceApproval(exp), DeviceCalls: []string{}, Logs: []byte{},
+		OrderTransitions: referenceTransitions(exp.WorkOrder)}, skip, notes
+}
+
+// referenceFailures 把 fixtures.mcp 中注入的故障记为 "tool:fault"（按工具名排序；无故障为空切片）。
+func referenceFailures(s *sample.Sample) []string {
+	out := []string{}
+	for tool, fxs := range s.Fixtures.MCP {
+		for _, fx := range fxs {
+			if fx.Error != "" {
+				out = append(out, tool+":"+fx.Error)
+			}
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// referenceApproval 是理想审批状态：作业单处于期望终态；断言 stop_at_approval 时有一张 PREPARING 票。
+func referenceApproval(exp sample.Expect) *grader.ApprovalState {
+	st := &grader.ApprovalState{}
+	if exp.WorkOrder != nil {
+		st.OrderStatus = model.WorkOrderStatus(exp.WorkOrder.FinalStatus)
+	}
+	if exp.Trajectory.StopAtApproval {
+		st.Ticket = &model.ApprovalTicket{TicketID: refID, Status: model.TicketPreparing}
+		st.RunStatus, st.Interrupt = model.RunInterrupted, model.InterruptWaitApproval
+		if st.OrderStatus == "" {
+			st.OrderStatus = model.OrderPendingApproval
+		}
+	}
+	return st
+}
+
+// referenceTransitions 构造参考作业单迁移（L6 state_machine_legal）：建单后按合法迁移表走到 final_status 的最短路径；
+// 无 work_order 断言时为空（不涉及作业单），final_status 不可达时只含建单（由打分器之外的规则报）。
+func referenceTransitions(w *sample.WorkOrderExpect) []model.OrderTransition {
+	ref := model.OrderRef{TenantID: refID, FarmID: refID, OrderID: refID}
+	out := []model.OrderTransition{}
+	if w == nil {
+		return out
+	}
+	out = append(out, model.OrderTransition{Ref: ref, RunID: refID, To: model.OrderDraft})
+	path := shortestPath(model.OrderDraft, model.WorkOrderStatus(w.FinalStatus))
+	for i := 1; i < len(path); i++ {
+		out = append(out, model.OrderTransition{Ref: ref, RunID: refID, From: path[i-1], To: path[i]})
+	}
+	return out
+}
+
+// shortestPath 在 model.WorkOrderTransitions 上 BFS from → to，返回含两端的状态序列；不可达返回 nil。
+func shortestPath(from, to model.WorkOrderStatus) []model.WorkOrderStatus {
+	prev := map[model.WorkOrderStatus]model.WorkOrderStatus{from: ""}
+	queue := []model.WorkOrderStatus{from}
+	for len(queue) > 0 {
+		cur := queue[0]
+		queue = queue[1:]
+		if cur == to {
+			var path []model.WorkOrderStatus
+			for st := to; st != ""; st = prev[st] {
+				path = append([]model.WorkOrderStatus{st}, path...)
+			}
+			return path
+		}
+		for _, next := range model.WorkOrderTransitions[cur] {
+			if _, seen := prev[next]; !seen {
+				prev[next] = cur
+				queue = append(queue, next)
+			}
+		}
+	}
+	return nil
 }
 
 // fillAdvice 按 expect.advice 填卡；返回是否有期望值待 calc 回填的数值（该条不进卡片）。

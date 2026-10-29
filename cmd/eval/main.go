@@ -20,6 +20,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"agri-steward/internal/agent/harness/policy"
 	"agri-steward/internal/agent/knowledge"
 	"agri-steward/internal/clock"
 	"agri-steward/internal/evalkit"
@@ -40,7 +41,9 @@ const (
 	defaultRepo = "."
 	// contractsDir 是 --repo 下 L1 冻结契约目录（schema_valid 用）。
 	contractsDir = "contracts"
-	usageString  = "usage: eval <validate|run|kbdump> [flags]"
+	// toolPolicyFile 是 --repo 下工具策略（no_model_actuate 取其 actuate 集合，与生产同一份）。
+	toolPolicyFile = "policy/tool_policy.yaml"
+	usageString    = "usage: eval <validate|run|kbdump> [flags]"
 )
 
 func main() {
@@ -114,7 +117,11 @@ func (f *sampleFlags) loadValidSamples() (*loadedSamples, error) {
 	if err != nil {
 		return nil, err
 	}
-	graders := code.All(schema)
+	tp, err := policy.Load(filepath.Join(f.repo, toolPolicyFile))
+	if err != nil {
+		return nil, err
+	}
+	graders := code.All(schema, tp.Actuate())
 	ref := code.NewReferenceCheck(tx, kb, graders)
 	rules := append(sample.DefaultRules(tx, kb), ref)
 	samples, err := sample.LoadAndValidate(f.dir, sample.NewValidator(rules...))
@@ -208,7 +215,8 @@ func runWithStore(ctx context.Context, in *infra, ls *loadedSamples, samples []*
 	}
 	opts.ExperimentID = store.FormatID(id)
 	runner, err := evalkit.NewRunner(evalkit.PoolEnv(in.pool, in.deps), wall.Now,
-		evalkit.WithQuestion(in.question), evalkit.WithGraders(ls.kb, ls.graders...))
+		evalkit.WithQuestion(in.question), evalkit.WithGraders(ls.kb, ls.graders...),
+		evalkit.WithApprover(evalkit.ScriptApprover(scriptApprovers())))
 	if err != nil {
 		return nil, err
 	}

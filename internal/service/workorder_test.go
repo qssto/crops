@@ -104,3 +104,32 @@ func TestTransition(t *testing.T) {
 		})
 	}
 }
+
+func TestTransitionFrom(t *testing.T) {
+	ref := model.OrderRef{TenantID: 1, FarmID: 1, OrderID: 9}
+	actor := model.Actor{Type: model.ActorSystem}
+	tests := []struct {
+		name    string
+		cur     model.WorkOrderStatus
+		wantErr error
+	}{
+		{name: "approved canceled", cur: model.OrderApproved},
+		// 迁移表允许 DISPATCHED → CANCELED，但复检只取消 APPROVED
+		{name: "dispatched not canceled", cur: model.OrderDispatched, wantErr: model.ErrIllegalTransition},
+		{name: "executing not canceled", cur: model.OrderExecuting, wantErr: model.ErrIllegalTransition},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			orders, events := &fakeOrders{state: model.OrderState{RunID: 5, Status: tt.cur}}, &fakeEvents{}
+			svc := NewWorkOrderService(fixedClock{time.Date(2026, 7, 15, 1, 0, 0, 0, time.UTC)}, orders, events)
+			err := svc.TransitionFrom(context.Background(), nil, ref, model.OrderApproved, model.OrderCanceled, actor,
+				model.ReasonConditionChanged)
+			if !errors.Is(err, tt.wantErr) {
+				t.Fatalf("err = %v, want %v", err, tt.wantErr)
+			}
+			if wantWrites := tt.wantErr == nil; (len(orders.transitions) == 1) != wantWrites {
+				t.Fatalf("transitions = %+v, want written=%v", orders.transitions, wantWrites)
+			}
+		})
+	}
+}

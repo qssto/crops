@@ -44,6 +44,7 @@ var (
 type Policy struct {
 	specs   map[string]Spec
 	allowed map[Level]bool
+	actuate map[string]bool // ToolPolicy.Bind 写入：策略声明为 actuate 的工具名（未注册也兜底拒绝）
 }
 
 // New 构造策略表：工具名为空、重名或缺入参校验器都报错；allowed 是允许调用的等级。
@@ -75,8 +76,12 @@ func New(specs []Spec, allowed ...Level) (*Policy, error) {
 
 // Before 校验工具已声明、等级已声明且被允许、入参是合法 JSON 对象并符合 schema；
 // 通过返回该工具的 Spec，失败返回包装了上述哨兵错误的 error。空入参视为 {}。
+// actuate 工具（已注册或策略声明）一律返回 ErrActuateDenied，与 allowed 无关。
 func (p *Policy) Before(tool string, args json.RawMessage) (Spec, error) {
 	s, ok := p.specs[tool]
+	if p.actuate[tool] || (ok && s.Level == LevelActuate) {
+		return Spec{}, actuateDenied(tool)
+	}
 	if !ok {
 		return Spec{}, fmt.Errorf("%w: %q", ErrUnknownTool, tool)
 	}

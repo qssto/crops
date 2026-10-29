@@ -4,6 +4,7 @@ package repository_test
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -133,5 +134,46 @@ func TestRedisIdemAndCache_Integration(t *testing.T) {
 	}
 	if b, ok, err := cache.Get(ctx, ck); err != nil || !ok || string(b) != `{"v":1}` {
 		t.Fatalf("cache hit = %s, %v, %v", b, ok, err)
+	}
+}
+
+// TestSummaryRepo_Integration：按 run 读回 tool_call.result_summary（跳过 NULL）与 run_event.payload，限定租户 / 农场。
+func TestSummaryRepo_Integration(t *testing.T) {
+	e := itest.Setup(t, "repo")
+	slot := e.Fresh(t, t0)
+	runID := itest.InsertRun(t, slot.DB, t0)
+	scope := model.Scope{TenantID: itest.TenantID, FarmID: itest.FarmID}
+	calls := repository.NewToolCallRepo(slot.DB)
+	base := model.ToolCallRow{TenantID: itest.TenantID, FarmID: itest.FarmID, RunID: runID, StepID: "enrich",
+		ToolName: "field.profile", PolicyLevel: "read", ArgsDigest: "d", CreatedAt: t0}
+	withSummary := base
+	withSummary.CallKey, withSummary.Status, withSummary.ResultSummary = "s1", model.ToolStatusOK, json.RawMessage(`{"tel":"138****8000"}`)
+	noSummary := base
+	noSummary.CallKey, noSummary.Status, noSummary.ErrorCode = "s2", model.ToolStatusTimeout, "TIMEOUT"
+	for _, r := range []model.ToolCallRow{withSummary, noSummary} {
+		if _, err := calls.Save(t.Context(), r); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ev := model.RunEvent{TenantID: itest.TenantID, FarmID: itest.FarmID, RunID: runID,
+		Type: model.EventOrderTransition, Actor: model.ActorSystem, Payload: []byte(`{"lat":31.23}`), CreatedAt: t0}
+	if err := slot.DB.WithContext(t.Context()).Transaction(func(tx *repository.DB) error {
+		_, err := repository.EventRepo{}.AppendTx(t.Context(), tx, ev)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := repository.SummaryRepo{}.ByRun(t.Context(), slot.DB, scope, runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 || got[0].Source != repository.SourceToolCall || !strings.Contains(got[0].Text, "138****8000") ||
+		got[1].Source != repository.SourceRunEvent || got[1].ID != 1 || !strings.Contains(got[1].Text, "31.23") {
+		t.Fatalf("ByRun = %+v", got)
+	}
+	other, err := repository.SummaryRepo{}.ByRun(t.Context(), slot.DB, model.Scope{TenantID: itest.TenantID, FarmID: 2}, runID)
+	if err != nil || len(other) != 0 {
+		t.Fatalf("ByRun other farm = %+v, %v; want empty", other, err)
 	}
 }

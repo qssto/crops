@@ -31,9 +31,10 @@ type FieldProfile struct {
 
 // OrderState 是迁移前读取的作业单状态快照：乐观锁基于 RowVer。
 type OrderState struct {
-	RunID  uint64
-	Status WorkOrderStatus
-	RowVer int
+	RunID    uint64
+	WorkType WorkType
+	Status   WorkOrderStatus
+	RowVer   int
 }
 
 // OrderTransition 是 work_order_transition 一行（只追加）。
@@ -49,13 +50,14 @@ type OrderTransition struct {
 
 // RunSummary 是 agent_run 的状态视图（GET /runs/{run_id}，L4）。
 type RunSummary struct {
-	RunID      uint64    `json:"run_id"`
-	FieldID    uint64    `json:"field_id"`
-	UserID     uint64    `json:"user_id"`
-	Status     RunStatus `json:"status"`
-	ReasonCode string    `json:"reason_code,omitempty"`
-	CreatedAt  time.Time `json:"created_at"`
-	UpdatedAt  time.Time `json:"updated_at"`
+	RunID      uint64        `json:"run_id"`
+	FieldID    uint64        `json:"field_id"`
+	UserID     uint64        `json:"user_id"`
+	Status     RunStatus     `json:"status"`
+	Interrupt  InterruptType `json:"interrupt_type,omitempty"` // Status=INTERRUPTED 时非空（L6）
+	ReasonCode string        `json:"reason_code,omitempty"`
+	CreatedAt  time.Time     `json:"created_at"`
+	UpdatedAt  time.Time     `json:"updated_at"`
 }
 
 // AuditRecord 是 audit_log 一行（L7 由 run_event 投影写入）。

@@ -50,9 +50,25 @@ type transitionPayload struct {
 // 非法迁移返回 model.ErrIllegalTransition，乐观锁冲突返回 model.ErrConcurrentUpdate。不取 Redis 锁。
 func (s *WorkOrderService) Transition(ctx context.Context, tx *repository.DB, ref model.OrderRef,
 	to model.WorkOrderStatus, actor model.Actor, reason model.ReasonCode) error {
+	return s.transition(ctx, tx, ref, "", to, actor, reason)
+}
+
+// TransitionFrom 同 Transition，但要求作业单当前状态为 from（迁移表允许多个来源、业务只接受其一时使用，
+// 如复检取消只针对 APPROVED、下发超时只针对 APPROVED）；当前状态不符返回 model.ErrIllegalTransition。
+func (s *WorkOrderService) TransitionFrom(ctx context.Context, tx *repository.DB, ref model.OrderRef,
+	from, to model.WorkOrderStatus, actor model.Actor, reason model.ReasonCode) error {
+	return s.transition(ctx, tx, ref, from, to, actor, reason)
+}
+
+// transition 是迁移实现；from 为空表示不限定来源状态。
+func (s *WorkOrderService) transition(ctx context.Context, tx *repository.DB, ref model.OrderRef,
+	from, to model.WorkOrderStatus, actor model.Actor, reason model.ReasonCode) error {
 	cur, err := s.orders.GetState(ctx, tx, ref)
 	if err != nil {
 		return fmt.Errorf("service: transition order %d: %w", ref.OrderID, err)
+	}
+	if from != "" && cur.Status != from {
+		return fmt.Errorf("service: order %d is %s, want %s -> %s: %w", ref.OrderID, cur.Status, from, to, model.ErrIllegalTransition)
 	}
 	if !model.CanTransition(cur.Status, to) {
 		return fmt.Errorf("service: order %d %s -> %s: %w", ref.OrderID, cur.Status, to, model.ErrIllegalTransition)

@@ -16,6 +16,7 @@ import (
 
 	"agri-steward/internal/agent"
 	"agri-steward/internal/agent/graph"
+	"agri-steward/internal/agent/harness/policy"
 	"agri-steward/internal/agent/knowledge"
 	"agri-steward/internal/agent/llm"
 	"agri-steward/internal/app"
@@ -74,7 +75,10 @@ type deps struct {
 	tools  agent.ToolProvider
 	store  *memStore
 	locker agent.RunLocker
+	events agent.EventSink // L5：VALIDATION_FAILED 等图内事件
+	logger *slog.Logger    // 为空时用 testLogOut 的文本日志
 	renew  time.Duration
+	cfg    func(*graph.Config) // 可空：在 graph.New 前改写配置（L6 注入 Gate / Checkpoints / Resumes / Events）
 }
 
 func (h *harness) newAgent(t *testing.T, clk *env.FrozenClock, d deps) *graph.Agent {
@@ -85,15 +89,22 @@ func (h *harness) newAgent(t *testing.T, clk *env.FrozenClock, d deps) *graph.Ag
 	if d.locker == nil {
 		d.locker = fakeLocker{}
 	}
+	if d.logger == nil {
+		d.logger = slog.New(slog.NewTextHandler(testLogOut(), nil))
+	}
 	c, err := llm.New(llm.Config{Model: d.model, Prompts: h.prompts,
 		Tiers: map[llm.Tier]llm.TierConfig{tierStd: {MaxTokens: 1024, Timeout: 5 * time.Second}}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	a, err := graph.New(context.Background(), graph.Config{LLM: c, Tier: tierStd, Tools: d.tools,
+	cfg := graph.Config{LLM: c, Tier: tierStd, Tools: d.tools,
 		Runs: d.store, Advice: d.store, Drafts: d.store, Locker: d.locker, Clock: clk, KB: h.kb,
-		Taxonomy: h.tx, Crop: testCrop, Region: testReg, Logger: slog.New(slog.NewTextHandler(testLogOut(), nil)),
-		RenewEvery: d.renew})
+		Taxonomy: h.tx, Crop: testCrop, Region: testReg, Logger: d.logger,
+		RenewEvery: d.renew, Events: d.events}
+	if d.cfg != nil {
+		d.cfg(&cfg)
+	}
+	a, err := graph.New(context.Background(), cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -163,21 +174,30 @@ func findSample(t *testing.T, ss []*sample.Sample, id string) *sample.Sample {
 	return nil
 }
 
-// runExperiment 用 evalkit.Runner + code.All 打分器跑样本（每个样本新建 FixtureMCP 与主链路）。
+// runExperiment 用 evalkit.Runner + code.All 打分器跑样本（每个样本新建 FixtureMCP、主链路、
+// 带捕获的脱敏日志与 RecordingAdapter；无 trial 库，stop_at_approval 的审批状态不可观测）。
 func (h *harness) runExperiment(t *testing.T, ss []*sample.Sample) *evalkit.Experiment {
 	t.Helper()
 	schema, err := code.NewSchemaValid(repoRoot + "/contracts")
 	if err != nil {
 		t.Fatal(err)
 	}
+	tp, err := policy.Load(repoRoot + "/policy/tool_policy.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
 	envFn := func(_ context.Context, s *sample.Sample, _ int) (*app.App, func() error, error) {
 		clk := sampleClock(t, s)
 		tools := fixtureTools(t, s, clk)
-		a := h.newAgent(t, clk, deps{tools: tools, store: newMemStore()})
-		return &app.App{Agent: a, Tools: tools}, func() error { return nil }, nil
+		logger, err := app.NewTappedLogger(testLogOut(), "debug", env.NewLogCapture().Tap)
+		if err != nil {
+			return nil, nil, err
+		}
+		a := h.newAgent(t, clk, deps{tools: tools, store: newMemStore(), logger: logger})
+		return &app.App{Agent: a, Tools: tools, Logger: logger, Adapter: &env.RecordingAdapter{}}, func() error { return nil }, nil
 	}
 	question := func(_ context.Context, _ *app.App, s *sample.Sample) (agent.Question, error) { return questionOf(s) }
-	r, err := evalkit.NewRunner(envFn, nil, evalkit.WithGraders(h.kb, code.All(schema)...), evalkit.WithQuestion(question))
+	r, err := evalkit.NewRunner(envFn, nil, evalkit.WithGraders(h.kb, code.All(schema, tp.Actuate())...), evalkit.WithQuestion(question))
 	if err != nil {
 		t.Fatal(err)
 	}

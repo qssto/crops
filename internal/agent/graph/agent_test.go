@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -128,7 +129,34 @@ func checkOrder(t *testing.T, ans agent.Answer) {
 	if p.Product == "" || p.DosePerMu == nil || p.FieldID != ans.Card.FieldID {
 		t.Errorf("payload %s", o.Payload)
 	}
+	checkConstraints(t, o.ConstraintChecks)
 	wantNext(t, ans, model.NextCreateOrder)
+}
+
+// checkConstraints：审批前约束校验来自规则层阈值判定，rule_id 唯一且 ≤ 48，observed 带 tool_call_id，threshold 带 kb@version。
+func checkConstraints(t *testing.T, cs []model.ConstraintCheck) {
+	t.Helper()
+	if len(cs) == 0 {
+		t.Fatal("no constraint checks")
+	}
+	seen := map[string]bool{}
+	for _, c := range cs {
+		var obs struct {
+			ToolCallID uint64 `json:"tool_call_id"`
+			Source     string `json:"source"`
+		}
+		var th struct {
+			KB string `json:"kb"`
+		}
+		if json.Unmarshal(c.Observed, &obs) != nil || json.Unmarshal(c.Threshold, &th) != nil {
+			t.Fatalf("check %+v not decodable", c)
+		}
+		if c.Phase != model.PhasePreApproval || c.RuleID == "" || len(c.RuleID) > 48 || seen[c.RuleID] ||
+			obs.ToolCallID == 0 || obs.Source == "" || !strings.Contains(th.KB, "@") {
+			t.Errorf("check %s phase %s observed %s threshold %s", c.RuleID, c.Phase, c.Observed, c.Threshold)
+		}
+		seen[c.RuleID] = true
+	}
 }
 
 func wantNext(t *testing.T, ans agent.Answer, want model.NextAction) {

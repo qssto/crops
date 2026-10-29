@@ -24,3 +24,8 @@ auth:
   token_ttl: 24h
 log:
   level: info
+# 记忆注入（画像 / 近期事件 / 本轮上下文）；AS_MEMORY_ENABLED=false 关闭，关闭后链路正常。
+memory:
+  enabled: true
+  episodic_limit: 5
+  rune_budget: 600

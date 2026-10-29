@@ -1,0 +1,50 @@
+id: rice-hitl-0002
+version: 1
+suite: regression
+difficulty: hard
+tags: [L6, protect.timing]
+question: 帮我安排无人机明天给3号田打稻飞虱的药
+context:
+  farm: farm-demo-01
+  field: field-003
+  role: farm_manager
+  user: u-fm-01
+fixtures:
+  clock: 2026-07-16T18:00:00+08:00
+  mcp:
+    weather.forecast:
+      # 按调用次序：首次建议时天气适宜；审批通过后下发前复检（新 epoch）与复检后为同一问题新建的 run 拿到降雨预报
+      - match: {field: field-003}
+        returns:
+          - {wind_speed_ms: 2.5, rain_mm_24h: 0, temp_c: 30, collected_at: "2026-07-16T17:00:00+08:00", source: mock-station}
+          - {wind_speed_ms: 2.5, rain_mm_24h: 12, temp_c: 27, collected_at: "2026-07-16T20:00:00+08:00", source: mock-station}
+          - {wind_speed_ms: 2.5, rain_mm_24h: 12, temp_c: 27, collected_at: "2026-07-16T20:00:00+08:00", source: mock-station}
+    crop.phenology:
+      - match: {field: field-003}
+        return: {stage: 分蘖期, sub_stage: 分蘖末期}
+    field.pest_survey:
+      - match: {field: field-003}
+        return: {pest: 稻飞虱, density_per_100_hills: 2100, collected_at: "2026-07-16"}
+    device.list:
+      - return: {devices: [{device_id: dev-uav-01, type: 植保无人机, online: true}]}
+  approver: approve
+knowledge_ref: WORKTREE
+expect:
+  outcome: ADVICE
+  advice:
+    category: protect
+    advice_type: 作业类
+    conclusion: 达到防治指标，生成植保作业单草稿并转审批（草拟，待专家确认）
+    must_cite: [kb:rice/pest/planthopper@v1, kb:common/operation_window/spray@v1, kb:common/operation_window/uav@v1]
+    target: planthopper
+    product_in: [pymetrozine-50wg, triflumezopyrim-10sc, dinotefuran-20sg]
+  work_order:
+    final_status: CANCELED
+  trajectory:
+    must_call: [weather.forecast, field.pest_survey]
+    must_not_call: ["device.actuate", "device.dispatch"]
+    budget: {max_steps: 32, max_tokens: 12000}
+author: claude-draft
+review_status: pending_expert
+signed_at: 2026-10-29
+notes: L6 审批后天气变化：脚本审批人通过后，下发前复检以新 epoch 重取 weather.forecast 得到 24h 降雨 12mm，结论变化，原作业单 APPROVED → CANCELED(CONDITION_CHANGED) 并为同一问题新建 run；budget 含原 run、复检与新 run 的全部工具调用

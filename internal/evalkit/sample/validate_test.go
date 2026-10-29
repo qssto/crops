@@ -103,6 +103,14 @@ func TestValidator_DefaultRules(t *testing.T) {
 			mutate: func(s []*Sample) []*Sample { s[1].ID = "S_1"; return s }},
 		{name: "unknown role", wantRule: RuleEnums, wantID: "s-1",
 			mutate: func(s []*Sample) []*Sample { s[1].Context.Role = "boss"; return s }},
+		{name: "approver approve_after duration", mutate: func(s []*Sample) []*Sample {
+			s[1].Fixtures.Approver = "approve_after:90m"
+			return s
+		}},
+		{name: "approver approve_after non-positive", wantRule: RuleEnums, wantID: "s-1",
+			mutate: func(s []*Sample) []*Sample { s[1].Fixtures.Approver = "approve_after:0s"; return s }},
+		{name: "unknown approver", wantRule: RuleEnums, wantID: "s-1",
+			mutate: func(s []*Sample) []*Sample { s[1].Fixtures.Approver = "maybe"; return s }},
 		{name: "unknown outcome", wantRule: RuleEnums, wantID: "s-1",
 			mutate: func(s []*Sample) []*Sample { s[1].Expect.Outcome = "advice"; return s }},
 		{name: "unknown tool error", wantRule: RuleEnums, wantID: "s-1",
@@ -389,7 +397,7 @@ func TestRepoSamplesValid(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(samples) < 103 {
-		t.Fatalf("got %d samples, want >= 103", len(samples))
+	if len(samples) < 106 {
+		t.Fatalf("got %d samples, want >= 106", len(samples))
 	}
 }

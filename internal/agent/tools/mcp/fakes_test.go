@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"sync"
 	"time"
 
@@ -211,11 +212,14 @@ func (s *memCalls) last() savedRow {
 	return rows[len(rows)-1]
 }
 
-// memRaw 是 RawStore 的内存实现。
+// memRaw 是 RawStore + mcp.RawReader 的内存实现：fail 让 Put 失败，getFail 让 Get 失败。
 type memRaw struct {
-	mu    sync.Mutex
-	fail  bool
-	names []string
+	mu      sync.Mutex
+	fail    bool
+	getFail bool
+	names   []string
+	bodies  map[uint64][]byte
+	gets    int
 }
 
 func (r *memRaw) Put(_ context.Context, p model.RawPut) (model.RawObject, error) {
@@ -225,7 +229,23 @@ func (r *memRaw) Put(_ context.Context, p model.RawPut) (model.RawObject, error)
 		return model.RawObject{}, errors.New("minio down")
 	}
 	r.names = append(r.names, p.Name)
-	return model.RawObject{ID: uint64(100 + len(r.names)), Kind: p.Kind}, nil
+	id := uint64(100 + len(r.names))
+	if r.bodies == nil {
+		r.bodies = map[uint64][]byte{}
+	}
+	r.bodies[id] = append([]byte(nil), p.Body...)
+	return model.RawObject{ID: id, Kind: p.Kind}, nil
+}
+
+func (r *memRaw) Get(_ context.Context, _ model.Scope, id uint64) ([]byte, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.gets++
+	b, ok := r.bodies[id]
+	if r.getFail || !ok {
+		return nil, fmt.Errorf("raw %d: minio get failed", id)
+	}
+	return b, nil
 }
 
 // memFields 是 FieldScope 的内存实现：field_id → (tenant, farm)。

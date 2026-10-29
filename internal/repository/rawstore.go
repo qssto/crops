@@ -70,7 +70,14 @@ func RawObjectKey(p model.RawPut) (string, error) {
 		strconv.FormatUint(p.RunID, 10), p.Kind, p.Name), nil
 }
 
-// Put 写对象后登记 raw_object；同一 key 重复写入覆盖对象并返回已有行 id（uk_key 幂等）。
+// Digest 返回 body 的 sha256 十六进制串（raw_object.sha256 与审批快照 snapshot_digest 同一口径）。
+func Digest(body []byte) string {
+	sum := sha256.Sum256(body)
+	return hex.EncodeToString(sum[:])
+}
+
+// Put 写对象后登记 raw_object；同一 key 再次写入会覆盖对象本体并返回已有行 id（uk_key 幂等）。
+// 不同内容不得复用同一 key：需要区分版本的调用方把内容摘要放进 Name（如审批快照 ticket-{order}-{seq}-{digest 前缀}）。
 func (s *RawStore) Put(ctx context.Context, p model.RawPut) (model.RawObject, error) {
 	key, err := RawObjectKey(p)
 	if err != nil {
@@ -79,9 +86,8 @@ func (s *RawStore) Put(ctx context.Context, p model.RawPut) (model.RawObject, er
 	if err := s.obj.PutObject(ctx, s.bucket, key, p.Body, p.ContentType); err != nil {
 		return model.RawObject{}, err
 	}
-	sum := sha256.Sum256(p.Body)
 	obj := model.RawObject{TenantID: p.TenantID, FarmID: p.FarmID, Kind: p.Kind, ObjectKey: key,
-		SHA256: hex.EncodeToString(sum[:]), SizeBytes: int64(len(p.Body)), CreatedAt: p.At.UTC()}
+		SHA256: Digest(p.Body), SizeBytes: int64(len(p.Body)), CreatedAt: p.At.UTC()}
 	if p.RunID != 0 {
 		runID := p.RunID
 		obj.RunID = &runID

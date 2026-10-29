@@ -3,6 +3,8 @@ package mcp_test
 import (
 	"context"
 	"encoding/json"
+	"io"
+	"log/slog"
 	"strings"
 	"testing"
 	"time"
@@ -279,10 +281,11 @@ func TestCall_RowAndEvent(t *testing.T) {
 	}
 }
 
+// maskAll 是改写全部内容的 Mask，便于区分「脱敏摘要」与「原始结果」。
+func maskAll(json.RawMessage) json.RawMessage { return json.RawMessage(`{"masked":true}`) }
+
 func TestCall_MaskAppliedToSummary(t *testing.T) {
-	e := newEnv(t, func(o *mcp.Options) {
-		o.Mask = func(json.RawMessage) json.RawMessage { return json.RawMessage(`{"masked":true}`) }
-	})
+	e := newEnv(t, func(o *mcp.Options) { o.Mask = maskAll })
 	e.call(t, agent.ToolCall{Tool: "field.get", Args: fieldArgs})
 	if s := string(e.calls.last().row.ResultSummary); s != `{"masked":true}` {
 		t.Fatalf("summary = %s", s)
@@ -328,5 +331,69 @@ func TestCanonicalAndKeys(t *testing.T) {
 	}
 	if d := mcp.ArgsDigest(a); len(d) != 64 {
 		t.Fatalf("digest %s", d)
+	}
+}
+
+// 评审 P1-1 回归：去重命中时模型拿到的是 raw 对象里的原始结果，不是已脱敏的 result_summary。
+func TestCall_DedupReplayReturnsUnmaskedResult(t *testing.T) {
+	e := newEnv(t, func(o *mcp.Options) { o.Mask = maskAll })
+	c := agent.ToolCall{RunID: 7, StepID: "enrich", Tool: "field.get", Args: fieldArgs}
+	first := e.call(t, c)
+	second := e.call(t, c)
+	if n := e.srv["field"].count("field.get"); n != 1 {
+		t.Fatalf("invocations = %d, want 1 (dedup hit)", n)
+	}
+	if s := string(e.calls.last().row.ResultSummary); s != `{"masked":true}` {
+		t.Fatalf("stored summary = %s, want masked", s)
+	}
+	if e.raw.gets != 1 || second.ToolCallID != first.ToolCallID || string(second.Data) != string(first.Data) ||
+		second.Source != "mock" {
+		t.Fatalf("replay = %+v (gets %d), want original %+v", second, e.raw.gets, first)
+	}
+}
+
+// 有 Mask 而取不回 raw（对象读失败或写 raw 失败留 NULL）：不把脱敏摘要交给模型，改为重做并落新 attempt。
+func TestCall_DedupWithoutRawInvokesAgain(t *testing.T) {
+	tests := []struct {
+		name     string
+		breakRaw func(*testEnv)
+	}{
+		{"raw get fails", func(e *testEnv) { e.raw.getFail = true }},
+		{"raw never written", nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e := newEnv(t, func(o *mcp.Options) { o.Mask = maskAll })
+			if tt.breakRaw == nil {
+				e.raw.fail = true
+			}
+			c := agent.ToolCall{RunID: 7, StepID: "enrich", Tool: "field.get", Args: fieldArgs}
+			first := e.call(t, c)
+			if tt.breakRaw != nil {
+				tt.breakRaw(e)
+			}
+			second := e.call(t, c)
+			if n := e.srv["field"].count("field.get"); n != 2 {
+				t.Fatalf("invocations = %d, want 2 (not replayable)", n)
+			}
+			if string(second.Data) != string(first.Data) || string(second.Data) == `{"masked":true}` {
+				t.Fatalf("second data = %s, want fresh original", second.Data)
+			}
+			rows := e.calls.all()
+			if len(rows) != 2 || rows[1].attempt != 2 {
+				t.Fatalf("rows = %+v, want 2 attempts", rows)
+			}
+		})
+	}
+}
+
+func TestNewGateway_MaskRequiresRawReader(t *testing.T) {
+	e := newEnv(t, nil)
+	srvs := []mcp.Server{e.srv["field"]}
+	_, err := mcp.NewGateway(srvs, mcp.Options{Clock: e.clk, Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Keys: e.keys, ToolPolicy: toolPolicy(t, testToolPolicy), Idem: e.idem, Cache: e.cache, Calls: e.calls,
+		Raw: e.raw, Fields: memFields{}, Mask: maskAll})
+	if err == nil || !strings.Contains(err.Error(), "RawReader is required") {
+		t.Fatalf("err = %v, want RawReader required", err)
 	}
 }

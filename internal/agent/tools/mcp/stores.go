@@ -37,6 +37,12 @@ type FieldScope interface {
 	Owns(ctx context.Context, scope model.Scope, fieldID uint64) (bool, error)
 }
 
+// RawReader 按 raw_object id（限定租户 / 农场）读回对象本体。去重命中时用它取回未脱敏的原始 Result
+// （result_summary 已脱敏，只用于落库与日志）。实现：repository.RawReader。
+type RawReader interface {
+	Get(ctx context.Context, scope model.Scope, rawObjectID uint64) ([]byte, error)
+}
+
 // Keys 生成 Redis 实际键（带 as:{env}: 前缀）；rediskey.Keys 满足此接口。
 type Keys interface {
 	IdemTool(callKey string) string

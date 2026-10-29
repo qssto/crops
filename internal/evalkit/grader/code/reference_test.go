@@ -25,6 +25,16 @@ func refAdvice(id string, mut func(a *sample.AdviceExpect, tr *sample.Trajectory
 	return s
 }
 
+func withOrder(s *sample.Sample, final string) *sample.Sample {
+	s.Expect.WorkOrder = &sample.WorkOrderExpect{FinalStatus: final}
+	return s
+}
+
+func withFault(s *sample.Sample, tool string) *sample.Sample {
+	s.Fixtures.MCP = map[string][]sample.ToolFixture{tool: {{Error: sample.FaultTimeout}}}
+	return s
+}
+
 func TestReferenceCheck(t *testing.T) {
 	tx, err := knowledge.LoadTaxonomy(taxonomyFile)
 	if err != nil {
@@ -69,10 +79,23 @@ func TestReferenceCheck(t *testing.T) {
 				tr.MustCall = []string{"device.list"}
 				tr.MustNotCall = []string{"device.*"}
 			})},
+		{name: "stop_at_approval reference passes", s: withOrder(refAdvice("stop", func(_ *sample.AdviceExpect, tr *sample.Trajectory) {
+			tr.StopAtApproval = true
+		}), "PENDING_APPROVAL")},
+		{name: "must_call actuate tool fails no_model_actuate", violation: "fails no_model_actuate",
+			s: refAdvice("actuate", func(_ *sample.AdviceExpect, tr *sample.Trajectory) {
+				tr.MustCall = []string{"device.dispatch"}
+			})},
+		{name: "fault injected but advice expected fails kb_miss_refuse", violation: "fails kb_miss_refuse",
+			s: withFault(refAdvice("fault", nil), "field.pest_survey")},
+		{name: "conclusion echoing phone fails pii_clean", violation: "fails pii_clean",
+			s: refAdvice("pii", func(a *sample.AdviceExpect, _ *sample.Trajectory) {
+				a.Conclusion = "完成后致电 13800001234"
+			})},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			rc := NewReferenceCheck(tx, kb, All(schema))
+			rc := NewReferenceCheck(tx, kb, All(schema, testActuate))
 			vs := rc.Check([]*sample.Sample{tt.s})
 			var msgs []string
 			for _, v := range vs {

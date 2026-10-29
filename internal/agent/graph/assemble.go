@@ -4,13 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"math"
-	"regexp"
-	"slices"
-	"strconv"
 	"strings"
+	"sync"
+	"time"
 	"unicode/utf8"
 
+	"agri-steward/internal/agent/guardrail"
+	"agri-steward/internal/agent/guardrail/pii"
 	"agri-steward/internal/agent/harness/runner"
 	"agri-steward/internal/model"
 )
@@ -118,99 +118,130 @@ func (a *Agent) kbCites(s *state, path string, ids []string) []model.Citation {
 func (a *Agent) measuredCites(s *state, path string, keys []string) []model.Citation {
 	var out []model.Citation
 	for _, k := range keys {
-		f, ok := s.facts[k]
+		m, ok := a.measured(s, k)
 		if !ok {
 			continue
 		}
-		o := s.tools[f.Tool]
-		if o == nil || o.Result.ToolCallID == 0 {
-			continue
-		}
-		v, err := json.Marshal(f.Value)
-		if err != nil {
-			a.log.Warn("measured value not encodable", "run_id", s.runID, "fact", k, "err", err)
-			continue
-		}
-		at := s.now.UTC()
-		if t, ok := parseTime(o.Data[keyCollectedAt], a.loc); ok {
-			at = t.UTC()
-		}
-		src := o.Result.Source
-		if src == "" {
-			src = o.Tool
-		}
-		id := o.Result.ToolCallID
 		out = append(out, model.Citation{TenantID: s.q.Scope.TenantID, FarmID: s.q.Scope.FarmID,
-			Type: model.CitationMeasured, ClaimPath: path, DataSource: src, CollectedAt: &at, Value: v, ToolCallID: &id})
+			Type: model.CitationMeasured, ClaimPath: path, DataSource: m.Source, CollectedAt: &m.CollectedAt,
+			Value: m.Value, ToolCallID: &m.ToolCallID})
 	}
 	return out
 }
 
-// placeholderRe 匹配 {{nK}} 占位符。
-var placeholderRe = regexp.MustCompile(`\{\{n(\d+)\}\}`)
+// measuredFact 是一条可引用的实测事实（带 tool_call_id 的工具结果中的一个字段）。
+type measuredFact struct {
+	Value       json.RawMessage
+	Source      string
+	CollectedAt time.Time
+	ToolCallID  uint64
+}
 
-// conclusionMaxRunes 是 advice_card.conclusion 的长度上限（契约 maxLength）。
-const conclusionMaxRunes = 512
+// measured 取事实 k 的实测来源；事实不存在、来源工具无 tool_call_id 或值不可编码时返回 false。
+func (a *Agent) measured(s *state, k string) (measuredFact, bool) {
+	f, ok := s.facts[k]
+	if !ok {
+		return measuredFact{}, false
+	}
+	o := s.tools[f.Tool]
+	if o == nil || o.Result.ToolCallID == 0 {
+		return measuredFact{}, false
+	}
+	v, err := json.Marshal(f.Value)
+	if err != nil {
+		a.log.Warn("measured value not encodable", "run_id", s.runID, "fact", k, "err", err)
+		return measuredFact{}, false
+	}
+	at := s.now.UTC()
+	if t, ok := parseTime(o.Data[keyCollectedAt], a.loc); ok {
+		at = t.UTC()
+	}
+	src := o.Result.Source
+	if src == "" {
+		src = o.Tool
+	}
+	return measuredFact{Value: v, Source: src, CollectedAt: at, ToolCallID: o.Result.ToolCallID}, true
+}
 
-// validate：拦截模型裸写数字、越界占位符、集合外药剂、无 calc trace 的数值、不存在的知识引用、
-// 无 tool_call_id 的实测引用；不通过即改为 VALIDATION_FAILED 拒答卡。
-func (a *Agent) validate(_ context.Context, s *state) (*state, error) {
+// outputValidator 是输出护栏（契约 schema 编译一次，构造后只读）。
+var outputValidator = sync.OnceValues(guardrail.New)
+
+// validationDetailMax 是 VALIDATION_FAILED 事件 detail 的字节上限（run_event.payload ≤ 8KB）。
+const validationDetailMax = 1024
+
+// validate：经 guardrail.OutputValidator 按 schema → 引用 → 数值 → 药剂 校验建议卡（拒答卡只校验 schema）；
+// 不通过即改为 VALIDATION_FAILED 拒答卡并发 VALIDATION_FAILED 事件，不修不补、不重试。
+func (a *Agent) validate(ctx context.Context, s *state) (*state, error) {
 	if s.stopped() {
 		return s, nil
 	}
-	if problem := a.check(s); problem != "" {
-		a.log.Warn("advice rejected by validate", "run_id", s.runID, "problem", problem)
-		s.refuseWith(RefuseValidation, problem)
-		s.card = a.refusedCard(s)
+	v, err := outputValidator()
+	if err != nil {
+		return s, fmt.Errorf("validate: %w", err)
+	}
+	p := v.Validate(a.guardInput(s))
+	if p == nil {
+		return s, nil
+	}
+	a.log.Warn("advice rejected by validate", "run_id", s.runID, "check", p.Check, "problem", p.Detail)
+	s.refuseWith(RefuseValidation, p.Error())
+	s.card = a.refusedCard(s)
+	if err := a.emitValidationFailed(ctx, s, p); err != nil {
+		return s, fmt.Errorf("validate: %w", err)
 	}
 	return s, nil
 }
 
-// check 返回第一处不合规（空串表示通过）。
-func (a *Agent) check(s *state) string {
-	texts := append([]string{s.conclusion}, s.modelWhy...)
-	for _, t := range texts {
-		for _, m := range placeholderRe.FindAllStringSubmatch(t, -1) {
-			if i, err := strconv.Atoi(m[1]); err != nil || i >= len(s.numbers) {
-				return "placeholder " + m[0] + " has no number"
-			}
-		}
-		if bare := digitRun.FindString(placeholderRe.ReplaceAllString(t, "")); bare != "" {
-			return "model text has bare number " + bare
-		}
+// guardInput 组装护栏输入：药剂候选取规则层 s.candidates，模型原文为结论模板与模型理由。
+func (a *Agent) guardInput(s *state) guardrail.Input {
+	nums := make([]guardrail.Number, len(s.numbers))
+	for i, n := range s.numbers {
+		nums[i] = guardrail.Number{Field: n.Field, Result: n.Result}
 	}
-	c := s.card
-	switch {
-	case utf8.RuneCountInString(c.Conclusion) > conclusionMaxRunes:
-		return "conclusion too long"
-	case c.SelectedProduct != "" && !slices.Contains(c.ProductCandidates, c.SelectedProduct):
-		return "selected product " + c.SelectedProduct + " not in candidates"
-	case s.category() == model.CategoryProtect && s.operation() && !s.degraded && c.SelectedProduct == "":
-		return "spray operation without selected product"
-	case len(c.Citations) == 0:
-		return "advice has no citation"
+	in := guardrail.Input{
+		Card:           s.card,
+		Numbers:        nums,
+		Candidates:     s.candidates,
+		ModelText:      append([]string{s.conclusion}, s.modelWhy...),
+		RequireProduct: s.category() == model.CategoryProtect && s.operation() && !s.degraded,
 	}
-	for _, n := range s.numbers {
-		if n.Result.Trace.Formula == "" || !finite(n.Result.Value) {
-			return "number " + n.Field + " has no calc trace"
-		}
+	if s.env.snap != nil { // 避免 typed-nil 接口：未载入知识时由护栏按「无快照」拒绝
+		in.KB = s.env.snap
 	}
-	for i, ct := range c.Citations {
-		switch ct.Type {
-		case model.CitationKB:
-			if ct.KBVersion == "" || !s.env.snap.Has(ct.KBID, ct.KBVersion) || s.env.snap.Deprecated(ct.KBID) {
-				return fmt.Sprintf("citations[%d] %s not in knowledge %s", i, ct.KBID, s.env.snap.Ref())
-			}
-		case model.CitationMeasured:
-			if ct.ToolCallID == nil || *ct.ToolCallID == 0 {
-				return fmt.Sprintf("citations[%d] measured without tool_call_id", i)
-			}
-		}
-	}
-	return ""
+	return in
 }
 
-func finite(v float64) bool { return !math.IsNaN(v) && !math.IsInf(v, 0) }
+// emitValidationFailed 发 VALIDATION_FAILED 事件（payload：run_id、失败校验项、脱敏截断后的 detail）；
+// Events 为空时只记日志。发送失败返回错误（run 失败），不吞。
+func (a *Agent) emitValidationFailed(ctx context.Context, s *state, p *guardrail.Violation) error {
+	if a.cfg.Events == nil {
+		return nil
+	}
+	payload, err := json.Marshal(map[string]any{"run_id": s.runID, "check": p.Check,
+		"detail": truncateBytes(pii.Mask(p.Detail), validationDetailMax)})
+	if err != nil {
+		return fmt.Errorf("encode %s payload: %w", model.EventValidationFailed, err)
+	}
+	_, err = a.cfg.Events.Emit(ctx, model.RunEvent{TenantID: s.q.Scope.TenantID, FarmID: s.q.Scope.FarmID,
+		RunID: s.runID, StepID: NodeValidate, Type: model.EventValidationFailed, Actor: model.ActorAgent,
+		Payload: payload, CreatedAt: a.cfg.Clock.Now()})
+	if err != nil {
+		return fmt.Errorf("emit %s: %w", model.EventValidationFailed, err)
+	}
+	return nil
+}
+
+// truncateBytes 截断到最多 n 字节（不切断 UTF-8 字符）。
+func truncateBytes(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	cut := n
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
+		cut--
+	}
+	return s[:cut]
+}
 
 // persist：落建议卡（拒答卡同样落库）；执行权丢失后不写。SaveAdvice 按 run 幂等。
 func (a *Agent) persist(ctx context.Context, s *state) (*state, error) {
@@ -246,7 +277,7 @@ func (a *Agent) toOrder(ctx context.Context, s *state) (*state, error) {
 	}
 	o := model.WorkOrder{AdviceID: c.AdviceID, RunID: s.runID, TenantID: c.TenantID, FarmID: c.FarmID,
 		FieldID: c.FieldID, WorkType: s.dec.WorkType, DeviceType: deviceOf(s.dec), Payload: payload,
-		TimeWindow: *c.SuggestedWindow, ConstraintChecks: []model.ConstraintCheck{},
+		TimeWindow: *c.SuggestedWindow, ConstraintChecks: a.constraintChecks(s),
 		Status: model.OrderDraft, DispatchMode: model.DispatchDryRun}
 	id, err := a.cfg.Drafts.CreateDraft(ctx, s.q.Scope, o)
 	if err != nil {
@@ -254,6 +285,9 @@ func (a *Agent) toOrder(ctx context.Context, s *state) (*state, error) {
 	}
 	o.OrderID = id
 	s.order = &o
+	if err := a.openTicket(ctx, s); err != nil {
+		return s, fmt.Errorf("to_order: %w", err)
+	}
 	return s, nil
 }
 

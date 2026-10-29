@@ -3,6 +3,7 @@ package mcp
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 	"unicode/utf8"
@@ -112,14 +113,24 @@ func (g *Gateway) putRaw(ctx context.Context, c *callState, res Result) *uint64 
 	return nil
 }
 
-// replay 返回去重命中的 OK 行：result_summary 即标准化 Result，新鲜度按 collected_at 相对当前时钟重算。
-func (g *Gateway) replay(ctx context.Context, c *callState, hit model.ToolCallHit) agent.ToolResult {
-	res := agent.ToolResult{ToolCallID: hit.ID, Status: model.ToolStatusOK}
-	var r Result
-	if err := json.Unmarshal(hit.ResultSummary, &r); err != nil {
-		g.opt.Logger.WarnContext(ctx, "mcp dedup summary undecodable", "tool_call_id", hit.ID, "err", err)
+// replay 返回去重命中的 OK 行：结果取自 raw 对象（未脱敏的标准化 Result；未配置 Mask 时 result_summary 即原值），
+// 新鲜度按 collected_at 相对当前时钟重算；trace 仍只写脱敏摘要。取不回原值时返回 false，由调用方重做，
+// 不把脱敏后的数据交给模型。
+func (g *Gateway) replay(ctx context.Context, c *callState, hit model.ToolCallHit) (agent.ToolResult, bool) {
+	body, err := g.original(ctx, c, hit)
+	if err != nil {
+		g.opt.Logger.WarnContext(ctx, "mcp dedup hit not replayable, invoke again", "tool", c.call.Tool,
+			"tool_call_id", hit.ID, "err", err)
+		return agent.ToolResult{}, false
 	}
-	res.Source, res.Data, res.DataFreshnessSec = r.Source, r.Data, r.DataFreshnessSec
+	var r Result
+	if err := json.Unmarshal(body, &r); err != nil {
+		g.opt.Logger.WarnContext(ctx, "mcp dedup result undecodable, invoke again", "tool", c.call.Tool,
+			"tool_call_id", hit.ID, "err", err)
+		return agent.ToolResult{}, false
+	}
+	res := agent.ToolResult{ToolCallID: hit.ID, Status: model.ToolStatusOK, Source: r.Source, Data: r.Data,
+		DataFreshnessSec: r.DataFreshnessSec}
 	if at, err := time.Parse(time.RFC3339, r.CollectedAt); err == nil {
 		if d := g.opt.Clock.Now().Sub(at); d > 0 {
 			res.DataFreshnessSec = int(d / time.Second)
@@ -127,7 +138,25 @@ func (g *Gateway) replay(ctx context.Context, c *callState, hit model.ToolCallHi
 	}
 	latency := int(g.opt.Clock.Now().Sub(c.start) / time.Millisecond)
 	g.trace(ctx, c, res, hit.ResultSummary, latency, outcome{from: fromDedup})
-	return res
+	return res, true
+}
+
+// errNoRaw 表示命中行没有 raw_object_id（写 raw 失败），且 result_summary 已脱敏不能当原值。
+var errNoRaw = errors.New("hit has no raw object and result_summary is masked")
+
+// original 取命中行的原始 Result JSON：有 raw 对象读对象；没有时仅在未配置 Mask 时用 result_summary。
+func (g *Gateway) original(ctx context.Context, c *callState, hit model.ToolCallHit) ([]byte, error) {
+	if hit.RawObjectID != nil && g.opt.RawReader != nil {
+		body, err := g.opt.RawReader.Get(ctx, c.scope, *hit.RawObjectID)
+		if err != nil {
+			return nil, fmt.Errorf("read raw object %d: %w", *hit.RawObjectID, err)
+		}
+		return body, nil
+	}
+	if g.opt.Mask == nil {
+		return hit.ResultSummary, nil
+	}
+	return nil, errNoRaw
 }
 
 // trace 是验收 3：每次调用输出 tool_call_id / 入参摘要 / 出参摘要 / 耗时 / 数据源，并发 TOOL_CALL_END。

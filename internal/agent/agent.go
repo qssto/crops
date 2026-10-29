@@ -23,18 +23,27 @@ type Question struct {
 	RunID     uint64
 }
 
-// Answer 是结构化结果。拒答也产出 Card（outcome=REFUSED）；作业类建议另带 WorkOrder(DRAFT)。
+// Answer 是结构化结果。拒答也产出 Card（outcome=REFUSED）；作业类建议另带 WorkOrder，
+// L5 起作业单开票后 Ticket 非空、run 停在 INTERRUPTED(WAIT_APPROVAL)，对用户即「待审批」。
 type Answer struct {
 	Outcome      model.Outcome
 	RefuseReason string
 	RunID        uint64
 	Card         *model.AdviceCard
 	Order        *model.WorkOrder
+	Ticket       *model.ApprovalTicket
 }
 
 // Agent 是建议主链路的最小接口：L0 为只拒答的空实现桩，L4 替换为 compose Graph 主链路。
 type Agent interface {
 	Ask(ctx context.Context, q Question) (Answer, error)
+}
+
+// Resumer 是可从中断点续跑的主链路（P0 §6.7 流程 3）：持 lock:run → 校验 run 为 INTERRUPTED(WAIT_APPROVAL)、
+// 票据 APPROVED、graph_version 一致 → run 置 RUNNING 且 resume_epoch+1 → Eino resume 只跑收尾节点 → COMPLETED。
+// 不调设备、不做复检。实现：graph.Agent（L6）；调用方：service 审批生效后异步调用、L6 run_finalize / stuck_run 扫描。
+type Resumer interface {
+	Resume(ctx context.Context, scope model.Scope, runID uint64) (Answer, error)
 }
 
 // PlaceholderRefuseReason 是占位实现的拒答原因。

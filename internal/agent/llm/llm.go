@@ -1,4 +1,4 @@
-// Package llm 是 ChatModel 的薄封装：档位（温度 / max_tokens / 超时 / 重试）、限流、脱敏钩子与 token 计量。
+// Package llm 是 ChatModel 的薄封装：档位（温度 / max_tokens / 超时 / 重试）、限流、入模脱敏与 token 计量。
 // 模型只出现在主链路的 classify / choose / explain 三个节点，均以「JSON 任务」形式调用：
 // system = 分层提示词 + 任务提示词，user = {"task": ..., "input": ...}，回复必须是 JSON。
 // 任何不可用（限流、超时、重试耗尽、回复非 JSON）都返回 ErrUnavailable，由主链路走降级。
@@ -15,6 +15,8 @@ import (
 
 	einomodel "github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/schema"
+
+	"agri-steward/internal/agent/guardrail/pii"
 )
 
 // Tier 是模型档位名（configs/model.yaml 的 tiers 键）。
@@ -33,11 +35,11 @@ type Limiter interface {
 	Allow(ctx context.Context, tier Tier) (bool, error)
 }
 
-// Redactor 在发往模型前处理用户可见文本。P0 默认原样透传。
-// TODO(L5): 接入脱敏（手机号 / 身份证 / 坐标），与 L5 打分器的 pii 断言对齐。
+// Redactor 在发往模型前处理 user 消息（JSON 任务体）。默认 pii.ForModel（P0 §6.6 功能任务 4 出口③）：
+// 手机号 / 身份证 / 账号掩码，精确坐标替换为地块引用。
 type Redactor func(string) string
 
-// Passthrough 是默认脱敏钩子：原样返回。
+// Passthrough 是不脱敏的钩子：原样返回（只供测试显式选用）。
 func Passthrough(s string) string { return s }
 
 // Usage 是 token 计量。
@@ -108,7 +110,7 @@ func New(cfg Config) (*Client, error) {
 	}
 	redact := cfg.Redact
 	if redact == nil {
-		redact = Passthrough
+		redact = pii.ForModel
 	}
 	tiers := make(map[Tier]TierConfig, len(cfg.Tiers))
 	for k, v := range cfg.Tiers {

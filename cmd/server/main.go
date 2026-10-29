@@ -13,6 +13,8 @@ import (
 	"syscall"
 	"time"
 
+	"agri-steward/internal/agent/harness/memory"
+	"agri-steward/internal/agent/harness/policy"
 	"agri-steward/internal/agent/knowledge"
 	"agri-steward/internal/app"
 	"agri-steward/internal/clock"
@@ -41,6 +43,8 @@ func run() (err error) {
 	modelFile := flag.String("model", "configs/model.yaml", "模型配置（provider: openai | stub，可用 AS_MODEL_PROVIDER 覆盖）")
 	repoRoot := flag.String("repo", ".", "仓库根目录（其下 knowledge/ 为知识库）")
 	taxonomyFile := flag.String("taxonomy", "eval/taxonomy.yaml", "question_taxonomy 文件（分类与知识加载共用）")
+	policyFile := flag.String("policy", "policy/tool_policy.yaml", "工具策略（与工具注册表启动期比对，不符即退出）")
+	riskFile := flag.String("risk", "policy/risk_matrix.yaml", "审批风险矩阵（作业类型 → risk_level / required_role）")
 	flag.Parse()
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -103,14 +107,23 @@ func run() (err error) {
 		return err
 	}
 	raw := repository.NewRawStore(db, repository.MinIOPutter{Client: mc}, cfg.MinIO.BucketRaw)
-	tools, err := buildTools(*toolsFile, toolDeps{clk: clk, logger: logger, db: db, rdb: rdb, keys: keys, raw: raw})
+	rawRead := repository.RawReader{DB: db, Obj: repository.MinIOGetter{Client: mc}, Bucket: cfg.MinIO.BucketRaw}
+	tools, err := buildTools(*toolsFile, *policyFile, toolDeps{clk: clk, logger: logger, db: db, rdb: rdb, keys: keys,
+		raw: raw, rawRead: rawRead})
+	if err != nil {
+		return err
+	}
+	risk, err := policy.LoadRiskMatrix(*riskFile)
 	if err != nil {
 		return err
 	}
 	a, err := app.Build(app.Deps{Clock: clk, Logger: logger, DB: db, Redis: rdb, Keys: keys, RawStore: raw,
 		NewAgent: app.GraphAgent(ctx, app.GraphConfig{Model: mcfg, Chat: chat, Taxonomy: tx,
 			KB: knowledge.NewStore(knowledge.NewRepoReader(*repoRoot))}),
-		Tools: tools})
+		Tools: tools, Risk: risk,
+		HITL: app.HITLDeps{Objects: repository.MinIOGetter{Client: mc}, RawBucket: cfg.MinIO.BucketRaw,
+			Memory: memory.Options{Enabled: cfg.Memory.Enabled, EpisodicLimit: cfg.Memory.EpisodicLimit,
+				RuneBudget: cfg.Memory.RuneBudget}}})
 	if err != nil {
 		return err
 	}
@@ -118,8 +131,14 @@ func run() (err error) {
 	return serve(ctx, &http.Server{Addr: cfg.HTTP.Addr, Handler: a.Handler(auth), ReadHeaderTimeout: readHeaderTimeout}, a)
 }
 
-// serve 监听直到 ctx 取消，然后优雅关闭。
+// serve 启动 L6 扫描任务（approval_expire / ticket_activate / run_finalize / stuck_run）并监听直到 ctx 取消，然后优雅关闭。
 func serve(ctx context.Context, srv *http.Server, a *app.App) error {
+	// Scanner.Run 退出前自行等待其异步 Resume；这里等它返回，避免在扫描轮次中途与 wg.Add 并发 Wait。
+	scanDone := make(chan struct{})
+	go func() {
+		defer close(scanDone)
+		a.HITL.Scanner.Run(ctx)
+	}()
 	errCh := make(chan error, 1)
 	go func() {
 		a.Logger.Info("http listening", "addr", srv.Addr)
@@ -138,7 +157,9 @@ func serve(ctx context.Context, srv *http.Server, a *app.App) error {
 	if err := <-errCh; !errors.Is(err, http.ErrServerClosed) {
 		return fmt.Errorf("listen %s: %w", srv.Addr, err)
 	}
-	// 等待已受理的异步主链路收尾（各自带 askRunTimeout 兜底）。
+	// 等待已受理的异步主链路、扫描任务与审批后的异步续跑收尾（各自带超时兜底）。
 	a.Ask.Wait()
+	<-scanDone
+	a.HITL.Decisions.Wait()
 	return nil
 }

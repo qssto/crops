@@ -64,6 +64,21 @@ func TestLoad(t *testing.T) {
 	}
 }
 
+// 仓库自带的 configs/app.yaml 默认开启记忆，环境变量可关闭（验收 4 的开关）。
+func TestLoad_MemorySwitch(t *testing.T) {
+	c, err := Load("../../configs/app.yaml", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !c.Memory.Enabled || c.Memory.EpisodicLimit != 5 || c.Memory.RuneBudget != 600 {
+		t.Fatalf("memory = %+v, want enabled/5/600", c.Memory)
+	}
+	t.Setenv("AS_MEMORY_ENABLED", "false")
+	if c, err = Load("../../configs/app.yaml", ""); err != nil || c.Memory.Enabled {
+		t.Fatalf("env off: memory = %+v, err %v", c.Memory, err)
+	}
+}
+
 func TestRequireSecrets(t *testing.T) {
 	c := &Config{MySQL: MySQL{Password: "x"}}
 	if err := c.RequireSecrets("mysql.password"); err != nil {

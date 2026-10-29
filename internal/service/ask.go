@@ -11,6 +11,7 @@ import (
 	"unicode/utf8"
 
 	"agri-steward/internal/agent"
+	"agri-steward/internal/agent/harness/runner"
 	"agri-steward/internal/model"
 )
 
@@ -123,7 +124,7 @@ func (s *AskService) Ask(ctx context.Context, scope model.Scope, in AskInput) (u
 	return runID, nil
 }
 
-// run 执行主链路；panic 与错误都落 FAILED。主链路已自行收尾（run 非 RUNNING）时 FinishRun 的非法迁移只记日志。
+// run 执行主链路；panic 与错误都落 FAILED（执行权丢失除外）。主链路已自行收尾（run 非 RUNNING）时 FinishRun 的非法迁移只记日志。
 func (s *AskService) run(ctx context.Context, q agent.Question) {
 	reason := ""
 	log := s.d.Logger.With("run_id", q.RunID, "request_id", RequestIDFrom(ctx))
@@ -141,7 +142,10 @@ func (s *AskService) run(ctx context.Context, q agent.Question) {
 	}()
 	if _, err := s.d.Agent.Ask(ctx, q); err != nil {
 		log.ErrorContext(ctx, "ask: agent error", "err", err)
-		reason = reasonAgentError
+		// 执行权已丢失：run 可能已被 stuck_run 接管（SYSTEM_ERROR 重入），不得再写 FAILED
+		if !errors.Is(err, runner.ErrLeaseLost) {
+			reason = reasonAgentError
+		}
 	}
 }
 

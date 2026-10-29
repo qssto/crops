@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"time"
 
 	"agri-steward/internal/model"
@@ -150,9 +151,90 @@ type UserChannel interface {
 	Push(ctx context.Context, scope model.Scope, runID uint64, e model.RunEvent) error
 }
 
-// Approver 是审批闸门接缝：为作业单开票并在中断后取决策。
-// 实现：service/approval（L5 开票，L6 恢复）。
-type Approver interface {
-	Open(ctx context.Context, scope model.Scope, order model.WorkOrder) (model.ApprovalTicket, error)
-	Decision(ctx context.Context, scope model.Scope, ticketID uint64) (model.ApprovalTicket, error)
+// ApprovalGate 是审批闸门接缝（P0 §6.6 流程 4-5）。Open / Activate 只在持 lock:run 的执行者内调用。
+// 实现：service.ApprovalService（L5），app 装配注入 graph；L6 的 ticket_activate 扫描同样调 Activate。
+type ApprovalGate interface {
+	// Open 为已落库的 DRAFT 作业单开票：快照先经 RawStore 写 MinIO 并算 digest，再单事务写
+	// constraint_check(PRE_APPROVAL) + approval_ticket(PREPARING) + Transition(DRAFT → PENDING_APPROVAL) + APPROVAL_OPEN；
+	// 全部按业务唯一键幂等，整图重跑返回已有票据。
+	Open(ctx context.Context, scope model.Scope, req ApprovalRequest) (model.ApprovalTicket, error)
+	// Activate 在 run 已 INTERRUPTED(WAIT_APPROVAL) 后把该 run 的 PREPARING 票置 OPEN、写 expires_at、发 APPROVAL_PENDING；
+	// 票已 OPEN 时返回该票（幂等）；run 未中断或无票返回 ErrNotActivatable。
+	Activate(ctx context.Context, scope model.Scope, runID uint64) (model.ApprovalTicket, error)
 }
+
+// ApprovalRequest 是开票入参：Order 为已落库的 DRAFT 单（OrderID 非 0），Card 进审批快照，
+// InitiatorID = agent_run.user_id（不得审批本票）。
+type ApprovalRequest struct {
+	Order       model.WorkOrder
+	Card        model.AdviceCard
+	InitiatorID uint64
+}
+
+// ErrNotActivatable 表示 Activate 的前置条件不满足（run 未 INTERRUPTED(WAIT_APPROVAL) 或该 run 无 PREPARING / OPEN 票）。
+var ErrNotActivatable = errors.New("agent: approval ticket not activatable")
+
+// ---- L6 追加：检查点目标与续跑守卫 ----
+
+// CheckpointTarget 是一次检查点写入的归属：Eino 只把 checkpoint_id（= run_id 字符串）交给 Store，
+// 租户 / 农场与中断类型由图在 Invoke 前经 WithCheckpointTarget 放进 ctx，CheckpointStore 实现据此落库并置 run INTERRUPTED。
+type CheckpointTarget struct {
+	Scope     model.Scope
+	RunID     uint64
+	Interrupt model.InterruptType
+}
+
+type checkpointTargetKey struct{}
+
+// WithCheckpointTarget 把检查点归属放进 ctx。
+func WithCheckpointTarget(ctx context.Context, t CheckpointTarget) context.Context {
+	return context.WithValue(ctx, checkpointTargetKey{}, t)
+}
+
+// CheckpointTargetFrom 取 ctx 中的检查点归属；没有时 ok=false（实现须拒绝写入）。
+func CheckpointTargetFrom(ctx context.Context) (CheckpointTarget, bool) {
+	t, ok := ctx.Value(checkpointTargetKey{}).(CheckpointTarget)
+	return t, ok
+}
+
+// ResumeRequest 是续跑前的状态守卫：GraphVersion 须与 agent_run.graph_version 一致（检查点结构随图版本变化）。
+type ResumeRequest struct {
+	RunID        uint64
+	GraphVersion string
+}
+
+// RunResumeStore 是续跑的状态迁移（P0 §6.7 流程 3）。实现：repository.RunRepo（L6）。
+type RunResumeStore interface {
+	// MarkResumed 单事务校验 run 为 INTERRUPTED 且可续（WAIT_APPROVAL 须该 run 有 APPROVED 票；SYSTEM_ERROR 直接可续；
+	// WAIT_INPUT P0 不续）、graph_version 一致，再以 row_ver 守卫置 RUNNING、interrupt_type 清空、resume_epoch+1，
+	// 返回新 epoch；不满足返回 ErrNotResumable。
+	MarkResumed(ctx context.Context, scope model.Scope, req ResumeRequest) (epoch int, err error)
+}
+
+// ErrNotResumable 表示 run 不满足续跑前置条件（状态 / 中断类型 / 票据 / graph_version 不符，或无检查点可续）。
+// 调用方（扫描任务）据此收尾，不重试。
+var ErrNotResumable = errors.New("agent: run not resumable")
+
+// ---- L6 追加：下发前复检 ----
+
+// RecheckRequest 是下发前复检入参（P0 §6.7 功能任务 3）：Question 为原问题，RunID 取原 run（工具调用记在原 run 上）；
+// Card 为原作业单依据的建议卡；Epoch 为本次复检用的 epoch，须大于原 run 已用过的 resume_epoch，时效工具据此重取、不读缓存。
+type RecheckRequest struct {
+	Question Question
+	Card     model.AdviceCard
+	Epoch    int
+}
+
+// RecheckResult 是复检结论：Changed 为 true 时原作业单须 CANCELED(CONDITION_CHANGED) 并新建 run；Detail 为变化说明。
+type RecheckResult struct {
+	Changed bool
+	Detail  string
+}
+
+// Rechecker 是下发前复检接缝。实现：agent/graph（L6）；调用方：service.RecheckService（L8 下发 worker 接入）。
+type Rechecker interface {
+	Recheck(ctx context.Context, req RecheckRequest) (RecheckResult, error)
+}
+
+// ErrRecheckInconclusive 表示复检给不出结论（模型不可用、时效数据缺失）：不改作业单，由调用方稍后重试。
+var ErrRecheckInconclusive = errors.New("agent: recheck inconclusive")

@@ -25,7 +25,8 @@ type GraphConfig struct {
 // ErrMissingGraphDeps 表示 GraphConfig 缺字段。
 var ErrMissingGraphDeps = errors.New("app: graph needs Model, Chat, KB and Taxonomy")
 
-// GraphAgent 返回 Deps.NewAgent 工厂：用 App 已装配的 Tools / Runs / Advice / Drafts / RunLocker / Clock 构造主链路。
+// GraphAgent 返回 Deps.NewAgent 工厂：用 App 已装配的 Tools / Runs / Advice / Drafts / RunLocker / Clock /
+// Approvals（审批闸门）/ Events 构造主链路。
 func GraphAgent(ctx context.Context, gc GraphConfig) func(*App) (agent.Agent, error) {
 	return func(a *App) (agent.Agent, error) {
 		if gc.Model == nil || gc.Chat == nil || gc.KB == nil || gc.Taxonomy == nil {
@@ -45,9 +46,12 @@ func GraphAgent(ctx context.Context, gc GraphConfig) func(*App) (agent.Agent, er
 		if err != nil {
 			return nil, err
 		}
-		return graph.New(ctx, graph.Config{LLM: c, Tier: llm.Tier(m.DefaultTier), Tools: a.Tools,
+		cfg := graph.Config{LLM: c, Tier: llm.Tier(m.DefaultTier), Tools: a.Tools,
 			Runs: a.Runs, Advice: a.Advice, Drafts: a.Drafts, Locker: a.RunLocker, Clock: a.Clock,
-			KB: gc.KB, Taxonomy: gc.Taxonomy, Crop: m.Crop, Region: m.Region, Logger: a.Logger})
+			KB: gc.KB, Taxonomy: gc.Taxonomy, Crop: m.Crop, Region: m.Region, Logger: a.Logger,
+			Gate: a.Approvals, Events: a.Events}
+		a.HITL.withHITL(&cfg, a.Runs)
+		return graph.New(ctx, cfg)
 	}
 }
 
