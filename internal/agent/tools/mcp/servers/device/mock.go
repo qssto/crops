@@ -123,6 +123,8 @@ type statusOut struct {
 	TankL      *float64 `json:"tank_l,omitempty"`
 	FaultCode  string   `json:"fault_code,omitempty"`
 	LastSeenAt string   `json:"last_seen_at"`
+	// Capabilities 是 P1 L2 只加字段：real 从设备平台透传，mock 不填（输出不变）。
+	Capabilities []string `json:"capabilities,omitempty"`
 }
 
 func (m *mock) status(ctx context.Context, args json.RawMessage) (mcp.Result, error) {

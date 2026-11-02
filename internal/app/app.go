@@ -15,6 +15,7 @@ import (
 	"agri-steward/internal/adapter"
 	"agri-steward/internal/agent"
 	"agri-steward/internal/clock"
+	"agri-steward/internal/config"
 	"agri-steward/internal/controller"
 	"agri-steward/internal/repository"
 	"agri-steward/internal/repository/rediskey"
@@ -41,7 +42,7 @@ type Deps struct {
 	Risk service.RiskPolicy
 	// Adapter 是设备下发接缝（可选）：评测注入 env.RecordingAdapter 记录调用；为空取 adapter.MockAdapter（L8，dry-run）。
 	// 只允许 service/workorder_dispatch.go 在作业单 APPROVED 后调用（archtest 守卫）。
-	Adapter adapter.DeviceAdapter
+	Adapter adapter.DryRunner
 	// HITL 是 L6 检查点与记忆的可选依赖（零值：不中断、记忆关闭）。
 	HITL HITLDeps
 	// DashboardDir 是看板 amis 页面目录（可选，如 web/amis）；为空不挂 /dashboard，文件缺失时 /dashboard 返回 404。
@@ -53,6 +54,11 @@ type Deps struct {
 	Permissions *service.PermissionMatrix
 	// DenialCounter 是拒绝计数接缝（可选；L7 接 Prometheus as_cross_farm_denied_total）。
 	DenialCounter service.DenialCounter
+	// Devices 是设备 Adapter 注册表配置（P1-L2，configs/devices.yaml；可选：为空即 devicesim 关闭，四类骨架全不可开放）。
+	Devices *config.Devices
+	// Env 是部署环境（configs/app.yaml 的 env，如 dev / staging / prod）。devicesim 开启时必填：
+	// env=prod 或为空即 Build 失败（Devicesim.CheckDeploy），其余场景不读。
+	Env string
 }
 
 // metaer 是能报告自身版本信息的主链路（graph.Agent）。
@@ -83,7 +89,7 @@ type App struct {
 	Approvals *service.ApprovalService
 	Events    agent.EventSink
 	// Adapter 即 Deps.Adapter，为空时是 adapter.MockAdapter。
-	Adapter adapter.DeviceAdapter
+	Adapter adapter.DryRunner
 	// L8：outbox 轮询器（cmd/server 启动 Outbox.Run；评测不跑，见 dev-log L8-A）与 run 事件流（SSE）。
 	Outbox      *service.OutboxPoller
 	EventStream *service.EventService
@@ -101,6 +107,8 @@ type App struct {
 	// P1-L1-A：权限矩阵与拒绝审计（CROSS_FARM_DENIED）。
 	Perms   *service.PermissionMatrix
 	Denials *service.DenialAuditor
+	// P1-L2：设备 Adapter 注册表（可开放集合决定 to_order 能否写 REAL；L4 下发器按 device_type 取 Adapter）。
+	Devices *adapter.Registry
 	// eventRepo 是唯一的 run_event 写入口（同事务 audit_log 投影 + 提交后 PUBLISH sse:run:{run_id}）。
 	eventRepo repository.EventRepo
 }
@@ -177,6 +185,9 @@ func Build(deps Deps) (*App, error) {
 		return nil, err
 	}
 	if err := a.buildFlags(); err != nil {
+		return nil, err
+	}
+	if err := a.buildDevices(deps.Env, deps.Devices); err != nil {
 		return nil, err
 	}
 	if deps.NewAgent != nil {

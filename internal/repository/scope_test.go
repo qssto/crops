@@ -183,6 +183,26 @@ func scopeRequiredCalls() map[string]func(model.Scope) error {
 			cctx := agent.WithCheckpointTarget(ctx, agent.CheckpointTarget{Scope: s, RunID: 1, Interrupt: model.InterruptWaitApproval})
 			return (&CheckpointRepo{}).Set(cctx, "1", []byte(`{}`))
 		},
+		"DispatchAttemptRepo.InsertSentTx": func(s model.Scope) error {
+			_, err := DispatchAttemptRepo{}.InsertSentTx(ctx, nil, model.DispatchAttempt{TenantID: s.TenantID, FarmID: s.FarmID})
+			return err
+		},
+		"DispatchAttemptRepo.SetJobTx": func(s model.Scope) error {
+			return DispatchAttemptRepo{}.SetJobTx(ctx, nil, model.OrderRef{TenantID: s.TenantID, FarmID: s.FarmID, OrderID: 1}, 1, 0,
+				model.DeviceReceipt{Status: model.AttemptAccepted, DeviceJobID: "j"}, now, now)
+		},
+		"DispatchAttemptRepo.UpdateReceiptTx": func(s model.Scope) error {
+			return DispatchAttemptRepo{}.UpdateReceiptTx(ctx, nil, model.OrderRef{TenantID: s.TenantID, FarmID: s.FarmID, OrderID: 1}, 1, 0,
+				model.AttemptDone, "", nil, now, now)
+		},
+		"DispatchAttemptRepo.ByOrder": func(s model.Scope) error {
+			_, err := DispatchAttemptRepo{}.ByOrder(ctx, model.OrderRef{TenantID: s.TenantID, FarmID: s.FarmID, OrderID: 1})
+			return err
+		},
+		"DispatchAttemptRepo.PendingReconcile": func(s model.Scope) error {
+			_, err := DispatchAttemptRepo{}.PendingReconcile(ctx, s, 10)
+			return err
+		},
 		"CheckpointRepo.Get": func(s model.Scope) error {
 			_, _, err := (&CheckpointRepo{}).Get(agent.WithCheckpointTarget(ctx, agent.CheckpointTarget{Scope: s, RunID: 1}), "1")
 			return err
@@ -234,6 +254,10 @@ func TestSystemScopeRequired(t *testing.T) {
 		},
 		"RunRepo.ListStuck":       func() error { _, err := (&RunRepo{}).ListStuck(ctx, zero, now); return err },
 		"RunRepo.ListSystemError": func() error { _, err := (&RunRepo{}).ListSystemError(ctx, zero); return err },
+		"DispatchAttemptRepo.ByJob": func() error {
+			_, err := DispatchAttemptRepo{}.ByJob(ctx, zero, "uav", "sim-1")
+			return err
+		},
 	}
 	for name, call := range calls {
 		t.Run(name, func(t *testing.T) {

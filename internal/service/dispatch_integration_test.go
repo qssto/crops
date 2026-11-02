@@ -20,7 +20,7 @@ import (
 
 // newDispatchPoller 装配真实 MySQL / Redis 上的下发链路：OutboxPoller → WorkOrderService.Dispatch → dev，
 // 与 app.buildDispatch 同构（P1-L0 起带真实 FlagService 与 AuditRepo）；Recheck 置空（④ 跳过只告警），复检分支由单测覆盖。
-func newDispatchPoller(t *testing.T, e *itest.Env, slot *env.Slot, dev adapter.DeviceAdapter) (*service.OutboxPoller,
+func newDispatchPoller(t *testing.T, e *itest.Env, slot *env.Slot, dev adapter.DryRunner) (*service.OutboxPoller,
 	*service.WorkOrderService) {
 	t.Helper()
 	logger, err := app.NewLogger(os.Stderr, "warn")

@@ -58,7 +58,7 @@ func GraphAgent(ctx context.Context, gc GraphConfig) func(*App) (agent.Agent, er
 		cfg := graph.Config{LLM: c, Tier: llm.Tier(m.DefaultTier), Tools: a.Tools,
 			Runs: a.Runs, Advice: a.Advice, Drafts: a.Drafts, Locker: a.RunLocker, Clock: a.Clock,
 			KB: gc.KB, Taxonomy: gc.Taxonomy, Crop: m.Crop, Region: m.Region, Logger: a.Logger,
-			Gate: a.Approvals, Events: a.Events, Trace: rec.Handler(), DispatchMode: a.Flags}
+			Gate: a.Approvals, Events: a.Events, Trace: rec.Handler(), DispatchMode: a.dispatchModeSource()}
 		a.HITL.withHITL(&cfg, a.Runs)
 		a.withFarmScope(&cfg)
 		return graph.New(ctx, cfg)

@@ -63,6 +63,7 @@ type RunEvent struct {
 // RawPut 是 RawStore.Put 的入参。对象 key 为
 // raw/{tenant}/{farm}/{yyyy}/{mm}/{dd}/{run_id 或 0}/{kind}/{name}（母文档 §4.6.2-8，{id} 段由调用方给出稳定名，
 // 重跑写同一 key 即覆盖同一对象）；日期取 At（UTC），调用方传业务时间以保证重跑 key 不变。
+// raw_object.created_at 取 CreatedAt（实际写入时间，调用方传 clock.Now()）；零值时沿用 At。
 type RawPut struct {
 	TenantID    uint64
 	FarmID      uint64
@@ -70,6 +71,7 @@ type RawPut struct {
 	Kind        RawKind
 	Name        string
 	At          time.Time
+	CreatedAt   time.Time
 	Body        []byte
 	ContentType string
 }

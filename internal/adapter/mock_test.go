@@ -63,13 +63,13 @@ func TestMockAdapterDryRun(t *testing.T) {
 // errAny 表示只要求返回错误。
 var errAny = errors.New("any error")
 
-func TestMockAdapterDispatchDisabled(t *testing.T) {
-	m := adapter.MockAdapter{}
-	if _, err := m.Dispatch(context.Background(), model.WorkOrder{}, "k"); !errors.Is(err, adapter.ErrRealDispatchDisabled) {
-		t.Fatalf("Dispatch err = %v", err)
+func TestMockAdapterName(t *testing.T) {
+	var m adapter.DryRunner = adapter.MockAdapter{}
+	if _, ok := m.(adapter.DeviceAdapter); ok {
+		t.Fatal("MockAdapter must not implement DeviceAdapter (real dispatch goes through Registry)")
 	}
-	if m.Name() != adapter.MockName {
-		t.Fatalf("name = %q", m.Name())
+	if n := (adapter.MockAdapter{}).Name(); n != adapter.MockName {
+		t.Fatalf("name = %q", n)
 	}
 }
 

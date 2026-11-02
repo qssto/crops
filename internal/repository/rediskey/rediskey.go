@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"regexp"
 	"strconv"
+	"time"
 )
 
 // envPattern 限定 env 只含小写字母、数字与连字符，避免拼出含 ':' 或通配符的前缀。
@@ -68,6 +69,16 @@ func (k Keys) RateFarmAsk(farmID uint64) string {
 // SSERun 是 SSE 频道 sse:run:{run_id}（P0 L7：run_event 提交后 PUBLISH）。
 func (k Keys) SSERun(runID uint64) string {
 	return k.prefix + "sse:run:" + strconv.FormatUint(runID, 10)
+}
+
+// IdemDispatchTTL 是 idem:dispatch 键的 TTL（P1 §6.3：7 天，覆盖回执迟到与人工对账窗口）。
+const IdemDispatchTTL = 7 * 24 * time.Hour
+
+// IdemDispatch 是 idem:dispatch:{order_id}:{ticket_id}:{attempt}（P1 L2，TTL IdemDispatchTTL）：
+// 同一张票据批准的同一次尝试只调用一次设备 Adapter。
+func (k Keys) IdemDispatch(orderID, ticketID uint64, attempt int) string {
+	return k.prefix + "idem:dispatch:" + strconv.FormatUint(orderID, 10) + ":" + strconv.FormatUint(ticketID, 10) + ":" +
+		strconv.Itoa(attempt)
 }
 
 // Raw 拼接其他层文档中的键名（如 cache:mcp:...），各层落地时再补专用方法。

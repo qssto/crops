@@ -394,3 +394,31 @@
   - fixture 设备（如 dev-uav-01）不在 bindings 内，打分器不对日志与落库摘要做 device_id 结构化检查。
   - P1 手册 §6.2 / L6 缓存键表待同步为带 tenant_id。
   - worktree 无 deploy/.env：`make test-integration GO=go`（含 P2-5 新测试）与 `make eval GO=go N=3` 未跑，由调度方在主仓执行。
+
+## P1-L2 · 设备 Adapter 三方法、Registry 启动自检、本地设备模拟平台（2026-10-29）
+
+- 接口：`adapter.DeviceAdapter` 改为 `Capabilities / Dispatch(ctx, order, idemKey) / QueryStatus(ctx, StatusRef) / Cancel(ctx, deviceJobID)`；P0 dry-run 拆成 `adapter.DryRunner`（ISP），下发器、app、evalkit 的字段类型跟着改为 DryRunner，下发逻辑不变。archtest 新规则：internal/adapter 不得 import repository / agent。
+- 回执：`model.DeviceReceipt`（Validate）、`AttemptStatus / FailureKind`，映射表 `model.ReceiptRules / MapReceipt` 与 `docs/p1/回执映射表.md` 一致（全表测试）。work_order 状态机未动，L4 消费。
+- Registry（`adapter/registry.go`）：`CheckCapabilities`（必须 Cancel，且 IdemKey / ExternalQuery 至少一项）、`Register / RegisterClosed / Openable / Get（ErrDeviceNotOpen）/ Entries`；uav / vehicle / valve / fertigation 四类骨架登记为不可开放。app `buildDevices` 读 `configs/devices.yaml`（`config.LoadDevices`，`AS_DEVICESIM_ENABLED` 可覆盖），任一注册失败即 Build 失败。
+- dispatch_mode：`agent.DeviceDispatchModeSource.DispatchModeFor(ctx, scope, deviceType)`，app `deviceDispatchMode` = FlagService.DispatchMode 为 REAL **且** `Registry.Openable`；graph.toOrder 传 device_type。FlagService 未改。
+- devicesim：`cmd/devicesim`（`make devicesim`）+ `adapter/devicesim/sim`（HTTP 平台：idem_key 幂等受理、按 job_id / external_no 查询、cancel、按工单脚本化回执序列、`GET /v1/devices` 设备清单）+ `adapter/devicesim` 客户端（超时 → ErrTimeout，连接失败 / 5xx → ErrUnavailable，404 → ErrJobNotFound，其余 4xx → ErrRejected，非法回执 → ErrBadReceipt）。httptest 端到端 `Dispatch → QueryStatus → Cancel`。
+- 台账：迁移 `0007_dispatch_attempt`（§6.3 SQL 照抄，未提交）；`repository.DispatchAttemptRepo`：InsertSentTx / SetJobTx / UpdateReceiptTx（row_ver 乐观锁，0 行 → ErrConcurrentUpdate；唯一键冲突 → ErrDuplicateAttempt）/ ByOrder / PendingReconcile（NO_RECEIPT 或 FAILED+UNKNOWN）/ ByJob（SystemScope，uk_job 反查）。`rediskey.IdemDispatch(order, ticket, attempt)` + `IdemDispatchTTL=7d`。下发器未接入。
+- trace：`adapter.NewTraced(deviceType, next, CallRecorder, RawPutter, clk)`：Dispatch 先 `Archive` 指令原文（RawStore kind=DEVICE_CMD，归档失败不调设备），再记 `model.DeviceCallTrace`（tool_call_id / device_type / order_id / 耗时 / 回执码 / command_raw_id）；QueryStatus / Cancel 归属经 `WithTraceOrder`。实现 `service.DeviceTraceLog`。`model.RawDeviceCmd` 进 RawKind.Valid。
+- mcp-device real（`servers/device/real.go`）：base_url 非空即从设备平台取清单与状态，`device.status` 只加 `capabilities` 字段；source=devicesim，新鲜度按 last_seen_at；base_url 为空保持骨架。`servers.DeviceOwnership` real 模式改按平台本农场清单判归属（平台不可用返回错误）。`TestDevice_MockAndRealSameCaller` 同一调用方在两种配置下结果一致。eval / 集成测试默认 mock。
+- 评测：`env.NewRecordingAdapter(fixtures.device)` 记录 DryRun / Dispatch / QueryStatus / Cancel（MethodQueryStatus / MethodCancel），样本可声明 `fixtures.device.receipts` 回执序列；validate 对新字段宽松，114 条样本不改。
+- 文档：《设备开放清单》补 device_type、代码状态与 devicesim 行，验收 1 标「待演练」；contracts.md 分层规则、mock-real-status.md、configs/tools.yaml 注释同步。
+- 验证：`go build / vet / test ./...` 全绿，`go vet -tags integration ./...` 通过；新增集成测试 `TestDispatchAttempt_Integration`、`TestTracedCommandReadBack_Integration`。
+- TODO：worktree 无 deploy/.env，`AS_TEST_NS=l2 make test-integration GO=go` 中全部依赖 MySQL / Redis 的用例因缺密钥失败（非 DB 包全过），`make eval GO=go N=3` 被权限拦截（eval 字符串）；均待调度方在主仓执行。下发器接入 Registry / Traced / DispatchAttemptRepo / 幂等键在 L4。
+
+### P1-L2 审查修复（2026-10-29）
+
+- mcp-device real 归属失败关闭：`farmDevices` 拿到平台结果后逐条核对 TenantID / FarmID，出现别的农场设备即返回 UPSTREAM 并 warn（选报错不选剔除：平台已串数据，同一响应里本农场数据也不可信，剔除会把平台故障伪装成「设备变少」）；OwnsDevice / DeviceIDs / list / status 都经此步。平台 last_seen_at / updated_at 为零值时返回 MALFORMED「采集时间缺失」，不透传 0001 年。
+- devicesim 客户端：2xx 后读 body 失败 → ErrTimeout（结果未知、需对账）；body 读 maxBody+1，2xx 超限 → ErrBadReceipt；Dispatch / QueryStatus / Cancel 校验返回 job 的 job_id / external_no / order_id 与请求一致，否则 ErrBadReceipt。
+- sim：脚本新增 `accept_delay_ms`（先受理再延迟响应）；测试覆盖 Dispatch 超时后 `QueryStatus(idem_key)` 查到同一 job、重发得同一 job。`writeJSON` 写失败记 slog。
+- 回执：CANCELED 且 done_area_mu > 0 → PARTIALLY_DONE（已部分喷施，PHI 与重复作业计入）；`MapReceipt(status, kind, doneAreaMu)` 签名变更，新增 `model.CheckAttemptState`；映射表文档与全表测试同步。
+- 台账：SetJobTx / UpdateReceiptTx 入口校验状态枚举、FAILED 必带 kind（不合法返回 ErrBadReceipt、不写库），done_area_mu 传 nil 时 `COALESCE` 保留旧值；单测 + 集成测试补用例。
+- trace：raw_object.created_at 取 `clk.Now()`（`model.RawPut.CreatedAt`，零值回落 At），目录日期仍按作业窗口；新增 `adapter.ArchivedDispatcher.DispatchArchived(ctx, order, idemKey, commandRawID)`，L4 按 Archive → InsertSentTx(command_raw_id) → DispatchArchived 走，不重复归档（commandRawID=0 → ErrRejected 不调设备）；QueryStatus / Cancel 缺 WithTraceOrder 记 warn，`Traced.WithLogger` 可注入 logger。
+- Registry：typed-nil Adapter 注册即返回错误（NewTraced 同样拒绝）。
+- devicesim 生产保护（两者都做）：`config.Devicesim.CheckDeploy(env)`，env=prod 拒绝、base_url 必须回环（LoadDevices 也校验）；`app.Deps.Env` 新增（cmd/server 传 `cfg.Env`），devicesim 开启而 Env 为空同样失败关闭。
+- 留给 L4：RecordingAdapter 按方法与工单分队列；错误 / 超时回执脚本。
+- 验证：`go build / vet / test ./...` 全绿，`go vet -tags integration ./...` 通过；集成测试待调度方在主仓执行。

@@ -107,7 +107,7 @@ func recordTools(t *Trial, tools agent.ToolProvider) {
 }
 
 // recordDevice 把 RecordingAdapter 的调用写入 t（Adapter 不记录时不动；记录为空时是空切片）。
-func recordDevice(t *Trial, a adapter.DeviceAdapter) {
+func recordDevice(t *Trial, a adapter.DryRunner) {
 	rec, ok := a.(DeviceRecorder)
 	if !ok {
 		return

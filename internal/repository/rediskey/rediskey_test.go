@@ -20,6 +20,7 @@ func TestKeys(t *testing.T) {
 		{k.IdemTool("abc"), "as:dev:idem:tool:abc"},
 		{k.IdemApprove("r-1"), "as:dev:idem:approve:r-1"},
 		{k.CacheMCP("weather.forecast", 2, 3, "d1"), "as:dev:cache:mcp:weather.forecast:2:3:d1"},
+		{k.IdemDispatch(7, 5, 2), "as:dev:idem:dispatch:7:5:2"},
 		{EvalTrialEnv(3), "eval-t3"},
 	}
 	for _, tt := range tests {

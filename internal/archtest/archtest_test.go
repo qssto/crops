@@ -74,6 +74,12 @@ func TestDetectsViolations(t *testing.T) {
 			wantRule: "may construct repository.SystemScope"},
 		{name: "scan.go may construct SystemScope", path: "internal/service/scan.go",
 			src: "import \"agri-steward/internal/repository\"\nvar _ = repository.NewSystemScope(\"x\")"},
+		{name: "adapter imports repository", path: "internal/adapter/devicesim/x.go",
+			src: `import _ "agri-steward/internal/repository"`, wantRule: "adapter must not import repository/agent"},
+		{name: "adapter imports agent", path: "internal/adapter/x.go",
+			src: `import _ "agri-steward/internal/agent/tools/mcp"`, wantRule: "adapter must not import repository/agent"},
+		{name: "adapter may import model", path: "internal/adapter/x.go",
+			src: `import _ "agri-steward/internal/model"`},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

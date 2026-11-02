@@ -49,6 +49,7 @@ func run() (err error) {
 	policyFile := flag.String("policy", "policy/tool_policy.yaml", "工具策略（与工具注册表启动期比对，不符即退出）")
 	riskFile := flag.String("risk", "policy/risk_matrix.yaml", "审批风险矩阵（作业类型 → risk_level / required_role）")
 	permFile := flag.String("permissions", "policy/permission_matrix.yaml", "权限矩阵（角色 → 操作，未声明即拒绝）")
+	devicesFile := flag.String("devices", "configs/devices.yaml", "设备 Adapter 注册表配置（devicesim 开关；骨架不可开放）")
 	flag.Parse()
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -117,10 +118,14 @@ func run() (err error) {
 	if err != nil {
 		return err
 	}
+	devices, err := config.LoadDevices(*devicesFile)
+	if err != nil {
+		return err
+	}
 	a, err := app.Build(app.Deps{Clock: clk, Logger: logger, DB: db, Redis: rdb, Keys: keys, RawStore: raw,
 		NewAgent: app.GraphAgent(ctx, app.GraphConfig{Model: mcfg, Chat: chat, Taxonomy: tx,
 			KB: knowledge.NewStore(knowledge.NewRepoReader(*repoRoot))}),
-		Tools: tools, Risk: risk, Permissions: grants, DashboardDir: filepath.Join(*repoRoot, dashboardDir),
+		Tools: tools, Risk: risk, Permissions: grants, Devices: devices, Env: cfg.Env, DashboardDir: filepath.Join(*repoRoot, dashboardDir),
 		Presign: repository.MinIOPresigner{Client: mc, Bucket: cfg.MinIO.BucketRaw},
 		HITL: app.HITLDeps{Objects: repository.MinIOGetter{Client: mc}, RawBucket: cfg.MinIO.BucketRaw,
 			Memory: memory.Options{Enabled: cfg.Memory.Enabled, EpisodicLimit: cfg.Memory.EpisodicLimit,

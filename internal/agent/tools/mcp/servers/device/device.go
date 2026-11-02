@@ -43,11 +43,9 @@ func Specs() []mcp.ToolSpec {
 "device_id":{"type":"string"},"online":{"type":"boolean"},
 "state":{"type":"string","enum":["idle","working","charging","fault","offline"]},
 "battery_pct":{"type":"number","minimum":0,"maximum":100},"tank_l":{"type":"number","minimum":0,"description":"药箱余量（L）"},
-"fault_code":{"type":"string"},"last_seen_at":` + kit.DateTimeType + `}}`),
+"fault_code":{"type":"string"},"last_seen_at":` + kit.DateTimeType + `,
+"capabilities":{"type":"array","items":{"type":"string"},"description":"设备平台声明的作业能力（P1 L2 新增，仅 real 返回）"}}}`),
 			Level: mcp.LevelRead, Idempotent: true, TimeSensitive: true,
 		},
 	}
 }
-
-// NewReal 构造 real 骨架（未对接上游：待对接极飞 XGEO）。
-func NewReal(cfg kit.RealConfig) *kit.RealServer { return kit.NewRealServer(Name, Specs(), cfg) }

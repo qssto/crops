@@ -89,8 +89,12 @@ func (s *RawStore) Put(ctx context.Context, p model.RawPut) (model.RawObject, er
 	if err := s.obj.PutObject(ctx, s.bucket, key, p.Body, p.ContentType); err != nil {
 		return model.RawObject{}, err
 	}
+	createdAt := p.CreatedAt
+	if createdAt.IsZero() {
+		createdAt = p.At
+	}
 	obj := model.RawObject{TenantID: p.TenantID, FarmID: p.FarmID, Kind: p.Kind, ObjectKey: key,
-		SHA256: Digest(p.Body), SizeBytes: int64(len(p.Body)), CreatedAt: p.At.UTC()}
+		SHA256: Digest(p.Body), SizeBytes: int64(len(p.Body)), CreatedAt: createdAt.UTC()}
 	if p.RunID != 0 {
 		runID := p.RunID
 		obj.RunID = &runID

@@ -176,7 +176,7 @@ const (
 // Valid 判断是否为已登记的 kind。
 func (k RawKind) Valid() bool {
 	switch k {
-	case RawLLMIO, RawToolRaw, RawSnapshot, RawCheckpoint, RawExport:
+	case RawLLMIO, RawToolRaw, RawSnapshot, RawCheckpoint, RawExport, RawDeviceCmd:
 		return true
 	}
 	return false

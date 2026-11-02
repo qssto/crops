@@ -226,6 +226,22 @@ func checkFixtures(s *Sample) []string {
 			}
 		}
 	}
+	return append(msgs, checkDeviceFixture(s.Fixtures.Device)...)
+}
+
+// checkDeviceFixture 宽松校验回执序列：只要求状态 / 失败阶段已登记，且 device_job_id 补齐后回执自洽。
+func checkDeviceFixture(d *DeviceFixture) []string {
+	if d == nil {
+		return nil
+	}
+	var msgs []string
+	for i, f := range d.Receipts {
+		r := f.Receipt()
+		r.DeviceJobID = "recorded"
+		if err := r.Validate(); err != nil {
+			msgs = append(msgs, fmt.Sprintf("fixtures.device.receipts[%d]: %v", i, err))
+		}
+	}
 	return msgs
 }
 

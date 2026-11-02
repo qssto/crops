@@ -3,6 +3,7 @@
 package servers
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"path/filepath"
@@ -15,13 +16,19 @@ import (
 	"agri-steward/internal/agent/tools/mcp/servers/weather"
 	"agri-steward/internal/clock"
 	"agri-steward/internal/config"
+	"agri-steward/internal/model"
 )
 
 // mockLoader 读取 {mock_dir}/{server}.yaml 构造 mock Server。
 type mockLoader func(path string, clk clock.Clock, dir kit.FieldDirectory) (mcp.Server, error)
 
-// realFactory 构造 real 骨架。
-type realFactory func(cfg kit.RealConfig) *kit.RealServer
+// realFactory 构造 real Server（weather / crop / field 仍为骨架；device 配了 base_url 时读设备平台）。
+type realFactory func(cfg kit.RealConfig, clk clock.Clock, dir kit.FieldDirectory) (mcp.Server, error)
+
+// skeleton 把只需配置的 real 骨架构造函数适配为 realFactory。
+func skeleton(f func(kit.RealConfig) *kit.RealServer) realFactory {
+	return func(cfg kit.RealConfig, _ clock.Clock, _ kit.FieldDirectory) (mcp.Server, error) { return f(cfg), nil }
+}
 
 type entry struct {
 	mock mockLoader
@@ -30,9 +37,9 @@ type entry struct {
 
 // registry 是 server 名 → 实现，名字与 config.Tools.Servers() 一致。
 var registry = map[string]entry{
-	weather.Name: {mock: weather.LoadMock, real: weather.NewReal},
-	crop.Name:    {mock: crop.LoadMock, real: crop.NewReal},
-	field.Name:   {mock: field.LoadMock, real: field.NewReal},
+	weather.Name: {mock: weather.LoadMock, real: skeleton(weather.NewReal)},
+	crop.Name:    {mock: crop.LoadMock, real: skeleton(crop.NewReal)},
+	field.Name:   {mock: field.LoadMock, real: skeleton(field.NewReal)},
 	device.Name:  {mock: device.LoadMock, real: device.NewReal},
 }
 
@@ -58,9 +65,15 @@ func Build(cfg *config.Tools, clk clock.Clock, dir kit.FieldDirectory) ([]mcp.Se
 	return out, nil
 }
 
+// DeviceBindings 是 gateway 的设备归属（agent.DeviceOwnership）加评测按结构判定用的本农场设备清单。
+type DeviceBindings interface {
+	OwnsDevice(ctx context.Context, scope model.Scope, deviceID string) (bool, error)
+	DeviceIDs(ctx context.Context, scope model.Scope) ([]string, error)
+}
+
 // DeviceOwnership 按 device server 的 mode 构造设备归属（gateway Options.Devices）：mock 读 {mock_dir}/device.yaml 的显式绑定；
-// real 暂为空绑定，全部 SCOPE_DENIED（fail closed），真实绑定源待 P1-L2（cmd/devicesim + Adapter）。
-func DeviceOwnership(cfg *config.Tools) (*device.Bindings, error) {
+// real 配了 base_url 时按设备平台返回的本农场设备清单判定（P1 L2：devicesim），未配为空绑定、全部 SCOPE_DENIED（fail closed）。
+func DeviceOwnership(cfg *config.Tools) (DeviceBindings, error) {
 	if cfg == nil {
 		return nil, errors.New("servers: cfg is required")
 	}
@@ -72,10 +85,22 @@ func DeviceOwnership(cfg *config.Tools) (*device.Bindings, error) {
 		}
 		return b, nil
 	case config.ToolModeReal:
-		return device.NewBindings(nil), nil // TODO(P1-L2): 接入真实设备绑定源
+		if cfg.Device.Real.BaseURL == "" {
+			return device.NewBindings(nil), nil
+		}
+		p, err := device.NewPlatform(realConfig(config.NamedToolServer{Name: device.Name, ToolServer: cfg.Device}))
+		if err != nil {
+			return nil, fmt.Errorf("servers: device bindings: %w", err)
+		}
+		return device.NewRemoteBindings(p), nil
 	default:
 		return nil, fmt.Errorf("servers: device: unknown mode %q", cfg.Device.Mode)
 	}
+}
+
+// realConfig 取 real 上游配置（超时与 mock 同一项）。
+func realConfig(s config.NamedToolServer) kit.RealConfig {
+	return kit.RealConfig{BaseURL: s.Real.BaseURL, APIKey: s.Real.APIKey, Timeout: s.Timeout}
 }
 
 func build(mockDir string, s config.NamedToolServer, clk clock.Clock, dir kit.FieldDirectory) (mcp.Server, error) {
@@ -91,7 +116,11 @@ func build(mockDir string, s config.NamedToolServer, clk clock.Clock, dir kit.Fi
 		}
 		return srv, nil
 	case config.ToolModeReal:
-		return e.real(kit.RealConfig{BaseURL: s.Real.BaseURL, APIKey: s.Real.APIKey, Timeout: s.Timeout}), nil
+		srv, err := e.real(realConfig(s), clk, dir)
+		if err != nil {
+			return nil, fmt.Errorf("servers: %s real: %w", s.Name, err)
+		}
+		return srv, nil
 	default:
 		return nil, fmt.Errorf("servers: %s: unknown mode %q", s.Name, s.Mode)
 	}

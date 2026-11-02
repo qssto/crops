@@ -57,7 +57,7 @@ type LiveFlagReader interface {
 // DispatchDeps 是 WorkOrderService.Dispatch 的依赖。Recheck 为 nil 时跳过 ④（主链路不支持复检），只告警。
 // Flags / Audit 是第 ② 步的开关直读与 DISPATCH_HELD 审计（P1 L0）。
 type DispatchDeps struct {
-	Adapter adapter.DeviceAdapter
+	Adapter adapter.DryRunner
 	Recheck Prechecker
 	Store   DispatchStore
 	Tx      TxRunner
@@ -408,7 +408,7 @@ func (s *WorkOrderService) markDoneTx(ctx context.Context, tx *repository.DB, re
 }
 
 // adapterName 取 Adapter 的 Name()，未实现返回 custom。
-func adapterName(a adapter.DeviceAdapter) string {
+func adapterName(a adapter.DryRunner) string {
 	if n, ok := a.(interface{ Name() string }); ok {
 		return n.Name()
 	}

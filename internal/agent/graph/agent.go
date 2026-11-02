@@ -63,8 +63,8 @@ type Config struct {
 	Memory      agent.MemoryStore     // L6：记忆注入；空即关闭
 	Trace       callbacks.Handler     // L7：附加 Eino 回调（harness/callbacks 的 STEP_* 事件）；空则不挂
 
-	// P1 L0 接缝，可空（空时 dispatch_mode 固定 DRY_RUN，同 P0）。
-	DispatchMode agent.DispatchModeSource
+	// P1 L0 接缝，可空（空时 dispatch_mode 固定 DRY_RUN，同 P0）。P1-L2 起按设备类型判定（app 组合开关与 Registry）。
+	DispatchMode agent.DeviceDispatchModeSource
 
 	RenewEvery  time.Duration // 租约续期间隔，0 取 runner 默认
 	OrderWindow time.Duration // 建议作业窗口长度，0 取 24h

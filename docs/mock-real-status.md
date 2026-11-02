@@ -18,8 +18,10 @@ real 骨架（`servers/kit/real.go`）与 mock 共用同一份 ToolSpec，P0 不
 | `field.history` | mock | 待对接：极飞 XGEO | 农事记录手写；晚于当前时钟的记录过滤掉 |
 | `field.pest_survey` | mock | 待对接：极飞 XGEO | 人工虫情调查样例；field-005 无调查记录（EMPTY）；无图像识别结果 |
 | `field.soil` | mock | 待对接：极飞 XGEO | 单次土测快照；field-006 无记录（EMPTY） |
-| `device.list` | mock | 待对接：极飞 XGEO | 4 台设备（2 架 P100 无人机、1 个离线水泵、1 个土壤传感器）；P0 只读 |
-| `device.status` | mock | 待对接：极飞 XGEO | 状态与电量静态，新鲜度按心跳滞后计算；无遥测流 |
+| `device.list` | mock；real 可指向 devicesim（P1-L2） | 待对接：极飞 XGEO | 4 台设备（2 架 P100 无人机、1 个离线水泵、1 个土壤传感器）；P0 只读。real 读 devicesim `GET /v1/devices?tenant_id=&farm_id=`，平台按显式绑定只回本农场设备 |
+| `device.status` | mock；real 可指向 devicesim（P1-L2） | 待对接：极飞 XGEO | 状态与电量静态，新鲜度按心跳滞后计算；无遥测流。real 另返回 `capabilities`（只加字段），`source=devicesim`，新鲜度按平台 `last_seen_at` 计算 |
+
+device real 配了 `base_url` 时设备归属（`servers.DeviceOwnership`）也改按平台的本农场清单判定；平台不可用时归属校验返回错误（关闭失败）。同一调用方代码在 mock / real 两种配置下的一致性见 `servers.TestDevice_MockAndRealSameCaller`。
 
 ## 共同缺口
 

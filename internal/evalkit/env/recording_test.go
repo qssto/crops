@@ -3,11 +3,14 @@ package env
 import (
 	"bytes"
 	"context"
+	"errors"
 	"log/slog"
 	"slices"
 	"strings"
 	"testing"
 
+	"agri-steward/internal/adapter"
+	"agri-steward/internal/evalkit/sample"
 	"agri-steward/internal/model"
 )
 
@@ -22,9 +25,9 @@ func TestRecordingAdapter(t *testing.T) {
 	if err != nil || string(res.Commands) != "[]" {
 		t.Fatalf("DryRun = %+v, %v", res, err)
 	}
-	task, err := r.Dispatch(ctx, order, "k-3")
-	if err != nil || task != "recorded-3" {
-		t.Fatalf("Dispatch = %q, %v", task, err)
+	rc, err := r.Dispatch(ctx, order, "k-3")
+	if err != nil || rc.DeviceJobID != "recorded-3" || rc.Status != model.AttemptAccepted {
+		t.Fatalf("Dispatch = %+v, %v", rc, err)
 	}
 	order.Payload[0] = 'X' // 记录须复制 payload
 	got := r.DeviceCalls()
@@ -42,6 +45,52 @@ func TestRecordingAdapter(t *testing.T) {
 	got[0].OrderID = 99
 	if r.DeviceCalls()[0].OrderID != 3 {
 		t.Fatal("DeviceCalls must return a copy")
+	}
+}
+
+// TestRecordingAdapter_ReceiptSequence：样本回执序列按调用次序返回；用完后各方法回默认；QueryStatus / Cancel 归属取下发的作业单。
+func TestRecordingAdapter_ReceiptSequence(t *testing.T) {
+	area := 3.5
+	r, err := NewRecordingAdapter(&sample.DeviceFixture{Receipts: []sample.ReceiptFixture{
+		{Status: "ACCEPTED", Code: "OK"}, {Status: "EXECUTING"}, {Status: "PARTIALLY_DONE", DoneAreaMu: &area}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	order := model.WorkOrder{OrderID: 5, TenantID: 1, FarmID: 2, FieldID: 201}
+	want := []model.AttemptStatus{model.AttemptAccepted, model.AttemptExecuting, model.AttemptPartiallyDone,
+		model.AttemptPartiallyDone, model.AttemptCanceled}
+	var got []model.AttemptStatus
+	steps := []func() (model.DeviceReceipt, error){
+		func() (model.DeviceReceipt, error) { return r.Dispatch(ctx, order, "k-5") },
+		func() (model.DeviceReceipt, error) {
+			return r.QueryStatus(ctx, adapter.StatusRef{DeviceJobID: "recorded-5"})
+		},
+		func() (model.DeviceReceipt, error) { return r.QueryStatus(ctx, adapter.StatusRef{IdemKey: "k-5"}) },
+		func() (model.DeviceReceipt, error) {
+			return r.QueryStatus(ctx, adapter.StatusRef{DeviceJobID: "recorded-5"})
+		},
+		func() (model.DeviceReceipt, error) { return r.Cancel(ctx, "recorded-5") },
+	}
+	for i, step := range steps {
+		rc, err := step()
+		if err != nil || rc.DeviceJobID != "recorded-5" {
+			t.Fatalf("step %d = %+v, %v", i, rc, err)
+		}
+		got = append(got, rc.Status)
+	}
+	if !slices.Equal(got, want) {
+		t.Fatalf("statuses = %v, want %v", got, want)
+	}
+	calls := r.DeviceCalls()
+	if len(calls) != 5 || calls[4].String() != "Cancel order=5 job=recorded-5" || calls[2].FarmID != 2 {
+		t.Fatalf("calls = %+v", calls)
+	}
+	if _, err := r.QueryStatus(ctx, adapter.StatusRef{DeviceJobID: "nope"}); !errors.Is(err, adapter.ErrJobNotFound) {
+		t.Fatalf("unknown job err = %v", err)
+	}
+	if _, err := NewRecordingAdapter(&sample.DeviceFixture{Receipts: []sample.ReceiptFixture{{Status: "FAILED"}}}); err == nil {
+		t.Fatal("FAILED without failure_kind must be rejected")
 	}
 }
 

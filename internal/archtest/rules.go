@@ -139,6 +139,10 @@ var Rules = []Rule{
 	// P1-L1-B：跨农场扫描凭证只许白名单文件构造（P1 手册 §6.2 流程 3）。
 	// 收紧计划：P1-L4 扫描与 outbox 轮询迁到 cmd/worker 后，白名单改为只含 cmd/worker。
 	{Name: "only scan/outbox pollers may construct repository.SystemScope", SysOnly: systemScopeCallers},
+	// P1-L2：Adapter 只翻译协议、不碰库也不碰 Agent（P1 手册 §6.3）；原始指令 / 回执经 Traced 注入的
+	// RawPutter / CallRecorder 接口落库，台账由下发器写，避免设备层反向依赖持久化与编排。
+	{Name: "adapter must not import repository/agent",
+		Applies: in("internal/adapter"), Bad: importsAny("internal/repository", "internal/agent")},
 }
 
 // systemScopeCallers 是可构造 repository.SystemScope 的文件白名单（server 内扫描与 outbox 轮询）。

@@ -9,17 +9,19 @@ import (
 	"agri-steward/internal/model"
 )
 
-// fakeDispatchMode 是 agent.DispatchModeSource 的桩：记录读取次数与 Scope。
+// fakeDispatchMode 是 agent.DeviceDispatchModeSource 的桩：记录读取次数、Scope 与设备类型。
 type fakeDispatchMode struct {
-	mode  model.DispatchMode
-	err   error
-	calls int
-	scope model.Scope
+	mode   model.DispatchMode
+	err    error
+	calls  int
+	scope  model.Scope
+	device string
 }
 
-func (f *fakeDispatchMode) DispatchMode(_ context.Context, scope model.Scope) (model.DispatchMode, error) {
+func (f *fakeDispatchMode) DispatchModeFor(_ context.Context, scope model.Scope, deviceType string) (model.DispatchMode, error) {
 	f.calls++
 	f.scope = scope
+	f.device = deviceType
 	return f.mode, f.err
 }
 
@@ -68,6 +70,10 @@ func TestAgentAsk_DispatchMode(t *testing.T) {
 			}
 			if tt.src.calls != tt.wantCalls || tt.src.scope.FarmID != q.Scope.FarmID || tt.src.scope.TenantID != q.Scope.TenantID {
 				t.Errorf("source calls=%d scope=%+v, want %d / %+v", tt.src.calls, tt.src.scope, tt.wantCalls, q.Scope)
+			}
+			// P1-L2：按作业单的 device_type 判定（Registry.Openable 在 app 侧组合）。
+			if tt.src.device == "" || tt.src.device != ans.Order.DeviceType {
+				t.Errorf("source device_type = %q, want order device_type %q", tt.src.device, ans.Order.DeviceType)
 			}
 		})
 	}

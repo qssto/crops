@@ -13,12 +13,8 @@ import (
 // MockName 是 MockAdapter 的名称（写入 dispatch_result.adapter）。
 const MockName = "mock"
 
-var (
-	// ErrRealDispatchDisabled 表示 P0 不允许真实下发（enable_robot_dispatch 固定关）。
-	ErrRealDispatchDisabled = errors.New("adapter: real dispatch disabled in P0")
-	// ErrUnsupportedWork 表示作业类型无对应的设备指令。
-	ErrUnsupportedWork = errors.New("adapter: unsupported work type")
-)
+// ErrUnsupportedWork 表示作业类型无对应的设备指令。
+var ErrUnsupportedWork = errors.New("adapter: unsupported work type")
 
 // Command 是一条将下发的设备指令（dry-run 只生成、不发送）。
 type Command struct {
@@ -52,16 +48,16 @@ type orderPayload struct {
 	AreaMu    json.RawMessage `json:"area_mu"`
 }
 
-// MockAdapter 是 P0 的设备 Adapter：DryRun 按 work_type 把 payload 转成指令数组（纯计算，无 IO），
-// Dispatch 一律返回 ErrRealDispatchDisabled。零值可用。
+// MockAdapter 是 P0 的 dry-run Adapter：DryRun 按 work_type 把 payload 转成指令数组（纯计算，无 IO）。
+// 不实现 DeviceAdapter：P1 真实下发走 Registry（P1-L2 起去掉了原先恒返回错误的 Dispatch）。零值可用。
 type MockAdapter struct{}
 
-var _ DeviceAdapter = MockAdapter{}
+var _ DryRunner = MockAdapter{}
 
 // Name 返回 MockName。
 func (MockAdapter) Name() string { return MockName }
 
-// DryRun 实现 DeviceAdapter。
+// DryRun 实现 DryRunner。
 func (MockAdapter) DryRun(ctx context.Context, order model.WorkOrder) (DryRunResult, error) {
 	if err := ctx.Err(); err != nil {
 		return DryRunResult{}, err
@@ -105,9 +101,4 @@ func commands(order model.WorkOrder, p orderPayload) ([]Command, error) {
 	default:
 		return nil, fmt.Errorf("%w: order %d work_type %q", ErrUnsupportedWork, order.OrderID, order.WorkType)
 	}
-}
-
-// Dispatch 实现 DeviceAdapter：P0 不真实下发。
-func (MockAdapter) Dispatch(context.Context, model.WorkOrder, string) (string, error) {
-	return "", ErrRealDispatchDisabled
 }

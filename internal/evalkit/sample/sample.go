@@ -44,6 +44,27 @@ type Fixtures struct {
 	MCP      map[string][]ToolFixture `yaml:"mcp,omitempty"`
 	Memory   map[string]any           `yaml:"memory,omitempty"`
 	Approver string                   `yaml:"approver,omitempty"`
+	Device   *DeviceFixture           `yaml:"device,omitempty"` // P1 L2：RecordingAdapter 的回执序列
+}
+
+// DeviceFixture 是样本声明的设备回执序列：RecordingAdapter 的 Dispatch / QueryStatus / Cancel 按调用次序逐个返回；
+// 用完后 Dispatch 回 ACCEPTED、QueryStatus 重复最后一条、Cancel 回 CANCELED。
+type DeviceFixture struct {
+	Receipts []ReceiptFixture `yaml:"receipts"`
+}
+
+// ReceiptFixture 是一条标准回执（字段同 model.DeviceReceipt；device_job_id 为空时取 recorded-{order_id}）。
+type ReceiptFixture struct {
+	Status      string   `yaml:"status"`
+	FailureKind string   `yaml:"failure_kind,omitempty"`
+	DoneAreaMu  *float64 `yaml:"done_area_mu,omitempty"`
+	Code        string   `yaml:"code,omitempty"`
+}
+
+// Receipt 转为标准回执（未补 device_job_id，不校验）。
+func (f ReceiptFixture) Receipt() model.DeviceReceipt {
+	return model.DeviceReceipt{Status: model.AttemptStatus(f.Status), FailureKind: model.FailureKind(f.FailureKind),
+		DoneAreaMu: f.DoneAreaMu, Code: f.Code}
 }
 
 // ToolFixture 是某个工具的一条桩返回：按 match 子集匹配入参；return / returns / error 三选一：

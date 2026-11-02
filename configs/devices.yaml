@@ -1,0 +1,15 @@
+# 设备 Adapter 注册表配置（config.LoadDevices 经 Viper 加载，环境变量覆盖，如 AS_DEVICESIM_ENABLED=true）。
+# 四类真实设备（uav / vehicle / valve / fertigation）协议未提供（D4），一律按骨架登记为不可开放。
+# devicesim 是本地设备模拟平台（make devicesim 启动），只用于本地 / 预发演练：enabled=true 时
+# device_types 中的类型改由 devicesim Adapter 承接并进入可开放集合（仍需 enable_robot_dispatch 开关为 true 才写 REAL）。
+# 生产保护：enabled=true 时 configs/app.yaml 的 env=prod（或 env 为空）、base_url 非回环地址（localhost / 127.0.0.0/8 / ::1）
+# 都使启动失败。
+devicesim:
+  enabled: false
+  base_url: http://127.0.0.1:8090
+  timeout: 3s
+  device_types: [uav]
+  capabilities:
+    cancel: true
+    idem_key: true
+    external_query: true

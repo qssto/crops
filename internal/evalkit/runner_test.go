@@ -166,7 +166,7 @@ func TestRunner_RecordsToolCalls(t *testing.T) {
 
 // deviceAgent 写一条日志并调一次设备 DryRun 后拒答，用来验证 trial 记录 Adapter 调用与捕获日志。
 type deviceAgent struct {
-	dev    adapter.DeviceAdapter
+	dev    adapter.DryRunner
 	logger *slog.Logger
 }
 

@@ -118,6 +118,24 @@ func TestValidator_DefaultRules(t *testing.T) {
 				s[1].Fixtures.MCP = map[string][]ToolFixture{"weather.forecast": {{Error: "boom"}}}
 				return s
 			}},
+		{name: "valid device receipts", mutate: func(s []*Sample) []*Sample {
+			mu := 7.5
+			s[1].Fixtures.Device = &DeviceFixture{Receipts: []ReceiptFixture{{Status: "ACCEPTED"}, {Status: "EXECUTING"},
+				{Status: "PARTIALLY_DONE", DoneAreaMu: &mu}, {Status: "FAILED", FailureKind: "NOT_EXECUTED"}}}
+			return s
+		}},
+		{name: "device receipt bad status", wantRule: RuleFixtures, wantID: "s-1", mutate: func(s []*Sample) []*Sample {
+			s[1].Fixtures.Device = &DeviceFixture{Receipts: []ReceiptFixture{{Status: "SENT"}}}
+			return s
+		}},
+		{name: "device failed without kind", wantRule: RuleFixtures, wantID: "s-1", mutate: func(s []*Sample) []*Sample {
+			s[1].Fixtures.Device = &DeviceFixture{Receipts: []ReceiptFixture{{Status: "FAILED"}}}
+			return s
+		}},
+		{name: "device partial without area", wantRule: RuleFixtures, wantID: "s-1", mutate: func(s []*Sample) []*Sample {
+			s[1].Fixtures.Device = &DeviceFixture{Receipts: []ReceiptFixture{{Status: "PARTIALLY_DONE"}}}
+			return s
+		}},
 		{name: "valid fixtures", mutate: func(s []*Sample) []*Sample {
 			s[1].Fixtures.MCP = map[string][]ToolFixture{
 				"weather.forecast":  {{Match: map[string]any{"field": "field-002"}, Returns: []any{map[string]any{"a": 1}, "x"}}},

@@ -8,7 +8,7 @@ BASELINE ?=
 -include deploy/.env
 export
 
-.PHONY: build test test-integration eval validate vet up minio-local migrate migrate-eval seed server reconcile
+.PHONY: build test test-integration eval validate vet up minio-local migrate migrate-eval seed server reconcile devicesim
 
 build:
 	$(GO) build ./...
@@ -45,6 +45,10 @@ seed:
 
 server:
 	$(GO) run ./cmd/server
+
+# P1-L2 本地设备模拟平台（只用于本地 / 预发演练；地址与 configs/devices.yaml 的 devicesim.base_url 一致）
+devicesim:
+	$(GO) run ./cmd/devicesim
 
 # L7 指标对账：生产库 agri_steward 某 UTC 日 MetricsService.Daily vs 直接 SQL（DAY=YYYY-MM-DD，缺省当天）
 reconcile:

@@ -160,11 +160,16 @@ func (f *infraFlags) open(ctx context.Context, logW io.Writer, ls *loadedSamples
 		if err != nil {
 			return app.Deps{}, err
 		}
+		// P1-L2：样本可声明 fixtures.device.receipts，RecordingAdapter 按序回执。
+		dev, err := env.NewRecordingAdapter(smp.Fixtures.Device)
+		if err != nil {
+			return app.Deps{}, err
+		}
 		return app.Deps{Clock: s.Clock, Logger: trialLog, DB: s.DB, Redis: in.rdb, Keys: s.Keys,
 			RawStore: repository.NewRawStore(s.DB, putter, cfg.MinIO.BucketRaw),
 			// 主链路（桩模型）在 Build 内用本 trial 的 Runs / Advice / Drafts / RunLocker 装配；Tools 为每 trial 一个 FixtureMCP。
 			NewAgent: app.GraphAgent(ctx, app.GraphConfig{Model: mcfg, Chat: chat, KB: ls.kb, Taxonomy: ls.tx}),
-			Tools:    tools, Risk: risk, Permissions: perms, Adapter: &env.RecordingAdapter{},
+			Tools:    tools, Risk: risk, Permissions: perms, Adapter: dev,
 			// L6：检查点读回走 MinIO；记忆按配置开关注入样本 fixtures.memory（不读 trial 库 episodic_memory）。
 			HITL: app.HITLDeps{Objects: repository.MinIOGetter{Client: mc}, RawBucket: cfg.MinIO.BucketRaw,
 				Memory: memory.Options{Enabled: cfg.Memory.Enabled, EpisodicLimit: cfg.Memory.EpisodicLimit,

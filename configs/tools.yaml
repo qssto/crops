@@ -23,4 +23,7 @@ tools:
     mode: mock
     timeout: 3s
     level: read
-    real: {base_url: ""}   # 待对接：极飞 XGEO
+    # 待对接：极飞 XGEO。P1-L2：real 配了 base_url 即从设备平台 GET /v1/devices 取清单与实时状态，
+    # 本地 / 预发指向 devicesim（如 AS_TOOLS_DEVICE_MODE=real AS_TOOLS_DEVICE_REAL_BASE_URL=http://127.0.0.1:8090）；
+    # base_url 为空时 real 仍是骨架（UPSTREAM）。eval 与集成测试默认 mock。
+    real: {base_url: ""}

@@ -276,10 +276,11 @@ func (a *Agent) toOrder(ctx context.Context, s *state) (*state, error) {
 	if err != nil {
 		return s, fmt.Errorf("to_order: encode payload: %w", err)
 	}
+	device := deviceOf(s.dec)
 	o := model.WorkOrder{AdviceID: c.AdviceID, RunID: s.runID, TenantID: c.TenantID, FarmID: c.FarmID,
-		FieldID: c.FieldID, WorkType: s.dec.WorkType, DeviceType: deviceOf(s.dec), Payload: payload,
+		FieldID: c.FieldID, WorkType: s.dec.WorkType, DeviceType: device, Payload: payload,
 		TimeWindow: *c.SuggestedWindow, ConstraintChecks: a.constraintChecks(s),
-		Status: model.OrderDraft, DispatchMode: a.dispatchMode(ctx, s.q.Scope)}
+		Status: model.OrderDraft, DispatchMode: a.dispatchMode(ctx, s.q.Scope, device)}
 	id, err := a.cfg.Drafts.CreateDraft(ctx, s.q.Scope, o)
 	if err != nil {
 		return s, fmt.Errorf("to_order: create draft: %w", err)
@@ -292,14 +293,16 @@ func (a *Agent) toOrder(ctx context.Context, s *state) (*state, error) {
 	return s, nil
 }
 
-// dispatchMode 在 to_order 读一次开关写定 dispatch_mode；未装配或读取失败按 DRY_RUN（失败关闭）。
-func (a *Agent) dispatchMode(ctx context.Context, scope model.Scope) model.DispatchMode {
+// dispatchMode 在 to_order 读一次开关写定 dispatch_mode（P1-L2：按设备类型，开关开且类型可开放才 REAL）；
+// 未装配或读取失败按 DRY_RUN（失败关闭）。
+func (a *Agent) dispatchMode(ctx context.Context, scope model.Scope, deviceType string) model.DispatchMode {
 	if a.cfg.DispatchMode == nil {
 		return model.DispatchDryRun
 	}
-	m, err := a.cfg.DispatchMode.DispatchMode(ctx, scope)
+	m, err := a.cfg.DispatchMode.DispatchModeFor(ctx, scope, deviceType)
 	if err != nil {
-		a.log.ErrorContext(ctx, "to_order: read dispatch mode, fall back to DRY_RUN", "farm_id", scope.FarmID, "err", err)
+		a.log.ErrorContext(ctx, "to_order: read dispatch mode, fall back to DRY_RUN", "farm_id", scope.FarmID,
+			"device_type", deviceType, "err", err)
 		return model.DispatchDryRun
 	}
 	return m
