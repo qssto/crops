@@ -183,8 +183,10 @@ func (ApprovalRepo) LockTicketByOrderSeqTx(ctx context.Context, tx *gorm.DB, ref
 	return t, ok, nil
 }
 
-// InsertTicketTx 插入 PREPARING 票（§6.6 定版 SQL，ticket_seq 固定 1）；命中 uk_order_seq 时返回已有 id 且 created=false。
-func (ApprovalRepo) InsertTicketTx(ctx context.Context, tx *gorm.DB, t model.ApprovalTicket, now time.Time) (id uint64, created bool, err error) {
+// InsertTicketTx 插入 PREPARING 票（§6.6 定版 SQL，ticket_seq 固定 1；P1 L5 追加 risk_reasons，JSON 数组，无命中为 []）；
+// 命中 uk_order_seq 时返回已有 id 且 created=false。
+func (ApprovalRepo) InsertTicketTx(ctx context.Context, tx *gorm.DB, t model.ApprovalTicket, riskReasons []string,
+	now time.Time) (id uint64, created bool, err error) {
 	if err := requireFarm(t.TenantID, t.FarmID); err != nil {
 		return 0, false, err
 	}
@@ -192,12 +194,19 @@ func (ApprovalRepo) InsertTicketTx(ctx context.Context, tx *gorm.DB, t model.App
 	if err != nil {
 		return 0, false, fmt.Errorf("repository: encode required_role: %w", err)
 	}
+	if riskReasons == nil {
+		riskReasons = []string{}
+	}
+	reasons, err := json.Marshal(riskReasons)
+	if err != nil {
+		return 0, false, fmt.Errorf("repository: encode risk_reasons: %w", err)
+	}
 	res, err := execInTx(ctx, tx,
 		`INSERT INTO approval_ticket (tenant_id, farm_id, run_id, order_id, ticket_kind, ticket_seq, risk_level, required_role, confirm_required,
-  initiator_id, snapshot_digest, snapshot_raw_id, status, created_at, updated_at)
-VALUES (?, ?, ?, ?, 'ORDER', 1, ?, ?, ?, ?, ?, ?, 'PREPARING', ?, ?) ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id)`,
+  initiator_id, snapshot_digest, snapshot_raw_id, status, risk_reasons, created_at, updated_at)
+VALUES (?, ?, ?, ?, 'ORDER', 1, ?, ?, ?, ?, ?, ?, 'PREPARING', ?, ?, ?) ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id)`,
 		t.TenantID, t.FarmID, t.RunID, t.OrderID, string(t.RiskLevel), string(roles), t.ConfirmRequired,
-		t.InitiatorID, t.Snapshot.Digest, t.Snapshot.RawObjectID, now, now)
+		t.InitiatorID, t.Snapshot.Digest, t.Snapshot.RawObjectID, string(reasons), now, now)
 	if err != nil {
 		return 0, false, fmt.Errorf("repository: insert approval_ticket order %d: %w", t.OrderID, err)
 	}

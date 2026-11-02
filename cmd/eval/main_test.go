@@ -74,8 +74,8 @@ signed_at: 2026-10-28
 	}{
 		{name: "no args", args: nil, wantCode: exitUsage},
 		{name: "unknown subcommand", args: []string{"foo"}, wantCode: exitUsage},
-		// 163 个样本全部静态校验；其中 rice-rcpt-0001..0006 共 6 个隔离（需 REAL 评测设施），run 只跑 157 个。
-		{name: "validate repo samples", wantCode: exitOK, wantStdout: "validate OK: 163 samples",
+		// 171 个样本全部静态校验；其中 rice-rcpt-0001..0006 共 6 个隔离（需 REAL 评测设施），run 只跑 165 个。
+		{name: "validate repo samples", wantCode: exitOK, wantStdout: "validate OK: 171 samples",
 			args: []string{"validate", "--suites-dir", suites, "--taxonomy", tax, "--repo", repoRoot}},
 		{name: "validate counts quarantined", wantCode: exitOK, wantStdout: "6 quarantined (run skips them)\n",
 			args: []string{"validate", "--suites-dir", suites, "--taxonomy", tax, "--repo", repoRoot}},
@@ -97,7 +97,7 @@ signed_at: 2026-10-28
 		{name: "run baseline bad name", wantCode: exitFailed, wantStderr: "baseline name",
 			args: []string{"run", "--suites-dir", suites, "--taxonomy", tax, "--repo", repoRoot, "--out", outDir,
 				"--baseline", "../escape"}},
-		{name: "kbdump regression", wantCode: exitOK, wantStdout: "kbdump: 117 samples",
+		{name: "kbdump regression", wantCode: exitOK, wantStdout: "kbdump: 125 samples",
 			args: []string{"kbdump", "--suites-dir", suites, "--taxonomy", tax, "--repo", repoRoot, "--suite", "regression"}},
 		{name: "kbdump unknown suite", wantCode: exitFailed, wantStderr: "no sample matches",
 			args: []string{"kbdump", "--suites-dir", suites, "--taxonomy", tax, "--repo", repoRoot, "--suite", "nope"}},

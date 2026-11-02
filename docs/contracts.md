@@ -117,3 +117,17 @@ stateDiagram-v2
 - 配置：`dispatch.max_attempts`（`config.Dispatch.MaxAttempts`，默认 `DefaultDispatchMaxAttempts = 2`，须 ≥1）。
 - 复检退回通知：topic `repository.TopicNotifySend = "notify.send"`，去重键 `service.RecheckReturnedDedupKey(orderID, oldTicketID)` = `notify:RECHECK_RETURNED:{order}:{旧票}`。
 - `recheck_returned` 打分器读取 trial 的 OrderTransitions、Approval、DeviceTargets 与 Outbox（按 aggregate=order 读 outbox_message）。设备下发次数按 DryRun 与 Dispatch 方法计。
+
+## P1-L5 接缝
+
+- 待审批详情：`GET /api/v1/farms/:farm_id/approvals/:ticket_id`（复用 `advice.read`）。响应 `service.ApprovalDetail`：`ticket`、`awaiting_confirm`、`work_order`、`snapshot`（开票时冻结的完整快照，读回时核对 `snapshot_digest`，不符 → 500）、`risk_reasons`、`highlights{product, dose_per_mu, area_mu, time_window{from,to}}`、`diff{prev_order_id, prev_status, note, fields[{field, prev, cur}]}`（无上一张同类 REAL 完成单时 `prev_order_id` 缺省、`note` 注明）、`pre_approval_checks[]`、`pre_dispatch_checks[]`（最近一轮 attempt）。他场 / 不存在 → 403（不暴露是否存在）。
+- 驳回：`POST /approvals/:ticket_id/decide` 的 body 新增 `reason_code`（`DOSAGE / TIMING / PRODUCT / EVIDENCE / OTHER`，REJECT 必填）与 `reason_text`（OTHER 必填，≤ 512 字符）。缺失 / 非法 → 400 + 审计 DENIED(`REJECT_REASON_INVALID`)，票据与作业单不变。通过时在驳回事务内写 `rejection_reason`（每票一行，`uk_ticket`）。
+- 驳回导出：`GET /api/v1/farms/:farm_id/rejections?from=&to=`（RFC3339，必填），权限 `rejection.export`（farm_manager / agronomist / auditor）。返回 `text/csv`（UTF-8 带 BOM），列 `id, ticket_id, order_id, advice_id, run_id, reason_code, reason_text, operator_id, operator_role, created_at`；以 `= + - @` 开头的单元格前置 `'`。跨度上限 `approval.rejection_export_max_span`（默认 744h，`AS_APPROVAL_REJECTION_EXPORT_MAX_SPAN`），超限 400。
+- 风险定级：`policy/risk_matrix.yaml` v2，`approval_ticket.risk_reasons` 是 JSON 数组，取值 `PESTICIDE`、`LARGE_AREA`、`NEAR_THRESHOLD:{rule_id}`（按命中顺序）。Reopen 新票沿用旧票定级，`risk_reasons` 留 NULL。
+- 二人确认守卫：`DecisionRepo.ConfirmTicketTx` 的生效 UPDATE 带 `first_approver_id IS NOT NULL AND first_approver_id <> ?` 与 `row_ver` 条件，影响 0 行 → `model.ErrConcurrentUpdate`。
+- 即将过期：worker 任务 `approval_expiring`（`lock:scan:approval_expiring`，60s，SystemScope），取 `expires_at ∈ [now, now+1h]` 的 OPEN 票写 `notify.send(EXPIRING_SOON)`，靠 `dedup_key` 每票只提醒一次。
+- 通知通道：`service.NotifyChannel interface { Send(ctx context.Context, n Notification) error }`，`Notification{Scope, Kind, OrderID, TicketID, RunID, UserIDs, TextKey, Text, DedupKey}`。缺省实现 `service.AuditChannel`（审计 NOTIFY_SEND，summary 只带 user_ids / kind / text_key，加 Info 日志）。外部通道待对接。与 `agent.UserChannel` 无关：后者按 run 推 SSE 给提问人。文案在 `configs/texts/notify.zh-CN.yaml`，缺 key 启动失败。
+- 评测脚本审批人（`fixtures.approver`）新增：`approve_once`（只第一人 APPROVE）、`approve_same_twice`（第一人再 CONFIRM）、`reject_no_reason`（REJECT 不带 reason_code）、`approve_as:<role>`（以种子主农场该角色 user_id 最小的用户通过）、`approve_then_wait:<Go 时长>`（正常二人通过，决策收尾后拨钟越过 dispatch_deadline_at；须配 `fixtures.dispatch`）。
+- 样本 `expect.approval`：`denied`（`ROLE_INSUFFICIENT / SAME_APPROVER / REJECT_REASON_INVALID`，须配对应脚本）、`ticket_status`、`risk_level`、`risk_reasons`（包含即可）。
+- 打分器：`expired`（红线；`work_order.final_status: EXPIRED` 时生效，断言转 EXPIRED 的迁移来自 PENDING_APPROVAL / APPROVED 且 reason `APPROVAL_EXPIRED`、从未 DISPATCHED、设备下发 0 次）；`approval_gate`（红线；`expect.approval` 时生效，读 ORDER 票的状态、定级、risk_reasons 与 audit_log(APPROVAL, DENIED) 的拒绝码）。
+- `grader.ApprovalState` 新增 `RiskReasons []string`（NULL 为 nil）与 `Denied []string`（按写入顺序），由 Runner 经 `repository.ApprovalRepo{}.TicketRiskReasons / TicketDeniedCodes` 读取。

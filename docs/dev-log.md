@@ -569,3 +569,25 @@
 - 下发被拒不重试：Adapter 返回 ErrRejected 不进入重试。
 - Renew 无超时：持锁续期调用没有单独的超时。
 - 仅评测用的代码留在生产包内，待单独清理。
+
+## P1-L5 · 审批体系：风险矩阵 v2、二人确认守卫、驳回原因、即将过期、站内通知、审批页数据（2026-11-02）
+
+- 迁移 `0010_approval_l5`（§6.6 SQL 照抄：`approval_ticket.risk_reasons` JSON + `rejection_reason` 表），migrations 被 gitignore，不提交，由调度方在主仓应用。
+- 风险矩阵 v2（`policy/risk_matrix.yaml` + `harness/policy/risk.go`）：`PESTICIDE` / `LARGE_AREA`（`large_area_mu: 50`）/ `NEAR_THRESHOLD:{rule_id}`（风 0.2、雨 0.2、温 0.1 相对裕度）任一命中 → HIGH + confirm_required，命中顺序写 `risk_reasons`；TTL HIGH 2h / LOW 6h；阈值与 TTL 标「待业务确认」。加载校验：缺 SPRAY、用药类缺 agronomist、HIGH 无 confirm、裕度越界即启动失败；未列作业类型开票失败。Reopen 沿用旧票定级（risk_reasons 留 NULL）。
+- 路由与守卫：P0 校验顺序与错误码不变。`DecisionRepo.ConfirmTicketTx` 的生效 UPDATE 追加 `first_approver_id IS NOT NULL AND first_approver_id <> ?`，0 行 → ErrConcurrentUpdate。
+- 驳回原因：REJECT 必填 `reason_code`（DOSAGE/TIMING/PRODUCT/EVIDENCE/OTHER，OTHER 须 `reason_text` ≤512），缺失 / 非法 → 400 + DENIED(`REJECT_REASON_INVALID`)，在 P0 校验之后判定；驳回事务内 `InsertRejectionTx`（advice/run 取自 work_order，写失败整体回滚）。
+- 导出：`GET /farms/:farm_id/rejections?from=&to=`，权限 `rejection.export`（farm_manager / agronomist / auditor，已登记权限矩阵与 access 路由表），跨度上限 `approval.rejection_export_max_span`（744h）；CSV 带 BOM、英文列名、`csvSafe` 防公式注入。
+- 即将过期：worker 任务 `approval_expiring`（`service/scan_expiring.go`，`lock:scan:approval_expiring` 60s，SystemScope），只写 `notify.send(EXPIRING_SOON)`，`dedup_key` 保证每票一次。两类过期（PENDING_APPROVAL 过 expires_at、APPROVED 过 dispatch_deadline_at）核对均转 EXPIRED(APPROVAL_EXPIRED)。
+- 通知：`Activate` 同事务写 `notify.send(PENDING_APPROVAL)`；`service/notify.go` 处理器替换 NotifyPlaceholder，四种 kind 按简报解析接收人，无接收人 → 审计 FAILED + Warn 并置 DONE，未知 kind → ErrBadOutboxPayload。通道 `service.NotifyChannel`（缺省 `AuditChannel`：审计 NOTIFY_SEND + 日志，不含 PII）；外部通道待对接。它与 `agent.UserChannel` 的关系：UserChannel 按 run 给提问人推 SSE，NotifyChannel 经 outbox 异步发给农场内其他角色，签名互不影响。文案 `configs/texts/notify.zh-CN.yaml`，缺 key 启动失败。
+- 审批页数据：`GET /farms/:farm_id/approvals/:ticket_id`（`service/approval_detail.go`）返回快照（核对 digest）、高亮、与上一张同类 REAL 完成单的差异（无则 note 注明）、PRE_APPROVAL 与最近一轮 PRE_DISPATCH 校验；差异写进快照参与 `snapshot_digest`（RawStore.Put 仍先于事务）。amis 页面片段在回报里交调度方。
+- 评测：脚本审批人新增 `approve_once / approve_same_twice / reject_no_reason / approve_as:<role> / approve_then_wait:<dur>`（`approve_after` 已核对不变）；样本字段 `expect.approval{denied, ticket_status, risk_level, risk_reasons}`；新红线打分器 `expired`、`approval_gate`，`grader.ApprovalState` 加 `RiskReasons / Denied`（读 audit_log APPROVAL DENIED）。
+  - 样本 rice-approval-0001–0008：用药类非农艺师审批、审批超时 EXPIRED、已批未下发超时 EXPIRED、HIGH 只一人通过、第二人同第一人、驳回缺原因、LARGE_AREA、NEAR_THRESHOLD。validate 163 → 171（6 条隔离，run 165），regression kbdump 117 → 125。
+  - worktree 里 `go run ./cmd/eval validate` 被权限拒绝，改由 cmd/eval 的 go test「validate repo samples」核对。
+- 测试：TestParseRiskMatrix_Invalid、TestRiskMatrix_Assess、TestDecide_RejectReasonInvalid、TestDecide_ConfirmGuardZeroRows、TestRejectionExportHandler、TestRejectionExport_Window、TestScanner_ApprovalExpiring、TestNotifyHandler、TestApprovalDetail_Errors、TestExpired、TestApprovalGate、TestCheckApproval 等，均含应失败用例。集成 TestConfirmTicketTxGuard_Integration、TestRejectionInsertAndExport_Integration、TestListExpiring_Integration、TestTicketGateObservations_Integration 只过了 vet，待调度方在主仓带 0010 迁移跑。
+
+### P1-L5 遗留
+
+- Reopen 新票 `risk_reasons` 为 NULL（沿用旧票定级但不复制原因）。
+- `expired` 的「下发被拒有审计」以 work_order_transition(APPROVAL_EXPIRED) 投影为证据，不单独读审计行。
+- 新打分器需要 DB，没进 graph 回归桩的 redLine 列表；8 条样本的 Gate 依赖调度方跑 `make eval`。
+- 验收第 5 条（专家 / 机手试用）待签字。

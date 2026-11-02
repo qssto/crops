@@ -29,6 +29,11 @@ type memDecisions struct {
 	deadline  *time.Time
 	audits    []string
 	failOn    string // 指定一步返回错误，验证回滚
+	// P1 L5：驳回原因行（事务回滚同步撤销）与生效 UPDATE 走了哪条守卫
+	rejections []repository.RejectionInput
+	confirms   int
+	// beforeWrite 在 ConfirmTicketTx 守卫判定前改写库中行，模拟读后被并发改动
+	beforeWrite func(*repository.TicketRow)
 	// 待审批列表
 	pending    []repository.PendingRow
 	orders     map[uint64]model.WorkOrder
@@ -37,7 +42,8 @@ type memDecisions struct {
 
 func (m *memDecisions) snapshot() memDecisions {
 	return memDecisions{ticket: m.ticket, runStatus: m.runStatus, runReason: m.runReason,
-		decisions: append([]repository.DecisionRow(nil), m.decisions...), outbox: m.outbox, memories: m.memories, deadline: m.deadline}
+		decisions: append([]repository.DecisionRow(nil), m.decisions...), outbox: m.outbox, memories: m.memories, deadline: m.deadline,
+		rejections: append([]repository.RejectionInput(nil), m.rejections...)}
 }
 
 func (m *memDecisions) InTx(_ context.Context, fn func(tx *repository.DB) error) error {
@@ -45,6 +51,7 @@ func (m *memDecisions) InTx(_ context.Context, fn func(tx *repository.DB) error)
 	if err := fn(nil); err != nil {
 		m.ticket, m.runStatus, m.runReason, m.decisions = before.ticket, before.runStatus, before.runReason, before.decisions
 		m.outbox, m.memories, m.deadline = before.outbox, before.memories, before.deadline
+		m.rejections = before.rejections
 		return err
 	}
 	return nil
@@ -90,6 +97,30 @@ func (m *memDecisions) DecideTicketTx(_ context.Context, _ *repository.DB, t rep
 	}
 	m.ticket.Status, m.ticket.OperatorID, m.ticket.DecidedAt = string(to), &op, &now
 	m.ticket.RowVer++
+	return nil
+}
+
+// ConfirmTicketTx 模拟 §6.6 第二审批人守卫：first_approver_id 为空或等于本人时 0 行。
+func (m *memDecisions) ConfirmTicketTx(_ context.Context, _ *repository.DB, t repository.TicketRow, op uint64, now time.Time) error {
+	if m.beforeWrite != nil {
+		m.beforeWrite(&m.ticket)
+	}
+	if !m.guard(t, now) || m.ticket.SnapshotDigest != t.SnapshotDigest || m.ticket.FirstApproverID == nil ||
+		*m.ticket.FirstApproverID == op {
+		return model.ErrConcurrentUpdate
+	}
+	m.confirms++
+	m.ticket.Status, m.ticket.OperatorID, m.ticket.DecidedAt = string(model.TicketApproved), &op, &now
+	m.ticket.RowVer++
+	return nil
+}
+
+func (m *memDecisions) InsertRejectionTx(_ context.Context, _ *repository.DB, _ repository.TicketRow, in repository.RejectionInput,
+	_ time.Time) error {
+	if err := m.fail("rejection"); err != nil {
+		return err
+	}
+	m.rejections = append(m.rejections, in)
 	return nil
 }
 
@@ -299,10 +330,18 @@ func (f *decideFixture) decide(user uint64, rid, decision string) (DecideResult,
 	return f.decideAs(user, rid, decision, model.RoleAgronomist)
 }
 
+// decideAs 以给定角色决策；REJECT 默认带合法驳回原因（DOSAGE），缺原因的用例走 decideInput。
 func (f *decideFixture) decideAs(user uint64, rid, decision string, roles ...model.Role) (DecideResult, error) {
+	in := DecideInput{TicketID: 7, RequestID: rid, Decision: decision, SnapshotDigest: testDigest}
+	if decision == DecisionReject {
+		in.ReasonCode = model.RejectDosage
+	}
+	return f.decideInput(user, in, roles...)
+}
+
+func (f *decideFixture) decideInput(user uint64, in DecideInput, roles ...model.Role) (DecideResult, error) {
 	scope := model.Scope{TenantID: 1, FarmID: 1, UserID: user, Roles: roles}
-	res, err := f.svc.Decide(context.Background(), scope, DecideInput{TicketID: 7, RequestID: rid, Decision: decision,
-		SnapshotDigest: testDigest})
+	res, err := f.svc.Decide(context.Background(), scope, in)
 	f.svc.Wait()
 	return res, err
 }

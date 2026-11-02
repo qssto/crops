@@ -153,6 +153,8 @@ type Expect struct {
 	Dispatch *DispatchExpect `yaml:"dispatch,omitempty"`
 	// WorkDone 断言作业完成回写（P1-L4-B，partially_done 使用）；不写表示不检查。
 	WorkDone *WorkDoneExpect `yaml:"work_done,omitempty"`
+	// Approval 断言审批闸门与定级（P1 L5，approval_gate 使用，见 approval.go）；不写表示不检查。
+	Approval *ApprovalExpect `yaml:"approval,omitempty"`
 }
 
 // DispatchExpect 是下发侧期望：RecheckReturned 为 true 时断言下发前复检不通过、单退回 PENDING_APPROVAL(RECHECK_FAILED)、

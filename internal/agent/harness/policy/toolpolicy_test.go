@@ -5,11 +5,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"slices"
-	"strings"
 	"testing"
-	"time"
-
-	"agri-steward/internal/model"
 )
 
 // repoPolicy 返回仓库根 policy/ 下文件的路径。
@@ -165,68 +161,5 @@ func TestLoad_MissingFile(t *testing.T) {
 	}
 	if _, err := LoadRiskMatrix(filepath.Join(t.TempDir(), "nope.yaml")); err == nil {
 		t.Fatal("want error")
-	}
-}
-
-func TestLoadRiskMatrix_Repo(t *testing.T) {
-	m, err := LoadRiskMatrix(repoPolicy(t, "risk_matrix.yaml"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	spray, err := m.For(model.WorkSpray)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if spray.Level != model.RiskHigh || !spray.ConfirmRequired || !slices.Equal(spray.Roles, []model.Role{model.RoleAgronomist}) {
-		t.Fatalf("SPRAY = %+v", spray)
-	}
-	if d, err := m.TTL(model.RiskHigh); err != nil || d != 2*time.Hour {
-		t.Fatalf("TTL(HIGH) = %v, %v", d, err)
-	}
-	if _, err := m.For("PRUNE"); !errors.Is(err, ErrNoRisk) {
-		t.Fatalf("unlisted work type: err = %v", err)
-	}
-	if _, err := m.TTL("MID"); !errors.Is(err, ErrNoRisk) {
-		t.Fatalf("unlisted level: err = %v", err)
-	}
-	spray.Roles[0] = model.RoleOperator
-	if again, _ := m.For(model.WorkSpray); again.Roles[0] != model.RoleAgronomist {
-		t.Fatal("For must return a copy of Roles")
-	}
-}
-
-func TestParseRiskMatrix_Invalid(t *testing.T) {
-	const (
-		ttl   = "approval_ttl: {HIGH: 2h, LOW: 6h}\n"
-		head  = "version: 1\nwork_types:\n"
-		spray = "  SPRAY: {risk_level: HIGH, required_role: [agronomist], confirm_required: true}\n"
-	)
-	// with 是带合法 SPRAY 的矩阵，只让 line 的问题触发失败。
-	with := func(line string) string { return head + spray + line + ttl }
-	tests := []struct{ name, src, want string }{
-		{"bad version", "version: 2\nwork_types:\n" + spray + ttl, "version 2"},
-		{"unknown field", with("  IRRIGATE: {risk_level: LOW, required_role: [farm_manager], confirm_required: false, x: 1}\n"), "decode"},
-		{"spray low", head + "  SPRAY: {risk_level: LOW, required_role: [agronomist], confirm_required: true}\n" + ttl, "SPRAY must be HIGH"},
-		{"spray no confirm", head + "  SPRAY: {risk_level: HIGH, required_role: [agronomist], confirm_required: false}\n" + ttl, "HIGH requires confirm_required"},
-		{"spray missing", head + "  IRRIGATE: {risk_level: LOW, required_role: [farm_manager], confirm_required: false}\n" + ttl, "SPRAY must be listed"},
-		{"high no confirm", with("  IRRIGATE: {risk_level: HIGH, required_role: [agronomist], confirm_required: false}\n"), "HIGH requires confirm_required"},
-		{"empty roles", with("  IRRIGATE: {risk_level: LOW, required_role: [], confirm_required: false}\n"), "required_role is empty"},
-		{"platform admin", with("  IRRIGATE: {risk_level: LOW, required_role: [platform_admin], confirm_required: false}\n"), "cannot approve"},
-		{"duplicate role", with("  IRRIGATE: {risk_level: LOW, required_role: [agronomist, agronomist], confirm_required: false}\n"), "duplicate role"},
-		{"unknown work type", with("  PRUNE: {risk_level: LOW, required_role: [agronomist], confirm_required: false}\n"), "unknown work type"},
-		{"unknown risk", with("  IRRIGATE: {risk_level: MID, required_role: [agronomist], confirm_required: false}\n"), "risk_level \"MID\""},
-		{"missing ttl", head + spray + "  IRRIGATE: {risk_level: LOW, required_role: [agronomist], confirm_required: false}\napproval_ttl: {HIGH: 2h}\n", "no approval_ttl for LOW"},
-		{"bad ttl", head + spray + "approval_ttl: {HIGH: soon}\n", "positive duration"},
-		{"zero ttl", head + spray + "approval_ttl: {HIGH: 0s}\n", "positive duration"},
-		{"ttl unknown level", head + spray + "approval_ttl: {HIGH: 1h, MID: 1h}\n", "unknown risk level"},
-		{"no work types", "version: 1\nwork_types: {}\n" + ttl, "SPRAY must be listed"},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			_, err := ParseRiskMatrix([]byte(tt.src))
-			if !errors.Is(err, ErrBadRiskMatrix) || !strings.Contains(err.Error(), tt.want) {
-				t.Fatalf("err = %v, want ErrBadRiskMatrix containing %q", err, tt.want)
-			}
-		})
 	}
 }

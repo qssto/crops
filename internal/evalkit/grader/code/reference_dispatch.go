@@ -54,7 +54,11 @@ func returnedTransitions(ref model.OrderRef, final model.WorkOrderStatus) []mode
 	out := []model.OrderTransition{{Ref: ref, RunID: refID, To: model.OrderDraft}}
 	appendPath := func(path []model.WorkOrderStatus) {
 		for i := 1; i < len(path); i++ {
-			out = append(out, model.OrderTransition{Ref: ref, RunID: refID, From: path[i-1], To: path[i]})
+			tr := model.OrderTransition{Ref: ref, RunID: refID, From: path[i-1], To: path[i]}
+			if tr.To == model.OrderExpired {
+				tr.ReasonCode = model.ReasonApprovalExpired
+			}
+			out = append(out, tr)
 		}
 	}
 	appendPath(shortestPath(model.OrderDraft, model.OrderApproved))

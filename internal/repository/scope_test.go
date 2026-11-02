@@ -34,6 +34,14 @@ func scopeRequiredCalls() map[string]func(model.Scope) error {
 			_, _, err := ApprovalRepo{}.TicketByRun(ctx, nil, s, 1)
 			return err
 		},
+		"ApprovalRepo.TicketRiskReasons": func(s model.Scope) error { // P1 L5
+			_, err := ApprovalRepo{}.TicketRiskReasons(ctx, nil, s, 1)
+			return err
+		},
+		"ApprovalRepo.TicketDeniedCodes": func(s model.Scope) error { // P1 L5
+			_, err := ApprovalRepo{}.TicketDeniedCodes(ctx, nil, s, 1)
+			return err
+		},
 		"ApprovalRepo.ListOpen":      func(s model.Scope) error { _, err := ApprovalRepo{}.ListOpen(ctx, nil, s); return err },
 		"ApprovalRepo.ActivateTx":    func(s model.Scope) error { _, err := ApprovalRepo{}.ActivateTx(ctx, nil, s, 1, now, now); return err },
 		"DecisionRepo.TicketTx":      func(s model.Scope) error { _, err := (&DecisionRepo{}).TicketTx(ctx, nil, s, 1); return err },
@@ -168,6 +176,10 @@ func scopeRequiredCalls() map[string]func(model.Scope) error {
 			_, err := ReopenRepo{}.InsertNotifyOutboxTx(ctx, nil, noFarm, "k", []byte(`{}`), now)
 			return err
 		},
+		"NotifyOutboxRepo.InsertTx": func(model.Scope) error {
+			_, err := NotifyOutboxRepo{}.InsertTx(ctx, nil, noFarm, "k", []byte(`{}`), now)
+			return err
+		},
 		// P1-L4 审查修复：中止关票 / 条件收尾 run。
 		"DecisionRepo.CloseWaitingRunTx": func(s model.Scope) error {
 			_, err := (&DecisionRepo{}).CloseWaitingRunTx(ctx, nil, s, 1, "", now)
@@ -191,7 +203,26 @@ func scopeRequiredCalls() map[string]func(model.Scope) error {
 		},
 		// 归属取自实体字段（或 ctx 中的检查点归属）的方法：用被测 Scope 的 tenant / farm 构造入参。
 		"ApprovalRepo.InsertTicketTx": func(s model.Scope) error {
-			_, _, err := ApprovalRepo{}.InsertTicketTx(ctx, nil, model.ApprovalTicket{TenantID: s.TenantID, FarmID: s.FarmID}, now)
+			_, _, err := ApprovalRepo{}.InsertTicketTx(ctx, nil, model.ApprovalTicket{TenantID: s.TenantID, FarmID: s.FarmID}, nil, now)
+			return err
+		},
+		// P1 L5
+		"DecisionRepo.ConfirmTicketTx": func(s model.Scope) error {
+			return (&DecisionRepo{}).ConfirmTicketTx(ctx, nil, TicketRow{TenantID: s.TenantID, FarmID: s.FarmID}, 1, now)
+		},
+		"DecisionRepo.InsertRejectionTx": func(s model.Scope) error {
+			return (&DecisionRepo{}).InsertRejectionTx(ctx, nil, TicketRow{TenantID: s.TenantID, FarmID: s.FarmID}, RejectionInput{}, now)
+		},
+		"RejectionRepo.ListRejections": func(s model.Scope) error {
+			_, err := RejectionRepo{}.ListRejections(ctx, s, now, now)
+			return err
+		},
+		"RecipientRepo.FarmUsersByRoles": func(s model.Scope) error {
+			_, err := RecipientRepo{}.FarmUsersByRoles(ctx, s, []model.Role{model.RoleAgronomist})
+			return err
+		},
+		"RecipientRepo.TicketParties": func(s model.Scope) error {
+			_, err := RecipientRepo{}.TicketParties(ctx, s, 1, 1)
 			return err
 		},
 		"DecisionRepo.InsertDecisionTx": func(s model.Scope) error {
@@ -347,8 +378,9 @@ func TestSystemScopeRequired(t *testing.T) {
 			_, err := (&DecisionRepo{}).ListApprovedInterrupted(ctx, zero, now)
 			return err
 		},
-		"RunRepo.ListStuck":       func() error { _, err := (&RunRepo{}).ListStuck(ctx, zero, now); return err },
-		"RunRepo.ListSystemError": func() error { _, err := (&RunRepo{}).ListSystemError(ctx, zero); return err },
+		"RunRepo.ListStuck":         func() error { _, err := (&RunRepo{}).ListStuck(ctx, zero, now); return err },
+		"RunRepo.ListSystemError":   func() error { _, err := (&RunRepo{}).ListSystemError(ctx, zero); return err },
+		"DecisionRepo.ListExpiring": func() error { _, err := (&DecisionRepo{}).ListExpiring(ctx, zero, time.Time{}); return err },
 		"DispatchAttemptRepo.ByJob": func() error {
 			_, err := DispatchAttemptRepo{}.ByJob(ctx, zero, "uav", "sim-1")
 			return err

@@ -33,6 +33,8 @@ var (
 	ErrRequestConflict = errors.New("REQUEST_ID_CONFLICT")
 	// ErrOrderBusy 表示 lock:order 被他人持有（同一作业单的并发决策 / 扫描），可稍后重试。
 	ErrOrderBusy = errors.New("ORDER_BUSY")
+	// ErrRejectReasonInvalid 是 REJECT 缺 reason_code、取值非法或 OTHER 缺 reason_text（P1 L5，400 + 审计，票据与工单不变）。
+	ErrRejectReasonInvalid = errors.New("REJECT_REASON_INVALID")
 )
 
 // RoleDeniedError 是审批角色不足（errors.Is 为 ErrRoleInsufficient），带被拒的审批操作（decide.pesticide / decide.other）；
@@ -72,6 +74,10 @@ type DecisionStore interface {
 	DecisionByRequest(ctx context.Context, requestID string) (repository.DecisionRow, bool, error)
 	InsertDecisionTx(ctx context.Context, tx *repository.DB, d repository.DecisionRow) (uint64, error)
 	DecideTicketTx(ctx context.Context, tx *repository.DB, t repository.TicketRow, to model.TicketStatus, operatorID uint64, now time.Time) error
+	// ConfirmTicketTx 是 HIGH 票第二审批人生效（§6.6 守卫 first_approver_id IS NOT NULL AND <> 本人，P1 L5）。
+	ConfirmTicketTx(ctx context.Context, tx *repository.DB, t repository.TicketRow, operatorID uint64, now time.Time) error
+	// InsertRejectionTx 在驳回事务内写 rejection_reason（P1 L5）。
+	InsertRejectionTx(ctx context.Context, tx *repository.DB, t repository.TicketRow, in repository.RejectionInput, now time.Time) error
 	SetFirstApproverTx(ctx context.Context, tx *repository.DB, t repository.TicketRow, userID uint64, now time.Time) error
 	ExpireTicketTx(ctx context.Context, tx *repository.DB, t repository.TicketRow, now time.Time) (bool, error)
 	SetDispatchDeadlineTx(ctx context.Context, tx *repository.DB, ref model.OrderRef, deadline, now time.Time) error
@@ -116,6 +122,9 @@ type DecideInput struct {
 	Decision       string // APPROVE / REJECT
 	SnapshotDigest string
 	Comment        string
+	// ReasonCode / ReasonText 是 REJECT 的驳回原因（P1 L5：code 必填，OTHER 时 text 必填，≤ 512 字符）。
+	ReasonCode model.RejectReasonCode
+	ReasonText string
 }
 
 // DecideResult 是决策结果；HIGH 票第一审批人通过时 AwaitingConfirm=true、票据仍 OPEN。
@@ -334,6 +343,12 @@ func (s *DecisionService) decide(ctx context.Context, scope model.Scope, in Deci
 	if err != nil {
 		return DecideResult{}, s.deny(ctx, scope, t, err)
 	}
+	// 驳回原因在 P0 校验之后检查（P0 校验顺序与错误码不变）；不合法拒绝并审计，票据与工单不动
+	if in.Decision == DecisionReject {
+		if err := model.ValidateRejectReason(in.ReasonCode, in.ReasonText); err != nil {
+			return DecideResult{}, s.deny(ctx, scope, t, fmt.Errorf("%w: %w: %w", ErrBadInput, ErrRejectReasonInvalid, err))
+		}
+	}
 	now := s.d.Clock.Now()
 	d := repository.DecisionRow{TenantID: scope.TenantID, FarmID: scope.FarmID, TicketID: t.ID, RequestID: in.RequestID,
 		OperatorID: scope.UserID, OperatorRole: string(role), SnapshotDigest: in.SnapshotDigest, CreatedAt: now}
@@ -344,7 +359,7 @@ func (s *DecisionService) decide(ctx context.Context, scope model.Scope, in Deci
 	switch {
 	case in.Decision == DecisionReject:
 		d.Decision = DecisionReject
-		res, err = s.reject(ctx, scope, t, d, now)
+		res, err = s.reject(ctx, scope, t, d, rejectionInput(in, scope.UserID, role), now)
 	case needsConfirm(t) && t.FirstApproverID == nil:
 		d.Decision = DecisionApprove
 		res, err = s.recordFirst(ctx, scope, t, d, now)
@@ -423,7 +438,8 @@ func (s *DecisionService) decideOp(ctx context.Context, scope model.Scope, t rep
 // deny 对业务拒绝写 audit_log(APPROVAL, DENIED)；审计写失败与拒绝原因一并返回。
 func (s *DecisionService) deny(ctx context.Context, scope model.Scope, t repository.TicketRow, reason error) error {
 	code := ""
-	for _, e := range []error{ErrTicketClosed, ErrTicketExpired, ErrSnapshotStale, ErrRoleInsufficient, ErrSameApprover} {
+	for _, e := range []error{ErrTicketClosed, ErrTicketExpired, ErrSnapshotStale, ErrRoleInsufficient, ErrSameApprover,
+		ErrRejectReasonInvalid} {
 		if errors.Is(reason, e) {
 			code = e.Error()
 			break
@@ -497,7 +513,7 @@ func (s *DecisionService) approve(ctx context.Context, scope model.Scope, t repo
 		if id, err = s.d.Store.InsertDecisionTx(ctx, tx, d); err != nil {
 			return err
 		}
-		if err := s.d.Store.DecideTicketTx(ctx, tx, t, model.TicketApproved, scope.UserID, now); err != nil {
+		if err := s.approveTicketTx(ctx, tx, t, d.Decision, scope.UserID, now); err != nil {
 			return err
 		}
 		if err := s.d.Orders.Transition(ctx, tx, t.OrderRef(), model.OrderApproved, actor, ""); err != nil {
@@ -527,10 +543,10 @@ func (s *DecisionService) approve(ctx context.Context, scope model.Scope, t repo
 	return DecideResult{DecisionID: id, TicketID: t.ID, Status: model.TicketApproved}, nil
 }
 
-// reject 驳回（单事务）：approval_decision → 票据 REJECTED → Transition(→ REJECTED) → run COMPLETED(APPROVAL_REJECTED)
-// → episodic_memory(REJECTED) → APPROVAL_DECIDED。
+// reject 驳回（单事务）：approval_decision → 票据 REJECTED → rejection_reason（P1 L5）→ Transition(→ REJECTED)
+// → run COMPLETED(APPROVAL_REJECTED) → episodic_memory(REJECTED) → APPROVAL_DECIDED。
 func (s *DecisionService) reject(ctx context.Context, scope model.Scope, t repository.TicketRow,
-	d repository.DecisionRow, now time.Time) (DecideResult, error) {
+	d repository.DecisionRow, reason repository.RejectionInput, now time.Time) (DecideResult, error) {
 	actor := model.Actor{Type: model.ActorUser, ID: scope.UserID}
 	var id uint64
 	err := s.d.Store.InTx(ctx, func(tx *repository.DB) error {
@@ -539,6 +555,9 @@ func (s *DecisionService) reject(ctx context.Context, scope model.Scope, t repos
 			return err
 		}
 		if err := s.d.Store.DecideTicketTx(ctx, tx, t, model.TicketRejected, scope.UserID, now); err != nil {
+			return err
+		}
+		if err := s.d.Store.InsertRejectionTx(ctx, tx, t, reason, now); err != nil {
 			return err
 		}
 		if err := s.d.Orders.Transition(ctx, tx, t.OrderRef(), model.OrderRejected, actor, model.ReasonApprovalRejected); err != nil {
@@ -561,6 +580,25 @@ func (s *DecisionService) reject(ctx context.Context, scope model.Scope, t repos
 		return DecideResult{}, fmt.Errorf("service: reject ticket %d: %w", t.ID, err)
 	}
 	return DecideResult{DecisionID: id, TicketID: t.ID, Status: model.TicketRejected}, nil
+}
+
+// approveTicketTx 置票据 APPROVED：HIGH 票第二人（CONFIRM）走 §6.6 带 first_approver_id 守卫的 UPDATE，其余沿用 P0。
+func (s *DecisionService) approveTicketTx(ctx context.Context, tx *repository.DB, t repository.TicketRow, decision string,
+	operatorID uint64, now time.Time) error {
+	if decision == decisionConfirm {
+		return s.d.Store.ConfirmTicketTx(ctx, tx, t, operatorID, now)
+	}
+	return s.d.Store.DecideTicketTx(ctx, tx, t, model.TicketApproved, operatorID, now)
+}
+
+// rejectionInput 是驳回原因行：operator_role 为通过校验的角色，空文本存 NULL。
+func rejectionInput(in DecideInput, operatorID uint64, role model.Role) repository.RejectionInput {
+	r := repository.RejectionInput{ReasonCode: in.ReasonCode, OperatorID: operatorID, OperatorRole: role}
+	if strings.TrimSpace(in.ReasonText) != "" {
+		text := in.ReasonText
+		r.ReasonText = &text
+	}
+	return r
 }
 
 // truncateRunes 按字符截断。

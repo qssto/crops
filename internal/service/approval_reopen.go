@@ -92,7 +92,7 @@ func (s *ReopenService) Prepare(ctx context.Context, req ReopenRequest) (ReopenP
 		RequiredRole: prev.RequiredRole, ConfirmRequired: prev.ConfirmRequired, InitiatorID: prev.InitiatorID,
 		Status: model.TicketOpen}
 	next.Snapshot, err = s.a.putSnapshot(ctx, next,
-		agent.ApprovalRequest{Order: o, Card: req.Card, InitiatorID: prev.InitiatorID}, s.a.d.Clock.Now())
+		agent.ApprovalRequest{Order: o, Card: req.Card, InitiatorID: prev.InitiatorID}, nil, s.a.d.Clock.Now()) // 沿用旧定级，不重新判定原因
 	if err != nil {
 		return ReopenPlan{}, err
 	}

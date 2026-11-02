@@ -78,6 +78,15 @@ func (r ReopenRepo) InsertReopenedTicketTx(ctx context.Context, tx *gorm.DB, t m
 // InsertNotifyOutboxTx 写一条 notify.send（INSERT IGNORE，uk_dedup 去重）；返回是否新插入（false 即同 dedup_key 已有）。
 func (r ReopenRepo) InsertNotifyOutboxTx(ctx context.Context, tx *gorm.DB, ref model.OrderRef, dedupKey string, payload []byte,
 	now time.Time) (bool, error) {
+	return NotifyOutboxRepo{}.InsertTx(ctx, tx, ref, dedupKey, payload, now)
+}
+
+// NotifyOutboxRepo 是 notify.send 的通用写入（P1 L5 / L6 共用：待审批、即将过期、复检退回、设备离线），只在调用方事务内使用。
+type NotifyOutboxRepo struct{}
+
+// InsertTx 写一条到期即发的 notify.send（INSERT IGNORE，uk_dedup 去重）；返回是否新插入（false 即同 dedup_key 已有）。
+func (NotifyOutboxRepo) InsertTx(ctx context.Context, tx *gorm.DB, ref model.OrderRef, dedupKey string, payload []byte,
+	now time.Time) (bool, error) {
 	if err := requireFarm(ref.TenantID, ref.FarmID); err != nil {
 		return false, err
 	}

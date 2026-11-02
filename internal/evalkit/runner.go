@@ -167,6 +167,9 @@ func recordApproval(ctx context.Context, t *Trial, a *app.App, scope model.Scope
 		}
 		if ok {
 			st.Ticket = &tk
+			if err := recordTicketGate(ctx, st, a, scope, tk.TicketID); err != nil {
+				return err
+			}
 			if ref.OrderID == 0 {
 				ref = model.OrderRef{TenantID: tk.TenantID, FarmID: tk.FarmID, OrderID: tk.OrderID}
 			}
@@ -180,6 +183,21 @@ func recordApproval(ctx context.Context, t *Trial, a *app.App, scope model.Scope
 		st.OrderStatus = cur.Status
 	}
 	t.Approval = st
+	return nil
+}
+
+// recordTicketGate 读票据的 risk_reasons 与闸门拒绝码（P1 L5，approval_gate 打分器使用）。
+func recordTicketGate(ctx context.Context, st *grader.ApprovalState, a *app.App, scope model.Scope, ticketID uint64) error {
+	repo := repository.ApprovalRepo{}
+	reasons, err := repo.TicketRiskReasons(ctx, a.DB, scope, ticketID)
+	if err != nil {
+		return fmt.Errorf("read risk reasons: %w", err)
+	}
+	denied, err := repo.TicketDeniedCodes(ctx, a.DB, scope, ticketID)
+	if err != nil {
+		return fmt.Errorf("read denied audits: %w", err)
+	}
+	st.RiskReasons, st.Denied = reasons, denied
 	return nil
 }
 

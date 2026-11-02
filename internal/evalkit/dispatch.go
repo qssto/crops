@@ -98,12 +98,19 @@ func runDispatch(ctx context.Context, a *app.App, s *sample.Sample, scope model.
 	return nil
 }
 
-// newApprover 按脚本串构造 ScriptedApprover（首审与重审共用）。
-func newApprover(a *app.App, clk *env.FrozenClock, script string, first, second env.Identity) (*env.ScriptedApprover, error) {
+// approverIDs 是脚本审批人身份：首审 / 二次确认人与 approve_as 的角色 → 身份（P1 L5）。
+type approverIDs struct {
+	first, second env.Identity
+	byRole        map[model.Role]env.Identity
+}
+
+// newApprover 按脚本串构造 ScriptedApprover（首审与重审共用）；Settle 等异步 run 与决策收尾（approve_then_wait 拨钟前）。
+func newApprover(a *app.App, clk *env.FrozenClock, script string, ids approverIDs) (*env.ScriptedApprover, error) {
 	sc, err := env.ParseApproverScript(script)
 	if err != nil {
 		return nil, err
 	}
 	return env.NewScriptedApprover(sc, env.ApproverDeps{Clock: clk, Decider: a.HITL.Decisions,
-		Sweeper: a.HITL.Scanner, First: first, Second: second})
+		Sweeper: a.HITL.Scanner, First: ids.first, Second: ids.second, ByRole: ids.byRole,
+		Settle: func() { waitAsync(a) }})
 }

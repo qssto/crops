@@ -68,6 +68,11 @@ type Deps struct {
 	// FieldHistory 是 field.history 回写写端（P1-L4-B，可选：为空取 mock 的 service.MemFieldHistory；
 	// mcp-field real 无写接口时传 service.UnwiredFieldHistory 失败关闭为告警）。不对模型可见。
 	FieldHistory service.FieldHistoryWriter
+	// NotifyTexts 是 notify.send 文案（P1 L5，service.LoadNotifyTexts(configs/texts/notify.zh-CN.yaml)）；
+	// 为空时 server 照常启动，worker / 评测排空构造 outbox 处理器即失败（ErrMissingNotifyTexts）。
+	NotifyTexts *service.NotifyTexts
+	// Approval 是审批配置（configs/app.yaml 的 approval 段，P1 L5；零值取 config.DefaultApproval）。
+	Approval config.Approval
 }
 
 // metaer 是能报告自身版本信息的主链路（graph.Agent）。
@@ -132,6 +137,8 @@ type App struct {
 	OrderOps       *service.OrderOpsService
 	FieldHistory   service.FieldHistoryWriter
 	receiptWebhook bool
+	// P1 L5：待审批详情、驳回导出与 notify.send 文案（见 approval_l5.go）。
+	L5 *ApprovalL5
 }
 
 // 缺依赖时返回的错误。
@@ -183,7 +190,8 @@ func Build(deps Deps) (*App, error) {
 	approvals, err := service.NewApprovalService(service.ApprovalDeps{Clock: deps.Clock, DB: deps.DB,
 		Tx: repository.Transactor{DB: deps.DB}, Tickets: repository.ApprovalRepo{}, Orders: orders,
 		WorkOrders: workOrders, Events: events, Raw: deps.RawStore, Risk: deps.Risk,
-		Constraints: deps.Constraints, Logger: deps.Logger})
+		Constraints: deps.Constraints, History: repository.LocalOrderRepo{DB: deps.DB},
+		Notify: repository.NotifyOutboxRepo{}, Logger: deps.Logger})
 	if err != nil {
 		return nil, fmt.Errorf("app: build approvals: %w", err)
 	}
@@ -245,6 +253,9 @@ func Build(deps Deps) (*App, error) {
 	if err := a.buildOrderOps(deps); err != nil {
 		return nil, err
 	}
+	if err := a.buildApprovalL5(deps); err != nil {
+		return nil, err
+	}
 	return a, nil
 }
 
@@ -275,6 +286,7 @@ func (a *App) Handler(auth *service.AuthService) http.Handler {
 		mounts = append(mounts, controller.AuditRoutes(a.Audit))
 	}
 	mounts = append(mounts, a.orderOpsMounts()...)
+	mounts = append(mounts, a.approvalL5Mounts()...)
 	g := a.guard(auth)
 	r := controller.NewRouter(g, a.Ask, mounts...)
 	controller.MountAdmin(r, g, a.Flags) // P1-L0：/api/v1/admin/flags（flag.write）

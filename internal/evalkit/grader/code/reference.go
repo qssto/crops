@@ -55,7 +55,7 @@ func Reference(s *sample.Sample, tx *knowledge.Taxonomy, kb grader.KnowledgeInde
 		Approval: referenceApproval(exp), DeviceCalls: []string{}, Logs: []byte{},
 		OrderTransitions: referenceTransitions(exp.WorkOrder), ConstraintBlocked: referenceBlocked(exp),
 		Scope: model.Scope{TenantID: refID, FarmID: refID}, Fields: []uint64{refID}, Devices: []string{},
-		WorkDone: referenceWorkDone(exp)}
+		WorkDone: referenceWorkDone(exp), DeviceTargets: []grader.DeviceTarget{}}
 	referenceDispatch(s, t) // P1-L4-A：expect.dispatch 的理想下发观测
 	return t, skip, notes
 }
@@ -93,7 +93,8 @@ func referenceFailures(s *sample.Sample) []string {
 	return out
 }
 
-// referenceApproval 是理想审批状态：作业单处于期望终态；断言 stop_at_approval 时有一张 PREPARING 票。
+// referenceApproval 是理想审批状态：作业单处于期望终态；断言 stop_at_approval 时有一张 PREPARING 票；
+// 断言 expect.approval 时票据取其状态 / 定级、拒绝码与 risk_reasons 即期望值（P1 L5 approval_gate）。
 func referenceApproval(exp sample.Expect) *grader.ApprovalState {
 	st := &grader.ApprovalState{}
 	if exp.WorkOrder != nil {
@@ -104,6 +105,19 @@ func referenceApproval(exp sample.Expect) *grader.ApprovalState {
 		st.RunStatus, st.Interrupt = model.RunInterrupted, model.InterruptWaitApproval
 		if st.OrderStatus == "" {
 			st.OrderStatus = model.OrderPendingApproval
+		}
+	}
+	if a := exp.Approval; a != nil {
+		if st.Ticket == nil {
+			st.Ticket = &model.ApprovalTicket{TicketID: refID, Status: model.TicketOpen}
+		}
+		if a.TicketStatus != "" {
+			st.Ticket.Status = model.TicketStatus(a.TicketStatus)
+		}
+		st.Ticket.RiskLevel = model.RiskLevel(a.RiskLevel)
+		st.RiskReasons = a.RiskReasons
+		if a.Denied != "" {
+			st.Denied = []string{a.Denied}
 		}
 	}
 	return st
@@ -120,7 +134,11 @@ func referenceTransitions(w *sample.WorkOrderExpect) []model.OrderTransition {
 	out = append(out, model.OrderTransition{Ref: ref, RunID: refID, To: model.OrderDraft})
 	path := shortestPath(model.OrderDraft, model.WorkOrderStatus(w.FinalStatus))
 	for i := 1; i < len(path); i++ {
-		out = append(out, model.OrderTransition{Ref: ref, RunID: refID, From: path[i-1], To: path[i]})
+		tr := model.OrderTransition{Ref: ref, RunID: refID, From: path[i-1], To: path[i]}
+		if tr.To == model.OrderExpired {
+			tr.ReasonCode = model.ReasonApprovalExpired // P1 L5 expired：超时转 EXPIRED 带原因
+		}
+		out = append(out, tr)
 	}
 	return out
 }

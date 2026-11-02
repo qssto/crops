@@ -29,6 +29,8 @@ type Config struct {
 	Dispatch Dispatch `mapstructure:"dispatch"`
 	// DeviceReceipt 是设备回执 webhook 配置（P1-L4-B）。
 	DeviceReceipt DeviceReceipt `mapstructure:"device_receipt"`
+	// Approval 是审批体系配置（P1 L5，approval.go）；缺省 rejection_export_max_span=744h（31 天）。
+	Approval Approval `mapstructure:"approval"`
 }
 
 // DeviceReceipt 是回执 webhook 的 HMAC 密钥；只从环境变量 / deploy/.env 读，未配置时回执路由不挂载。
@@ -112,6 +114,7 @@ func Load(file, envFile string) (*Config, error) {
 	v.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
 	v.AutomaticEnv()
 	setDispatchDefaults(v)
+	setApprovalDefaults(v)
 	if err := v.ReadInConfig(); err != nil {
 		return nil, fmt.Errorf("config: read %s: %w", file, err)
 	}
@@ -130,6 +133,9 @@ func Load(file, envFile string) (*Config, error) {
 		return nil, fmt.Errorf("config: decode %s: %w", file, err)
 	}
 	if err := c.Dispatch.Validate(); err != nil {
+		return nil, fmt.Errorf("config: %s: %w", file, err)
+	}
+	if err := c.Approval.Validate(); err != nil {
 		return nil, fmt.Errorf("config: %s: %w", file, err)
 	}
 	return &c, nil

@@ -28,11 +28,12 @@ const (
 	OpRawRead                 Operation = "raw.read"                  // 读 raw_store 原文
 	OpFlagWrite               Operation = "flag.write"                // 改开关（admin 路由，只限 platform_admin）
 	OpOrderReconcile          Operation = "order.reconcile"           // 人工对账（POST /orders/:order_id/reconcile，P1-L4-B）
+	OpRejectionExport         Operation = "rejection.export"          // 驳回原因导出（GET /rejections，P1-L5）
 )
 
 // Operations 是全部已登记操作（矩阵校验与测试枚举用）。
 var Operations = []Operation{OpAsk, OpAdviceRead, OpApprovalSubmit, OpApprovalDecidePesticide, OpApprovalDecideOther,
-	OpOrderCancel, OpAuditExport, OpRawRead, OpFlagWrite, OpOrderReconcile}
+	OpOrderCancel, OpAuditExport, OpRawRead, OpFlagWrite, OpOrderReconcile, OpRejectionExport}
 
 // Roles 是全部已登记角色（矩阵校验与测试枚举用）。
 var Roles = []model.Role{model.RoleFarmer, model.RoleFarmManager, model.RoleAgronomist, model.RoleOperator,

@@ -33,6 +33,7 @@ func TestRun_WritesExperiment_Integration(t *testing.T) {
 		"--risk", filepath.Join(repoRoot, "policy/risk_matrix.yaml"), "--permissions", filepath.Join(repoRoot, "policy/permission_matrix.yaml"),
 		"--devices", filepath.Join(repoRoot, "configs/mock/device.yaml"),
 		"--regulation", filepath.Join(repoRoot, "policy/regulation_map.yaml"),
+		"--notify-texts", filepath.Join(repoRoot, "configs/texts/notify.zh-CN.yaml"),
 		"--suite", "regression", "--n", strconv.Itoa(trialsPerSample), "--tags", "L5,irrigate.amount"}, &stdout, &stderr)
 	if code != exitOK {
 		t.Fatalf("code = %d stderr=%s", code, stderr.String())
@@ -95,6 +96,7 @@ func TestRun_Baseline_Integration(t *testing.T) {
 		"--risk", filepath.Join(repoRoot, "policy/risk_matrix.yaml"), "--permissions", filepath.Join(repoRoot, "policy/permission_matrix.yaml"),
 		"--devices", filepath.Join(repoRoot, "configs/mock/device.yaml"),
 		"--regulation", filepath.Join(repoRoot, "policy/regulation_map.yaml"),
+		"--notify-texts", filepath.Join(repoRoot, "configs/texts/notify.zh-CN.yaml"),
 		"--suite", "regression", "--n", "3", "--tags", "irrigate.amount",
 		"--baseline", "it_baseline", "--baselines-dir", baselines}, &stdout, &stderr)
 	if code != exitOK {

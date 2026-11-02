@@ -60,7 +60,8 @@ func (a *App) buildHITLServices() error {
 	a.HITL.Decisions = decisions
 	a.HITL.Scanner = service.NewScanner(service.ScanDeps{Tickets: a.HITL.decisions, Runs: a.Runs,
 		Expirer: a.HITL.Decisions, Orders: a.WorkOrders, Resumer: resumer, Gate: a.Approvals, Locks: a.Locker,
-		Keys: a.Keys, Clock: a.Clock, Logger: a.Logger})
+		Keys: a.Keys, Clock: a.Clock, Logger: a.Logger,
+		Expiring: a.HITL.decisions, Notify: repository.NotifyOutboxRepo{}}) // P1 L5：approval_expiring
 	if rc, ok := a.Agent.(agent.Rechecker); ok {
 		a.HITL.Recheck = service.NewRecheckService(service.RecheckDeps{Rechecker: rc, Tx: a.HITL.decisions,
 			Orders: a.WorkOrders, Starter: a.Ask, Locks: a.Locker, Keys: a.Keys, Logger: a.Logger})

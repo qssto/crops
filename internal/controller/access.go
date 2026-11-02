@@ -63,6 +63,9 @@ var routeOps = map[string][]service.Operation{
 	"POST " + farmsPrefix + "/orders/:order_id/cancel":    {service.OpOrderCancel},
 	"POST " + farmsPrefix + "/orders/:order_id/reconcile": {service.OpOrderReconcile},
 	"GET " + farmsPrefix + "/reconcile/pending":           {service.OpAdviceRead},
+	// P1-L5：待审批详情（读权限）与驳回原因导出。
+	"GET " + farmsPrefix + "/approvals/:ticket_id": {service.OpAdviceRead},
+	"GET " + farmsPrefix + "/rejections":           {service.OpRejectionExport},
 }
 
 const farmsPrefix = "/api/v1/farms/:farm_id"

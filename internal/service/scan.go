@@ -86,9 +86,12 @@ type ScanDeps struct {
 	Clock    clock.Clock
 	Logger   *slog.Logger
 	Interval time.Duration // 0 取 DefaultScanInterval
+	// Expiring / Notify 是 P1 L5 即将过期提醒（approval_expiring）的依赖；任一为空不注册该任务。
+	Expiring ExpiringScanStore
+	Notify   NotifyOutboxWriter
 }
 
-// Scanner 执行四个 HITL 扫描任务；Resume 异步执行，Wait 等待其结束。
+// Scanner 执行四个 HITL 扫描任务（配了 Expiring / Notify 时加 approval_expiring）；Resume 异步执行，Wait 等待其结束。
 type Scanner struct {
 	d     ScanDeps
 	tasks []scanTask
@@ -111,6 +114,9 @@ func NewScanner(d ScanDeps) *Scanner {
 		{ScanTicketActivate, s.ticketActivate},
 		{ScanRunFinalize, s.runFinalize},
 		{ScanStuckRun, s.stuckRun},
+	}
+	if d.Expiring != nil && d.Notify != nil {
+		s.tasks = append(s.tasks, scanTask{ScanApprovalExpiring, s.approvalExpiring})
 	}
 	return s
 }

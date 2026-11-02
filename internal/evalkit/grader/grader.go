@@ -104,6 +104,9 @@ type ApprovalState struct {
 	OrderStatus model.WorkOrderStatus // 作业单当前状态；未出单为空
 	RunStatus   model.RunStatus       // agent_run 当前状态；无 run 为空
 	Interrupt   model.InterruptType   // RunStatus=INTERRUPTED 时的中断类型
+	// RiskReasons 是 Ticket 的 risk_reasons（P1 L5；NULL 为 nil）；Denied 是该票 audit_log(APPROVAL, DENIED) 的拒绝码（按写入顺序）。
+	RiskReasons []string
+	Denied      []string
 }
 
 // Grader 对 trial 的一个方面打分。Grade 返回 err 时运行器记为 grader_error，不得当作通过。

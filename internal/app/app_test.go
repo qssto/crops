@@ -62,9 +62,13 @@ func fullDeps(t *testing.T) Deps {
 	if err != nil {
 		t.Fatal(err)
 	}
+	texts, err := service.LoadNotifyTexts("../../configs/texts/notify.zh-CN.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
 	return Deps{Clock: fixedClock{}, Logger: logger, DB: &gorm.DB{}, Redis: rdb, Keys: keys,
 		RawStore: nopRaw{}, Agent: refuseAgent{}, Tools: nopTools{}, Risk: nopRisk{}, Constraints: passReviewer{},
-		Permissions: perms}
+		Permissions: perms, NotifyTexts: texts}
 }
 
 // passReviewer 放行全部作业单（装配测试不关心约束判定）；Registry 供主链路注入约束注册表（P1-L3 审查 15）。
@@ -99,8 +103,8 @@ func TestConstraintRegistry_SharedWithReviewer(t *testing.T) {
 
 type nopRisk struct{}
 
-func (nopRisk) For(model.WorkType) (policy.Risk, error)    { return policy.Risk{}, nil }
-func (nopRisk) TTL(model.RiskLevel) (time.Duration, error) { return time.Hour, nil }
+func (nopRisk) Assess(policy.RiskInput) (policy.Risk, error) { return policy.Risk{}, nil }
+func (nopRisk) TTL(model.RiskLevel) (time.Duration, error)   { return time.Hour, nil }
 
 func TestBuild(t *testing.T) {
 	tests := []struct {

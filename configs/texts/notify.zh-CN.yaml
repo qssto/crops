@@ -1,0 +1,8 @@
+# notify.send 通知文案（P1 L5，§6.6 流程 1 / 5）。key = 通知类型，缺任一类型 worker / server 启动失败（service.ParseNotifyTexts）。
+# 占位只允许 {order_id} / {ticket_id}；不写人名、手机号等个人信息。审计只记文案 key（notify.<KIND>），不记正文。
+version: 1
+texts:
+  PENDING_APPROVAL: "作业单 #{order_id} 待您审批（审批单 #{ticket_id}），请在有效期内处理。"
+  EXPIRING_SOON: "审批单 #{ticket_id}（作业单 #{order_id}）将在 1 小时内过期，过期后需重新发起。"
+  RECHECK_RETURNED: "作业单 #{order_id} 下发前复检未通过，已退回重审（新审批单 #{ticket_id}）。"
+  DEVICE_OFFLINE: "作业单 #{order_id} 的执行设备离线，下发已暂停，请检查设备状态。"

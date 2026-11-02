@@ -52,4 +52,12 @@ func TestSeedUsers_RepoSeed(t *testing.T) {
 	if _, _, err := scriptApprovers(seedUsers{model.RoleAgronomist: {1002}}); err == nil {
 		t.Fatal("want error with one agronomist")
 	}
+	// P1 L5 approve_as：按角色取 user_id 最小者，角色为该用户在主农场的全部绑定
+	by := u.byRole()
+	if fm := by[model.RoleFarmManager]; fm.UserID != 1001 || !slices.Equal(fm.Roles, []model.Role{model.RoleFarmManager}) {
+		t.Fatalf("byRole farm_manager = %+v", fm)
+	}
+	if by[model.RoleAgronomist].UserID != 1002 || by[model.RoleOperator].UserID != 1003 {
+		t.Fatalf("byRole = %+v", by)
+	}
 }

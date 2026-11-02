@@ -252,7 +252,7 @@ func runWithStore(ctx context.Context, in *infra, ls *loadedSamples, samples []*
 	opts.ExperimentID = store.FormatID(id)
 	runner, err := evalkit.NewRunner(evalkit.PoolEnv(in.pool, in.deps), wall.Now,
 		evalkit.WithQuestion(in.question), evalkit.WithGraders(ls.kb, ls.graders...),
-		evalkit.WithApprover(evalkit.ScriptApprover(in.approvers[0], in.approvers[1])), evalkit.WithDevices(in.devices),
+		evalkit.WithApprover(evalkit.ScriptApproverByRole(in.approvers[0], in.approvers[1], in.approversByRole)), evalkit.WithDevices(in.devices),
 		// P1-L4 合并统一：回执步骤用与 Deps.ReceiptSecret 相同的进程内密钥签名，排空复用 DrainOutbox。
 		evalkit.WithReceiptSteps(evalkit.ReceiptSteps{Secret: in.receiptSecret, Drain: evalkit.DrainStep}))
 	if err != nil {

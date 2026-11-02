@@ -1,15 +1,28 @@
-# 审批风险矩阵 v1（P0 §6.6 流程 4，母文档 §4.6.2-12）。由 internal/agent/harness/policy.LoadRiskMatrix 加载，
-# service.ApprovalService 开票时按作业类型定 risk_level / required_role / confirm_required。
+# 审批风险矩阵 v2（P1 §6.6 技术实现第 1 条，母文档 §4.6.2-12）。由 internal/agent/harness/policy.LoadRiskMatrix 加载，
+# service.ApprovalService 开票时按规则定 risk_level / risk_reasons / required_role / confirm_required，Activate 按 levels 写 expires_at。
+# 判定（Assess）：下列原因任一命中即 HIGH（需第二审批人确认），都不中为 LOW；命中原因按出现顺序写 approval_ticket.risk_reasons：
+#   1. PESTICIDE：用药类作业（SPRAY）。
+#   2. LARGE_AREA：作业单 payload.area_mu ≥ rules.large_area_mu。
+#   3. NEAR_THRESHOLD:{rule_id}：PRE_APPROVAL 校验通过，但 |阈值 − 实测| ≤ 裕度 × |阈值|（只看 rules.near_threshold 列出的 rule_id，
+#      比较符为 < / <= / > / >=、实测为数值的行；按校验行顺序）。
 # 约束（加载时校验，违反即启动失败）：
-#   - 必须列出 SPRAY，且 SPRAY 一律 HIGH 且 confirm_required: true（P0 定版）；HIGH 必须 confirm_required: true。
-#   - required_role 非空，取值 farm_manager / agronomist / operator（platform_admin 不审批农场作业单）。
+#   - 必须列出 SPRAY，且用药类 required_role 必须含 agronomist；required_role 非空、不重复，
+#     取值 farm_manager / agronomist / operator（platform_admin 不审批农场作业单）。
+#   - levels 必须恰好列出 LOW / HIGH，各有正的 approval_ttl；HIGH 必须 confirm_required: true。
+#   - large_area_mu > 0；near_threshold 至少一项，裕度在 (0, 1)。
 #   - 未列出的作业类型开票失败（不默认放行）。
-# approval_ttl 是票据 PREPARING → OPEN 时写入 expires_at 的时长（文档未定数值，草拟，待业务确认）。
-version: 1
+# 复检退回（Reopen）的新票沿用旧票定级，不重新判定。
+version: 2
 work_types:
-  SPRAY: {risk_level: HIGH, required_role: [agronomist], confirm_required: true}
-  FERTILIZE: {risk_level: LOW, required_role: [agronomist, farm_manager], confirm_required: false}
-  IRRIGATE: {risk_level: LOW, required_role: [farm_manager, agronomist], confirm_required: false}
-approval_ttl:
-  HIGH: 2h
-  LOW: 6h
+  SPRAY: {required_role: [agronomist]}
+  FERTILIZE: {required_role: [agronomist, farm_manager]}
+  IRRIGATE: {required_role: [farm_manager, agronomist]}
+rules:
+  large_area_mu: 50 # 待业务确认（草拟：单张作业单 ≥ 50 亩按大面积）
+  near_threshold: # 待业务确认（草拟的相对裕度）
+    wind_speed_max: 0.2
+    rain_max: 0.2
+    temp_max: 0.1
+levels:
+  HIGH: {confirm_required: true, approval_ttl: 2h} # approval_ttl 待业务确认
+  LOW: {confirm_required: false, approval_ttl: 6h} # approval_ttl 待业务确认

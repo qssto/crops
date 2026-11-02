@@ -72,3 +72,14 @@ func seedQuestion(tenantID, farmID uint64, users seedUsers) evalkit.QuestionFunc
 		return q, nil
 	}
 }
+
+// byRole 返回各角色在主农场上 user_id 最小的用户身份（approve_as:<role> 脚本用，P1 L5；与 seedQuestion 选人规则一致）。
+func (u seedUsers) byRole() map[model.Role]env.Identity {
+	out := make(map[model.Role]env.Identity, len(u))
+	for role, ids := range u {
+		if len(ids) > 0 {
+			out[role] = env.Identity{UserID: ids[0], Roles: u.rolesOf(ids[0])}
+		}
+	}
+	return out
+}

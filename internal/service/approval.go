@@ -36,14 +36,15 @@ type ApprovalStore interface {
 	LockOrderTx(ctx context.Context, tx *repository.DB, ref model.OrderRef) error
 	UpsertChecksTx(ctx context.Context, tx *repository.DB, ref model.OrderRef, attempt int, checks []model.ConstraintCheck, now time.Time) error
 	LockTicketByOrderSeqTx(ctx context.Context, tx *repository.DB, ref model.OrderRef, seq int) (model.ApprovalTicket, bool, error)
-	InsertTicketTx(ctx context.Context, tx *repository.DB, t model.ApprovalTicket, now time.Time) (uint64, bool, error)
+	// InsertTicketTx 的 riskReasons 写 approval_ticket.risk_reasons（P1 L5；契约 model.ApprovalTicket 冻结，不加字段）。
+	InsertTicketTx(ctx context.Context, tx *repository.DB, t model.ApprovalTicket, riskReasons []string, now time.Time) (uint64, bool, error)
 	ActivateTx(ctx context.Context, tx *repository.DB, scope model.Scope, runID uint64, expiresAt, now time.Time) (int64, error)
 	ListOpen(ctx context.Context, db *repository.DB, scope model.Scope) ([]repository.PendingTicket, error)
 }
 
-// RiskPolicy 按作业类型定风险，*policy.RiskMatrix 实现。
+// RiskPolicy 按 risk_matrix.yaml v2 规则定级（P1 L5：用药 / 大面积 / 临界天气），*policy.RiskMatrix 实现。
 type RiskPolicy interface {
-	For(wt model.WorkType) (policy.Risk, error)
+	Assess(in policy.RiskInput) (policy.Risk, error)
 	TTL(level model.RiskLevel) (time.Duration, error)
 }
 
@@ -65,7 +66,11 @@ type ApprovalDeps struct {
 	Raw         agent.RawStore
 	Risk        RiskPolicy
 	Constraints ConstraintReviewer // P1 L3：开票前拦截
-	Logger      *slog.Logger
+	// History 是同地块 REAL 单（P1 L5：快照与上一张同类完成单做差异），repository.LocalOrderRepo 实现。
+	History agent.LocalOrderSource
+	// Notify 是 Activate 同事务写 notify.send(PENDING_APPROVAL)（P1 L5），repository.NotifyOutboxRepo 实现。
+	Notify NotifyOutboxWriter
+	Logger *slog.Logger
 }
 
 // ApprovalService 是审批闸门（agent.ApprovalGate，P0 §6.6 流程 4-5）与待审批列表。
@@ -79,7 +84,7 @@ func NewApprovalService(d ApprovalDeps) (*ApprovalService, error) {
 	for name, isNil := range map[string]bool{"Clock": d.Clock == nil, "DB": d.DB == nil, "Tx": d.Tx == nil,
 		"Tickets": d.Tickets == nil, "Orders": d.Orders == nil, "WorkOrders": d.WorkOrders == nil,
 		"Events": d.Events == nil, "Raw": d.Raw == nil, "Risk": d.Risk == nil, "Constraints": d.Constraints == nil,
-		"Logger": d.Logger == nil} {
+		"History": d.History == nil, "Notify": d.Notify == nil, "Logger": d.Logger == nil} {
 		if isNil {
 			missing = append(missing, name)
 		}
@@ -90,15 +95,19 @@ func NewApprovalService(d ApprovalDeps) (*ApprovalService, error) {
 	return &ApprovalService{d: d}, nil
 }
 
-// approvalSnapshot 是审批快照（MinIO 对象本体，决策时比对 digest）：审批人看到的作业单、建议卡与风险定级。
+// approvalSnapshot 是审批快照（MinIO 对象本体，决策时比对 digest）：审批人看到的作业单、建议卡与风险定级；
+// P1 L5 追加命中原因、高亮字段与上一张同类单差异（均参与 digest）。
 type approvalSnapshot struct {
 	TicketSeq       int              `json:"ticket_seq"`
 	RiskLevel       model.RiskLevel  `json:"risk_level"`
+	RiskReasons     []string         `json:"risk_reasons,omitempty"`
 	RequiredRole    []model.Role     `json:"required_role"`
 	ConfirmRequired bool             `json:"confirm_required"`
 	InitiatorID     uint64           `json:"initiator_id"`
 	Order           model.WorkOrder  `json:"order"`
 	Card            model.AdviceCard `json:"card"`
+	Highlights      *OrderHighlights `json:"highlights,omitempty"`
+	Diff            *OrderDiff       `json:"diff,omitempty"`
 }
 
 // openPayload / pendingPayload 是 APPROVAL_OPEN / APPROVAL_PENDING 事件的 payload（只含控制字段）。
@@ -141,7 +150,7 @@ const snapshotDigestPrefix = 16
 // Open 为已落库的 DRAFT 单开 PREPARING 票（§6.6 流程 4）：已有票直接返回（整图重跑）；否则读库中作业单
 // （run_id / work_type / device_type / dispatch_mode 须与请求一致），先按库中这几项经 Constraints 复核约束
 // （P1 L3：法规前置条件 → 未映射法规条目 → 约束，任一不通过即 block：同事务覆盖校验行并写 CONSTRAINT_BLOCKED，不建票）；
-// 通过后按库中 work_type 查 risk_matrix 定级；快照先 RawStore.Put（key 含 order_id、ticket_seq
+// 通过后按 risk_matrix v2 定级（库中 work_type、请求 payload.area_mu、复核后的 PRE_APPROVAL 行；P1 L5）；快照先 RawStore.Put（key 含 order_id、ticket_seq
 // 与快照摘要前缀，内容相同的重跑写同一对象，并发开票内容不同则各写各的）并算 sha256，再单事务写
 // constraint_check(PRE_APPROVAL，复核后的行，覆盖此前拦截写下的行) + approval_ticket + Transition(DRAFT → PENDING_APPROVAL，已是则跳过) + APPROVAL_OPEN。
 // 事务内命中 uk_order_seq（并发开票先提交）时返回库中已有的票。
@@ -167,7 +176,7 @@ func (s *ApprovalService) Open(ctx context.Context, scope model.Scope, req agent
 	if len(blocked) > 0 {
 		return s.block(ctx, ref, cur.RunID, checks, blocked)
 	}
-	risk, err := s.d.Risk.For(cur.WorkType)
+	risk, err := s.assessRisk(cur.WorkType, o.Payload, checks)
 	if err != nil {
 		return model.ApprovalTicket{}, fmt.Errorf("service: open ticket order %d: %w", o.OrderID, err)
 	}
@@ -175,7 +184,7 @@ func (s *ApprovalService) Open(ctx context.Context, scope model.Scope, req agent
 	t := model.ApprovalTicket{RunID: cur.RunID, TenantID: scope.TenantID, FarmID: scope.FarmID, OrderID: o.OrderID,
 		TicketKind: model.TicketKindOrder, TicketSeq: firstTicketSeq, RiskLevel: risk.Level, RequiredRole: risk.Roles,
 		ConfirmRequired: risk.ConfirmRequired, InitiatorID: req.InitiatorID, Status: model.TicketPreparing}
-	if t.Snapshot, err = s.putSnapshot(ctx, t, req, now); err != nil {
+	if t.Snapshot, err = s.putSnapshot(ctx, t, req, risk.Reasons, now); err != nil {
 		return model.ApprovalTicket{}, err
 	}
 	created := false
@@ -186,7 +195,7 @@ func (s *ApprovalService) Open(ctx context.Context, scope model.Scope, req agent
 		if err := s.d.Tickets.UpsertChecksTx(ctx, tx, ref, firstTicketSeq, checks, now); err != nil {
 			return err
 		}
-		id, ok, err := s.d.Tickets.InsertTicketTx(ctx, tx, t, now)
+		id, ok, err := s.d.Tickets.InsertTicketTx(ctx, tx, t, risk.Reasons, now)
 		if err != nil {
 			return err
 		}
@@ -290,10 +299,20 @@ func (s *ApprovalService) orderForTicket(ctx context.Context, ref model.OrderRef
 	return cur, nil
 }
 
-// putSnapshot 写审批快照对象并返回 digest 与 raw_object id。
-func (s *ApprovalService) putSnapshot(ctx context.Context, t model.ApprovalTicket, req agent.ApprovalRequest, now time.Time) (model.TicketSnapshot, error) {
-	body, err := json.Marshal(approvalSnapshot{TicketSeq: t.TicketSeq, RiskLevel: t.RiskLevel, RequiredRole: t.RequiredRole,
-		ConfirmRequired: t.ConfirmRequired, InitiatorID: t.InitiatorID, Order: req.Order, Card: req.Card})
+// putSnapshot 写审批快照对象并返回 digest 与 raw_object id；高亮与差异（P1 L5）在此算出并进快照。
+func (s *ApprovalService) putSnapshot(ctx context.Context, t model.ApprovalTicket, req agent.ApprovalRequest, reasons []string,
+	now time.Time) (model.TicketSnapshot, error) {
+	diff, err := s.orderDiff(ctx, req.Order, now)
+	if err != nil {
+		return model.TicketSnapshot{}, fmt.Errorf("service: approval snapshot order %d: %w", t.OrderID, err)
+	}
+	hl, err := highlights(req.Order)
+	if err != nil {
+		return model.TicketSnapshot{}, fmt.Errorf("service: approval snapshot order %d: %w", t.OrderID, err)
+	}
+	body, err := json.Marshal(approvalSnapshot{TicketSeq: t.TicketSeq, RiskLevel: t.RiskLevel, RiskReasons: reasons,
+		RequiredRole: t.RequiredRole, ConfirmRequired: t.ConfirmRequired, InitiatorID: t.InitiatorID, Order: req.Order,
+		Card: req.Card, Highlights: &hl, Diff: &diff})
 	if err != nil {
 		return model.TicketSnapshot{}, fmt.Errorf("service: encode approval snapshot: %w", err)
 	}
@@ -328,7 +347,8 @@ func (s *ApprovalService) openTx(ctx context.Context, tx *repository.DB, ref mod
 var errNotActivated = errors.New("activate matched no row")
 
 // Activate 在 run 已 INTERRUPTED(WAIT_APPROVAL) 后开放该 run 的票（§6.6 流程 5）：OPEN 票原样返回（幂等）；
-// PREPARING 票单事务 UPDATE JOIN agent_run 守卫置 OPEN、写 expires_at（risk_matrix 的 approval_ttl）+ APPROVAL_PENDING；
+// PREPARING 票单事务 UPDATE JOIN agent_run 守卫置 OPEN、写 expires_at（risk_matrix 的 approval_ttl）+
+// notify.send(PENDING_APPROVAL，INSERT IGNORE 去重，P1 L5) + APPROVAL_PENDING；
 // UPDATE 命中 0 行时重读：已被并发的 Activate（如 ticket_activate 扫描）置 OPEN 则返回库中的票，否则
 // （无票、票已决或 run 未中断）返回 agent.ErrNotActivatable。
 func (s *ApprovalService) Activate(ctx context.Context, scope model.Scope, runID uint64) (model.ApprovalTicket, error) {
@@ -352,6 +372,9 @@ func (s *ApprovalService) Activate(ctx context.Context, scope model.Scope, runID
 		}
 		if n == 0 {
 			return errNotActivated
+		}
+		if err := s.notifyPendingTx(ctx, tx, t, now); err != nil {
+			return err
 		}
 		return s.appendEvent(ctx, tx, t, model.EventApprovalPending,
 			pendingPayload{TicketID: t.TicketID, OrderID: t.OrderID, ExpiresAt: expires}, now)

@@ -42,7 +42,7 @@ func newDispatchPoller(t *testing.T, e *itest.Env, slot *env.Slot, dev adapter.D
 	}
 	a, err := app.Build(app.Deps{Clock: slot.Clock, Logger: logger, DB: slot.DB, Redis: e.Redis, Keys: slot.Keys,
 		RawStore: &memRaw{}, Agent: itAgent{}, Tools: itTools{}, Risk: risk, Constraints: constraints,
-		Permissions: itPerms(t), Adapter: dev})
+		Permissions: itPerms(t), Adapter: dev, NotifyTexts: itNotifyTexts(t)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -51,6 +51,16 @@ func newDispatchPoller(t *testing.T, e *itest.Env, slot *env.Slot, dev adapter.D
 		t.Fatal(err)
 	}
 	return p, a.WorkOrders
+}
+
+// itNotifyTexts 读仓库内通知文案（P1 L5：outbox 处理器表含 notify.send）。
+func itNotifyTexts(t *testing.T) *service.NotifyTexts {
+	t.Helper()
+	tx, err := service.LoadNotifyTexts("../../configs/texts/notify.zh-CN.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return tx
 }
 
 // itAgent / itTools 是 app.Build 的必填桩：下发链路不经主链路，工具调用一律无数据。

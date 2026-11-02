@@ -53,7 +53,8 @@ func TestApproval_Integration(t *testing.T) {
 	svc, err := service.NewApprovalService(service.ApprovalDeps{Clock: slot.Clock, DB: slot.DB,
 		Tx: repository.Transactor{DB: slot.DB}, Tickets: repository.ApprovalRepo{}, Orders: orders,
 		WorkOrders: service.NewWorkOrderService(slot.Clock, orders, events), Events: events, Raw: &memRaw{}, Risk: risk,
-		Constraints: passReviewer{}, Logger: discardLog})
+		Constraints: passReviewer{}, History: repository.LocalOrderRepo{DB: slot.DB},
+		Notify: repository.NotifyOutboxRepo{}, Logger: discardLog})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -83,7 +84,7 @@ func TestApproval_Integration(t *testing.T) {
 
 	// 并发开票在事务内命中 uk_order_seq：返回已有 id、created=false。
 	err = repository.Transactor{DB: slot.DB}.InTx(ctx, func(tx *repository.DB) error {
-		id, created, err := repository.ApprovalRepo{}.InsertTicketTx(ctx, tx, first, slot.Clock.Now())
+		id, created, err := repository.ApprovalRepo{}.InsertTicketTx(ctx, tx, first, nil, slot.Clock.Now())
 		if err == nil && (created || id != first.TicketID) {
 			t.Errorf("duplicate insert id=%d created=%v, want %d/false", id, created, first.TicketID)
 		}
@@ -163,7 +164,8 @@ func TestApprovalBlocked_Integration(t *testing.T) {
 	svc, err := service.NewApprovalService(service.ApprovalDeps{Clock: slot.Clock, DB: slot.DB,
 		Tx: repository.Transactor{DB: slot.DB}, Tickets: repository.ApprovalRepo{}, Orders: orders,
 		WorkOrders: service.NewWorkOrderService(slot.Clock, orders, events), Events: events, Raw: &memRaw{}, Risk: risk,
-		Constraints: constraint.NewReviewer(reg, regs), Logger: discardLog})
+		Constraints: constraint.NewReviewer(reg, regs), History: repository.LocalOrderRepo{DB: slot.DB},
+		Notify: repository.NotifyOutboxRepo{}, Logger: discardLog})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -216,7 +218,8 @@ func TestApprovalBlockedThenPasses_Integration(t *testing.T) {
 	svc, err := service.NewApprovalService(service.ApprovalDeps{Clock: slot.Clock, DB: slot.DB,
 		Tx: repository.Transactor{DB: slot.DB}, Tickets: repository.ApprovalRepo{}, Orders: orders,
 		WorkOrders: service.NewWorkOrderService(slot.Clock, orders, events), Events: events, Raw: &memRaw{}, Risk: risk,
-		Constraints: rv, Logger: discardLog})
+		Constraints: rv, History: repository.LocalOrderRepo{DB: slot.DB},
+		Notify: repository.NotifyOutboxRepo{}, Logger: discardLog})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -274,7 +277,8 @@ func TestApprovalBlockVsOpenConcurrent_Integration(t *testing.T) {
 		svc, err := service.NewApprovalService(service.ApprovalDeps{Clock: slot.Clock, DB: slot.DB,
 			Tx: repository.Transactor{DB: slot.DB}, Tickets: repository.ApprovalRepo{}, Orders: orders,
 			WorkOrders: service.NewWorkOrderService(slot.Clock, orders, events), Events: events, Raw: &memRaw{}, Risk: risk,
-			Constraints: rv, Logger: discardLog})
+			Constraints: rv, History: repository.LocalOrderRepo{DB: slot.DB},
+			Notify: repository.NotifyOutboxRepo{}, Logger: discardLog})
 		if err != nil {
 			t.Fatal(err)
 		}

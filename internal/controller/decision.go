@@ -37,6 +37,9 @@ type decideRequest struct {
 	Decision       string `json:"decision"`
 	SnapshotDigest string `json:"snapshot_digest"`
 	Comment        string `json:"comment"`
+	// P1 L5：REJECT 必填 reason_code（OTHER 另须 reason_text ≤ 512 字）；APPROVE 忽略。
+	ReasonCode string `json:"reason_code"`
+	ReasonText string `json:"reason_text"`
 }
 
 // pendingStatus 是待审批列表唯一支持的 status 过滤值（PREPARING 等不展示）。
@@ -89,7 +92,8 @@ func DecideHandler(d Decider) gin.HandlerFunc {
 		}
 		res, err := d.Decide(c.Request.Context(), scope, service.DecideInput{TicketID: ticketID,
 			RequestID: service.RequestIDFrom(c.Request.Context()), Decision: req.Decision,
-			SnapshotDigest: req.SnapshotDigest, Comment: req.Comment})
+			SnapshotDigest: req.SnapshotDigest, Comment: req.Comment,
+			ReasonCode: model.RejectReasonCode(req.ReasonCode), ReasonText: req.ReasonText})
 		if err != nil {
 			abortDecideErr(c, err, "ticket:"+strconv.FormatUint(ticketID, 10))
 			return
@@ -111,6 +115,7 @@ var decideCodes = []struct {
 	{service.ErrOrderBusy, http.StatusConflict},
 	{service.ErrRoleInsufficient, http.StatusForbidden},
 	{service.ErrSameApprover, http.StatusForbidden},
+	{service.ErrRejectReasonInvalid, http.StatusBadRequest}, // P1 L5：驳回原因缺失 / 非法
 }
 
 // abortDecideErr 先映射审批错误码；审批角色不足（service.RoleDeniedError）另写 CROSS_FARM_DENIED（ROLE_INSUFFICIENT，

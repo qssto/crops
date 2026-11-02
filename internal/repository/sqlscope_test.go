@@ -24,6 +24,8 @@ var sqlScopeExempt = map[string]string{
 	// P1-L1-A：身份解析在 Scope 确定之前执行。
 	"UserRoleRepo.ListRoles":   "本农场绑定 + 平台位 (0,0) 绑定",
 	"UserRoleRepo.FarmTenants": "由路径 farm_id 反查真实租户，供与 token tenant 比对",
+	// P1-L5：§6.6 定版 SQL 照抄为 WHERE id=? AND tenant_id=? AND farm_id=?…，归属条件齐全只是不在开头。
+	"DecisionRepo.ConfirmTicketTx": "§6.6 第二审批人生效 UPDATE 照抄（id 在前，tenant_id / farm_id 同在 WHERE）",
 }
 
 var (

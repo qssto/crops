@@ -12,7 +12,7 @@ import (
 
 // P1-L4-A：cmd/server 与 cmd/worker 的后台任务划分（§6.5 功能任务 1）。
 //   - server：HTTP、SSE、开关订阅（Flags.Run）；Ask.Wait / Decisions.Wait 由 cmd/server 收尾。
-//   - worker：outbox 轮询器（order.dispatch + notify.send 占位 + OrderOpsHandlers）、P0 扫描任务、分区维护、开关订阅、
+//   - worker：outbox 轮询器（order.dispatch + notify.send（P1 L5 处理器）+ OrderOpsHandlers）、P0 扫描任务、分区维护、开关订阅、
 //     OrderOpsLoops（L4-B 回执超时扫描等）。多副本安全：outbox 靠 FOR UPDATE SKIP LOCKED + row_ver 租约，
 //     扫描 / 分区靠 lock:scan:{task}，下发靠 lock:order + idem_key。
 
@@ -31,13 +31,16 @@ const (
 	LoopOrderOps   = "orderops"
 )
 
-// OutboxHandlers 是 worker 的 outbox 处理器表：order.dispatch（下发器）+ notify.send（占位）+ a.OrderOpsHandlers()（L4-B）。
-// topic 重复或处理器为空返回错误（cmd/worker 启动失败）。评测排空 outbox 也用这张表。
+// OutboxHandlers 是 worker 的 outbox 处理器表：order.dispatch（下发器）+ notify.send（P1 L5 NotifyHandler）+
+// a.OrderOpsHandlers()（L4-B）。topic 重复、处理器为空或未注入通知文案返回错误（cmd/worker 启动失败）。评测排空 outbox 也用这张表。
 func (a *App) OutboxHandlers() (map[string]service.OutboxHandler, error) {
-	notify := service.NotifyPlaceholder{Audit: repository.AuditRepo{DB: a.DB}, Clock: a.Clock, Logger: a.Logger}
+	notify, err := a.notifyHandler()
+	if err != nil {
+		return nil, err
+	}
 	return MergeOutboxHandlers(map[string]service.OutboxHandler{
 		repository.TopicOrderDispatch: a.WorkOrders.Dispatch,
-		repository.TopicNotifySend:    notify.Handle,
+		repository.TopicNotifySend:    notify,
 	}, a.OrderOpsHandlers())
 }
 

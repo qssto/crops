@@ -49,8 +49,9 @@ var (
 	knownOutcomes     = set(string(model.OutcomeAdvice), string(model.OutcomeRefused))
 	knownRefuseReason = set("KB_MISS", "DATA_MISSING", "OUT_OF_SCOPE")
 	knownAdviceTypes  = set("作业类", "观察类") // 母文档 §5.0.5 AdviceCard.advice_type
-	knownApprovers    = set("approve", "reject", "timeout")
-	knownToolErrors   = set(FaultTimeout, FaultEmpty, FaultMalformed)
+	// knownApprovers 的后三个是 P1 L5 审批闸门反例脚本。
+	knownApprovers  = set("approve", "reject", "timeout", "approve_once", "approve_same_twice", "reject_no_reason")
+	knownToolErrors = set(FaultTimeout, FaultEmpty, FaultMalformed)
 	// fieldCodePattern 是合成地块编码（context.field 与 match.field），L1 起写入 field_profile.ext_field_code。
 	fieldCodePattern = regexp.MustCompile(`^field-[0-9]{3}$`)
 	// toolNamePattern 是工具全名 {server}.{tool}。
@@ -86,6 +87,7 @@ func DefaultRules(tx *knowledge.Taxonomy, kb KnowledgeOpener) []Rule {
 		PerSample(RuleConstraint, checkConstraint),
 		PerSample(RuleDispatch, checkDispatch),
 		PerSample(RuleQuarantine, checkQuarantine),
+		PerSample(RuleApproval, checkApproval), // P1 L5
 	}
 }
 
@@ -149,14 +151,20 @@ func checkAttribution(s *Sample) []string {
 	return msgs
 }
 
-// validApprover 校验 fixtures.approver：空、knownApprovers 之一，或 approve_after:<正的 Go 时长>（与 env.ParseApproverScript 一致）。
+// validApprover 校验 fixtures.approver：空、knownApprovers 之一、approve_after:<正的 Go 时长>，
+// 或 P1 L5 的 approve_then_wait:<正的 Go 时长> / approve_as:<context.role 取值>（与 env.ParseApproverScript 一致）。
 func validApprover(v string) bool {
 	if v == "" || knownApprovers[v] {
 		return true
 	}
+	if role, ok := strings.CutPrefix(v, "approve_as:"); ok {
+		return knownRoles[strings.TrimSpace(role)]
+	}
 	rest, ok := strings.CutPrefix(v, "approve_after:")
 	if !ok {
-		return false
+		if rest, ok = strings.CutPrefix(v, "approve_then_wait:"); !ok {
+			return false
+		}
 	}
 	d, err := time.ParseDuration(strings.TrimSpace(rest))
 	return err == nil && d > 0

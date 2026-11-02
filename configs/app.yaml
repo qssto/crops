@@ -36,3 +36,6 @@ dispatch:
   max_attempts: 2
   receipt_timeout: 30m
   device_wait_max: 2h
+# 审批体系（P1-L5）：驳回导出 GET /rejections 的 [from, to] 最大跨度（超限 400）；AS_APPROVAL_REJECTION_EXPORT_MAX_SPAN 覆盖。
+approval:
+  rejection_export_max_span: 744h

@@ -20,6 +20,7 @@ import (
 	"agri-steward/internal/evalkit"
 	"agri-steward/internal/evalkit/env"
 	"agri-steward/internal/evalkit/sample"
+	"agri-steward/internal/model"
 	"agri-steward/internal/repository"
 	"agri-steward/internal/seed"
 	"agri-steward/internal/service"
@@ -37,7 +38,9 @@ type infraFlags struct {
 	permFile   string
 	regFile    string
 	deviceFile string
-	poolSize   int
+	// notifyTexts 是 notify.send 文案（P1 L5，与生产同一份）。
+	notifyTexts string
+	poolSize    int
 }
 
 func (f *infraFlags) register(fs *flag.FlagSet) {
@@ -50,6 +53,7 @@ func (f *infraFlags) register(fs *flag.FlagSet) {
 	fs.StringVar(&f.riskFile, "risk", "policy/risk_matrix.yaml", "审批风险矩阵（与生产同一份）")
 	fs.StringVar(&f.permFile, "permissions", "policy/permission_matrix.yaml", "权限矩阵（与生产同一份）")
 	fs.StringVar(&f.regFile, "regulation", "policy/regulation_map.yaml", "法规对照表（与生产同一份）")
+	fs.StringVar(&f.notifyTexts, "notify-texts", "configs/texts/notify.zh-CN.yaml", "通知文案（与生产同一份）")
 	fs.StringVar(&f.deviceFile, "devices", "configs/mock/device.yaml", "设备 → 农场显式绑定（cross_farm_isolation 判 device_id 归属）")
 	fs.IntVar(&f.poolSize, "pool", 1, "trial schema 槽位数（agri_eval_t_1..n）")
 }
@@ -64,6 +68,8 @@ type infra struct {
 	question evalkit.QuestionFunc
 	// approvers 是脚本审批人（种子主农场的两位农技员）。
 	approvers [2]env.Identity
+	// approversByRole 是 approve_as:<role> 脚本的身份（种子主农场各角色 user_id 最小者，P1 L5）。
+	approversByRole map[model.Role]env.Identity
 	// objects / evalBucket 供 L7 transcript 上传（cfg.MinIO.BucketEval）。
 	objects    repository.ObjectPutter
 	evalBucket string
@@ -126,6 +132,10 @@ func (f *infraFlags) open(ctx context.Context, logW io.Writer, ls *loadedSamples
 	if err != nil {
 		return nil, err
 	}
+	notifyTexts, err := service.LoadNotifyTexts(f.notifyTexts)
+	if err != nil {
+		return nil, err
+	}
 	devices, err := device.LoadBindings(f.deviceFile)
 	if err != nil {
 		return nil, err
@@ -139,7 +149,7 @@ func (f *infraFlags) open(ctx context.Context, logW io.Writer, ls *loadedSamples
 	if err != nil {
 		return nil, err
 	}
-	in := &infra{model: mcfg, approvers: [2]env.Identity{first, second}, devices: devices}
+	in := &infra{model: mcfg, approvers: [2]env.Identity{first, second}, approversByRole: users.byRole(), devices: devices}
 	if in.receiptSecret, err = newReceiptSecret(); err != nil {
 		return nil, err
 	}
@@ -202,7 +212,7 @@ func (f *infraFlags) open(ctx context.Context, logW io.Writer, ls *loadedSamples
 			// 主链路（桩模型）在 Build 内用本 trial 的 Runs / Advice / Drafts / RunLocker 装配；Tools 为每 trial 一个 FixtureMCP。
 			NewAgent: app.GraphAgent(ctx, gc),
 			Tools:    tools, Risk: risk, Constraints: constraints, Permissions: perms, Adapter: dev,
-			ReceiptSecret: in.receiptSecret,
+			ReceiptSecret: in.receiptSecret, NotifyTexts: notifyTexts, Approval: cfg.Approval,
 			// L6：检查点读回走 MinIO；记忆按配置开关注入样本 fixtures.memory（不读 trial 库 episodic_memory）。
 			HITL: app.HITLDeps{Objects: repository.MinIOGetter{Client: mc}, RawBucket: cfg.MinIO.BucketRaw,
 				Memory: memory.Options{Enabled: cfg.Memory.Enabled, EpisodicLimit: cfg.Memory.EpisodicLimit,

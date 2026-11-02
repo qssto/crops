@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"slices"
 	"testing"
 	"time"
 
@@ -51,6 +52,7 @@ type fakeTickets struct {
 	inserted     []model.ApprovalTicket
 	expires      time.Time
 	activations  int
+	reasons      []string // InsertTicketTx 收到的 risk_reasons（P1 L5）
 	// trace 记录事务内写操作顺序（复核第 21 条：work_order 行锁须是第一条）。
 	trace []string
 }
@@ -96,8 +98,10 @@ func (f *fakeTickets) LockTicketByOrderSeqTx(context.Context, *repository.DB, mo
 	return *f.lockedInTx, true, f.readErr
 }
 
-func (f *fakeTickets) InsertTicketTx(_ context.Context, _ *repository.DB, t model.ApprovalTicket, _ time.Time) (uint64, bool, error) {
+func (f *fakeTickets) InsertTicketTx(_ context.Context, _ *repository.DB, t model.ApprovalTicket, reasons []string,
+	_ time.Time) (uint64, bool, error) {
 	f.trace = append(f.trace, "insert_ticket")
+	f.reasons = reasons
 	if f.insertErr != nil {
 		return 0, false, f.insertErr
 	}
@@ -133,8 +137,9 @@ type fakeRisk struct {
 	ttl time.Duration
 }
 
-func (f fakeRisk) For(model.WorkType) (policy.Risk, error) {
-	return policy.Risk{Level: model.RiskHigh, Roles: []model.Role{model.RoleAgronomist}, ConfirmRequired: true}, f.err
+func (f fakeRisk) Assess(policy.RiskInput) (policy.Risk, error) {
+	return policy.Risk{Level: model.RiskHigh, Roles: []model.Role{model.RoleAgronomist}, ConfirmRequired: true,
+		Reasons: []string{model.RiskReasonPesticide}}, f.err
 }
 
 func (f fakeRisk) TTL(model.RiskLevel) (time.Duration, error) { return f.ttl, f.err }
@@ -158,6 +163,8 @@ type approvalFixture struct {
 	events   *fakeEvents
 	raw      *fakeRaw
 	reviewer ConstraintReviewer
+	history  *fakeHistory
+	notify   *fakeNotify
 	logs     *bytes.Buffer
 }
 
@@ -173,12 +180,13 @@ func newApprovalFixtureWith(t *testing.T, tickets *fakeTickets, orderStatus mode
 	reviewer ConstraintReviewer) approvalFixture {
 	t.Helper()
 	f := approvalFixture{tx: &fakeTx{}, tickets: tickets, events: &fakeEvents{}, raw: &fakeRaw{}, reviewer: reviewer, logs: &bytes.Buffer{},
+		history: &fakeHistory{}, notify: &fakeNotify{},
 		orders: &fakeOrders{state: model.OrderState{Status: orderStatus, RowVer: 3, RunID: 5, WorkType: model.WorkSpray,
 			DeviceType: "knapsack", DispatchMode: model.DispatchDryRun}}}
 	clk := fixedClock{approvalNow}
 	svc, err := NewApprovalService(ApprovalDeps{Clock: clk, DB: &repository.DB{}, Tx: f.tx, Tickets: tickets,
 		Orders: f.orders, WorkOrders: NewWorkOrderService(clk, f.orders, f.events), Events: f.events, Raw: f.raw, Risk: risk,
-		Constraints: reviewer, Logger: slog.New(slog.NewTextHandler(f.logs, nil))})
+		Constraints: reviewer, History: f.history, Notify: f.notify, Logger: slog.New(slog.NewTextHandler(f.logs, nil))})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -445,4 +453,35 @@ func TestNewApprovalService_MissingDeps(t *testing.T) {
 	if _, err := NewApprovalService(ApprovalDeps{}); err == nil {
 		t.Fatal("want error for missing deps")
 	}
+}
+
+// fakeHistory 是 agent.LocalOrderSource（P1 L5 快照差异）：返回固定的同地块单并记录 since。
+type fakeHistory struct {
+	orders []agent.LocalOrder
+	err    error
+	since  time.Time
+}
+
+func (f *fakeHistory) RecentOrders(_ context.Context, _ model.Scope, _, _ uint64, since time.Time) ([]agent.LocalOrder, error) {
+	f.since = since
+	return f.orders, f.err
+}
+
+// fakeNotify 是 NotifyOutboxWriter：按 dedup_key 去重记录写入。
+type fakeNotify struct {
+	keys     []string
+	payloads [][]byte
+	err      error
+}
+
+func (f *fakeNotify) InsertTx(_ context.Context, _ *repository.DB, _ model.OrderRef, key string, payload []byte,
+	_ time.Time) (bool, error) {
+	if f.err != nil {
+		return false, f.err
+	}
+	if slices.Contains(f.keys, key) {
+		return false, nil
+	}
+	f.keys, f.payloads = append(f.keys, key), append(f.payloads, payload)
+	return true, nil
 }

@@ -27,6 +27,11 @@ type ApproveFunc func(ctx context.Context, a *app.App, s *sample.Sample, q agent
 //
 // App.Clock 须为 *env.FrozenClock（PoolEnv 槽位时钟）。
 func ScriptApprover(first, second env.Identity) ApproveFunc {
+	return ScriptApproverByRole(first, second, nil)
+}
+
+// ScriptApproverByRole 同 ScriptApprover，另带 approve_as:<role> 脚本用的角色 → 身份（P1 L5；nil 时该脚本构造失败）。
+func ScriptApproverByRole(first, second env.Identity, byRole map[model.Role]env.Identity) ApproveFunc {
 	return func(ctx context.Context, a *app.App, s *sample.Sample, q agent.Question, ans agent.Answer) error {
 		if s.Fixtures.Approver == "" || s.Expect.Trajectory.StopAtApproval || ans.Ticket == nil || a.HITL == nil {
 			return nil
@@ -36,7 +41,7 @@ func ScriptApprover(first, second env.Identity) ApproveFunc {
 			return errors.New("evalkit: approver needs env.FrozenClock")
 		}
 		act := func(script string, ticketID uint64) (bool, error) {
-			approver, err := newApprover(a, clk, script, first, second)
+			approver, err := newApprover(a, clk, script, approverIDs{first: first, second: second, byRole: byRole})
 			if err != nil {
 				return false, err
 			}

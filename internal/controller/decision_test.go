@@ -59,6 +59,9 @@ func TestDecideHandler(t *testing.T) {
 		{name: "role denied by matrix", path: path, reqID: "r-1", err: fmt.Errorf("service: decide: %w",
 			&service.RoleDeniedError{Op: service.OpApprovalDecidePesticide}), wantStatus: http.StatusForbidden, wantError: "ROLE_INSUFFICIENT"},
 		{name: "same approver", path: path, reqID: "r-1", err: service.ErrSameApprover, wantStatus: http.StatusForbidden, wantError: "SAME_APPROVER"},
+		// P1 L5 应失败：驳回缺原因 → 400 REJECT_REASON_INVALID（不是泛化的 bad input）。
+		{name: "reject reason invalid", path: path, reqID: "r-1", err: fmt.Errorf("deny: %w: %w", service.ErrBadInput,
+			service.ErrRejectReasonInvalid), wantStatus: http.StatusBadRequest, wantError: "REJECT_REASON_INVALID"},
 		{name: "bad input", path: path, reqID: "r-1", err: service.ErrBadInput, wantStatus: http.StatusBadRequest},
 		{name: "not found", path: path, reqID: "r-1", err: notInScope, wantStatus: http.StatusForbidden},
 		{name: "related data missing", path: path, reqID: "r-1", err: fmt.Errorf("replay: %w", model.ErrNotFound),
@@ -107,6 +110,19 @@ func TestDecideHandler(t *testing.T) {
 				t.Fatalf("input = %+v", d.gotIn)
 			}
 		})
+	}
+
+	// P1 L5：驳回原因原样透传到 DecideInput。
+	d := &fakeDecider{}
+	rr := NewRouter(e.guard, &fakeAsker{}, ApprovalRoutes(d))
+	req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(`{"decision":"REJECT","snapshot_digest":"`+
+		strings.Repeat("a", 64)+`","reason_code":"OTHER","reason_text":"药剂需轮换"}`))
+	req.Header.Set("Authorization", bearer)
+	req.Header.Set(HeaderRequestID, "r-2")
+	rec := httptest.NewRecorder()
+	rr.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK || d.gotIn.ReasonCode != model.RejectOther || d.gotIn.ReasonText != "药剂需轮换" {
+		t.Fatalf("reject = %d %s, input %+v", rec.Code, rec.Body.String(), d.gotIn)
 	}
 
 	// 待审批列表：status 缺省或 OPEN 返回列表，其他取值 400
