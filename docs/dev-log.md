@@ -485,3 +485,87 @@
   - 表驱动新增用例：PHI（PHI 不适用仍查历史、历史未识别 / 未载入、历史 PHI 不适用忽略）、TestReviewer_Recompute（空值说明集合与 threshold.op）、TestStore_OpenRejects（formulations 缺失 / 重复、PHI-only 产品）。
   - TestApprovalBlockedThenPasses_Integration 增加对 CONSTRAINT_BLOCKED payload 证据的断言。
 - TODO：调度方在主仓跑集成测试 TestApproval_Integration、TestApprovalBlocked_Integration、TestApprovalBlockedThenPasses_Integration、TestApprovalBlockVsOpenConcurrent_Integration（加 -race）。
+
+## P1-L4-A · 下发器、复检退回与 Reopen、cmd/worker（2026-10-30）
+
+- 交付：
+  - `cmd/worker` 承接 outbox poller 与超时 / 卡住 / 分区扫描；`cmd/server` 不再起任何后台循环，`internal/app/boot` 收拢两端共用装配（原 `cmd/server/tools.go` 移入）。Makefile 新增 `worker` 目标。
+  - 下发器①–⑦：①准入（终态单按重复投递丢弃）→ ②订单锁 `service.WithOrderLock`（续期失败取消 ctx）→ ③绑定 device_id（`ToolDevicePicker` 走 device.list / device.status，须属本农场、在线且空闲）→ ④ PRE_DISPATCH 复检 → ⑤幂等尝试（`dispatch_attempt` 按 idem_key）→ ⑥调用设备 → ⑦回写。REAL 重试上限 `dispatch.max_attempts`（默认 2，须 ≥1）。
+  - ④不通过走 Reopen：APPROVED → PENDING_APPROVAL(RECHECK_FAILED)，旧票 SUPERSEDED，开 ticket_seq+1 新票，同事务写 notify.send（去重键 `notify:RECHECK_RETURNED:{order}:{旧票}`）。重开票的批准不 resume run；拒绝 / 过期时 run 若仍停在 INTERRUPTED(WAIT_APPROVAL) 则收尾（P1-L4 审查更正，原为不收尾）。
+  - eval：`evalkit.DrainOutbox` 用与 worker 同一张 handler 表排空 outbox；`fixtures.dispatch{reapprove, redeliver}`；trial 记录 outbox；红线打分器 `recheck_returned`（退回、通知、新票、设备下发次数、order.dispatch 均 DONE）；参考解带下发观测；`state_machine_legal` 覆盖退回再下发、DISPATCHED→FAILED 等新迁移。
+  - 样本：rice-hitl-0002 v3（审批后转雨 → 退回 PENDING_APPROVAL，零下发）；新增 rice-dispatch-0001（退回后重审再下发一次）、0002（两次重复投递，设备计数 1）、0003（审批超时 EXPIRED，零下发）。样本总数 154 → 157，regression 108 → 111；samples_hash 未重算。
+- 偏离：
+  - 共享文件非纯追加：`grader/code/guard.go`（StopAtApproval 对带 dispatch fixture 的样本放行设备调用）、`reference.go`、`trajectory.go`（code.All 加 recheck_returned）、`evalkit/approve.go`、`runner.go`，以及 `cmd/eval/main_test.go` 的样本计数。L4-B 若加样本，计数会冲突。
+  - `service/decision.go` 有改动（重开票跳过 resume / closeRun）。rice-hitl-0002 由 CANCELED 改为 PENDING_APPROVAL：Blocked 优先于 Changed。
+  - 手动 DRY_RUN 单不绑定设备。REAL 在 Recheck 为 nil 时失败关闭，且要求 DedupKey 与 TicketID。非 DISPATCHED 单上 attempt>1 的消息直接丢弃。设备 kind 映射为假设。
+  - （P1-L4 审查更正）SENT 无 device_job_id 的续跑：原先设备只支持 ExternalQuery、QueryStatus 返回 ErrJobNotFound 时会带原 idem_key 重发，平台已受理而外部单号索引延迟时会产生二次作业，违反 §6.5。现在只有 `caps.IdemKey` 为真才允许重发；ExternalQuery 查无此单且无 IdemKey → 尝试 FAILED(UNKNOWN) 转人工对账，禁止重发。
+  - SystemScope 白名单未收紧到 `cmd/worker`。worker 需要与 server 相同的密钥（含 auth.jwt_secret）。`App.Outbox` 字段已删除。
+  - eval 只覆盖 DRY_RUN。REAL 的重复下发计数 1、租约过期换 worker 计数 1 由单测覆盖；顺序排空模拟不了处理中途租约过期。回执重放归 L4-B。
+- 测试：TestDispatchReal_DuplicateDeliveryCallsDeviceOnce、TestDispatch_BlockedReopensWithoutDispatch、TestDispatch_DryRunDeviceBinding、TestToolDevicePicker、TestWithOrderLock_*、TestOutboxHandle_*、TestReopen_*、TestDecide_Reopened*、TestServerWorkerLoops、TestOutboxHandlers_Topics、TestMergeOutboxHandlers、TestRecheckReturned、TestStateMachineLegal_L4A、TestReferenceCheck_Dispatch。build / vet / vet -tags integration / test 全过。
+- TODO：
+  - 调度方在主仓跑集成测试 TestOutboxDispatch_Integration、TestEventStream_Integration、TestFlag_Integration、TestDispatchHeld_Integration 和 hitl 集成测试，再跑 `make eval SUITE=regression`（本 worktree 禁跑）。
+  - §6.4-3 的预发演练：待演练。
+
+## P1-L4-B · 设备回执、超时扫描与对账、中止补偿、field.history 回写（2026-10-30）
+
+- 迁移 `migrations/0009_device_receipt`（未入库）：`device_receipt` 只追加表，`uk_receipt (tenant_id, farm_id, receipt_id)`，`idx_order`。
+- 回执：`service.OrderOpsService.Process` 统一处理 webhook / 轮询 / 人工三种来源。持 `lock:order`，在一个事务内完成回执入库（INSERT IGNORE，冲突即重放）、尝试按 row_ver 更新、`Transition` 与 DONE / PARTIALLY_DONE 回写（done_area_mu、WORK_DONE 记忆、`field.history.append` outbox）。提交后写 `idem:receipt`（7 天）。效果分 APPLIED / STALE / LATE / CONFLICT，后三种只入库。
+- webhook：`POST /api/v1/farms/:farm_id/orders/:order_id/receipts`，HMAC-SHA256（`X-Timestamp` + `X-Signature`，窗口 5 分钟）。密钥只从 `AS_DEVICE_RECEIPT_SECRET` 读，未配置不挂载并 Warn。反查走 SystemScope，反查不到返回 202 并记 RECEIPT_UNMATCHED。契约写在 docs/contracts.md「设备回执 webhook」。
+- NOT_EXECUTED：attempt < max_attempts 时同事务写重试 outbox（`order.dispatch …:{attempt+1}`），作业单保持 DISPATCHED；耗尽转 FAILED（RETRY_EXHAUSTED）。max_attempts 先用本地常量 2，待与 L4-A config 统一。
+- 超时扫描 `ScanReceiptDueOnce`：持 `lock:scan:receipt_due`，对过期尝试主动 QueryStatus。有进展按 POLL 回执处理，无进展置 NO_RECEIPT 进待对账，不转 FAILED、不重发。迟到回执仍可推进终态。
+- 人工对账 `Reconcile`（`order.reconcile`）、待对账列表 `GET /reconcile/pending`（复用 advice.read）、中止 `Cancel`（`order.cancel`）：未下发的单直接 CANCELED；已下发的单写 `order.cancel` outbox，由 `HandleCancel` 调 Adapter.Cancel，按确认面积转 CANCELED 或 PARTIALLY_DONE。
+- field.history 回写：`HandleFieldHistory` 消费 outbox，按 order_id 幂等。mock 模式用 `MemFieldHistory`，real 模式先接 Unwired。回写工具不对模型可见，no_model_actuate、工具策略与 archtest 不变。
+- 评测：
+  - RecordingAdapter 按方法排队脚本，样本声明 `fixtures.device.scripts` / `fixtures.device.steps`（advance / receipt / repeat / scan / cancel）。
+  - `evalkit.ReceiptSteps.Run` 负责投递签名回执、推进 FrozenClock、触发扫描。
+  - 新增打分器 `partially_done`（非红线），检查状态、done_area 回填、LocalOrderRepo 可见（PHI 推算会用到）和 field.history 是否有记录。
+  - 新增 regression 样本 rice-rcpt-0001–0006：重放、乱序、无回执后迟到、中途中止、NOT_EXECUTED 重试成功、重试耗尽。
+  - validate 154 → 160 条，regression kbdump 108 → 114 条。
+- 偏差：
+  - 中止正在等重试的 NOT_EXECUTED 尝试时直接转 CANCELED，L4-A 的重试下发遇到 CANCELED 必须停止。
+  - 对账不发 DONE_AREA_MISSING 告警。（原「PENDING_APPROVAL 单中止后票据保持 OPEN」已在 P1-L4 审查修复中改为同事务关票。）
+  - 锁先用现有 Locker（不续期），待 L4-A 的持锁执行函数合并后统一。
+- 待合并：
+  - `ReceiptSteps` 尚未接入 `Runner.ask`。调度方需在 L4-A 排空 outbox 之后调用它，并传入 Drain。cmd/eval 要给 `Deps.ReceiptSecret` 注入进程内随机密钥，与 Steps.Secret 相同。
+  - 在此之前，rcpt 样本的 work_order / partially_done 断言跑不通。
+- 人工项：用户需在 deploy/.env 配置 `AS_DEVICE_RECEIPT_SECRET`。
+- 待调度方在主仓跑（需先执行迁移 0009）：TestDeviceReceipt_ReplayUK_Integration、TestDeviceReceipt_TxRollback_Integration、TestReceiptDueScan_Integration；本地只过了 `go vet -tags integration`。
+
+### P1-L4 合并统一（2026-10-30）
+
+- 持锁：回执 `Process`、对账（`markNoReceipt` / `Reconcile`）、中止 `Cancel` 改用 `service.WithOrderLock`（续期，锁丢失时以 ErrOrderLockLost 取消持有方）。ErrOrderBusy 的 HTTP 码不变：webhook 503，cancel / reconcile 409。决策、扫描、复检仍用 acquireOrderLock，不在本次范围。
+- max_attempts：删除本地常量 `maxDispatchAttempts`，由 `dispatch.max_attempts` 经 `app.DispatchConfig` 注入 `OrderOpsDeps.MaxAttempts`；< 1 时 `NewOrderOpsService` 返回 ErrOrderOpsNotConfigured。
+- 重试遇中止：新增 `TestDispatchReal_RetryOnCanceledOrderDropped`（投递前已中止 / 复检中被中止），attempt=2 消息不调 Adapter、不改状态、不新增尝试。
+- 评测回执步骤：`Runner.ask` 在审批成功后、样本声明 `fixtures.device.steps` 时先 `DrainOutbox` 再 `ReceiptSteps.Run`（`evalkit.WithReceiptSteps` + `evalkit.DrainStep`）。cmd/eval 用 crypto/rand 生成 32 字节进程内密钥，同时注入 `Deps.ReceiptSecret` 与 `Steps.Secret`，不落盘、不打印。
+- 已知缺口：评测作业单只走 DRY_RUN（机器人开关关、seed 拒开；devicesim 关；REAL 下发器用 `a.Devices` 而非 `a.Adapter`），没有 dispatch_attempt / device_job_id，rcpt-0001–0006 跑不通。要跑通需评测侧按 trial 开 REAL 并把 RecordingAdapter 注册进 Registry，涉及红线开关，留给调度方决定。P1-L4 审查修复起这 6 条样本显式隔离（`quarantine`），Runner 不再把它们记成 INFRA_ERROR。
+- state_machine_legal：TestStateMachineLegal 与 TestStateMachineLegal_L4A 均保留；L4-B 只把 PARTIALLY_DONE 加进 `code.All`。scope_test 两侧方法均保留，archtest 通过。
+- 顺带：`dispatch_device_test.go` 补 gofmt。
+- 新增测试：TestNewOrderOpsService_RequiresMaxAttempts、TestProcess_NotExecutedHonorsMaxAttempts、TestOrderOps_LockLostStopsHolder、TestDispatchReal_RetryOnCanceledOrderDropped、TestRunner_ReceiptSteps、TestNewReceiptSecret。validate 163 条，regression kbdump 117 条。
+
+### P1-L4 审查修复（2026-10-30）
+
+- 续跑查无单禁止重发（P0，`service/workorder_dispatch.go` resumeLocked）：只有 `caps.IdemKey` 为真才带原键重发；仅 ExternalQuery 且 QueryStatus 返回 ErrJobNotFound → `toManual`（尝试 FAILED / UNKNOWN，原因 `manualQueryMissNoIdem`），Adapter.Dispatch 调用 0 次。测试：TestDispatchReal_ResumeSent 新增「query-only not found → manual」「idem+query not found → resend」。
+- 中止关票（`service/workorder_cancel.go` + `repository/decision.go`）：中止 DRAFT / PENDING_APPROVAL / APPROVED 单时，同事务 `LiveTicketsTx`（OPEN / PREPARING，FOR UPDATE）→ `SupersedeLiveTicketTx` 置 SUPERSEDED（row_ver 守卫，0 行 → ErrConcurrentUpdate，整个中止回滚）→ `CloseWaitingRunTx(CANCELED_BY_USER)` 只在 run 仍 INTERRUPTED(WAIT_APPROVAL) 时收尾。
+  - 选 SUPERSEDED 的理由：票据没有被审批人驳回（REJECTED）也不是时效到期（EXPIRED），是作业单被别的动作作废；SUPERSEDED 已表示「票据因作业单状态变化失效」（复检退回同样用它），审批该票返回 ErrTicketClosed，approval_expire 的 ListExpired 只取 OPEN，不再重扫。
+  - 原问题：票据留 OPEN，过期扫描 CANCELED → EXPIRED 非法被 skippable 吞掉，票据永远 OPEN、每轮重扫，ticket_seq=1 时 run 永停 INTERRUPTED。
+  - `OrderOpsDeps` 新增必填 `Tickets`（`service.CancelTicketStore`，生产为 DecisionRepo）。
+  - 测试：TestCancel_PendingApprovalClosesTicket、TestCancel_TicketConflictRollsBack；集成 TestCancelClosesTicket_Integration（关票后 ListExpired 不再取到）。
+- 回执样本显式隔离（评测）：样本新字段 `quarantine`（理由字符串），校验规则 `quarantine` 要求非空理由。Runner 不运行隔离样本、不生成 trial，记入 `Experiment.Quarantined`；`Experiment.Samples` 只计实际运行的样本。报告总览加「隔离样本」行，门禁行注明未覆盖，并单列「## 隔离样本」节（id / 套件 / 理由）；Gate 0 与红线 pass^k 只读 trial，隔离样本不算通过、不算 INFRA_ERROR；baseline 记 `quarantined` id 列表。cmd/eval validate 输出 `N quarantined (run skips them)`，run 输出 `quarantined=`。
+  - rice-rcpt-0001–0006 共 6 条隔离（需 REAL 评测设施：enable_robot_dispatch 与 RecordingAdapter 注册进 Registry，待用户决定）。validate 仍 163 条（6 条隔离），run 实际 157 条；regression kbdump 仍 117 条。
+  - 回执 / 对账 / 中止链路的覆盖靠单测（receipt_test、workorder_cancel_test、reconcile 相关）与集成测试（TestDeviceReceipt_ReplayUK_Integration、TestDeviceReceipt_TxRollback_Integration、TestReceiptDueScan_Integration），不靠这 6 条样本。
+  - 测试：TestCheckQuarantine、TestQuarantineReason、TestRunner_SkipsQuarantined、TestRender_Quarantined、TestNewBaseline_Quarantined、cmd/eval「validate counts quarantined」。
+- 退回票收尾 run（`service/decision.go` closeRunTx）：重开票（ticket_seq > 1）被驳回 / 过期时用 `CloseWaitingRunTx`：run 仍 INTERRUPTED(WAIT_APPROVAL)（首张票批准后 Resume 失败）→ COMPLETED(APPROVAL_REJECTED / APPROVAL_EXPIRED) 并 Warn；run 已终态不动、不回滚决策。测试：TestDecide_ReopenedClosesRunStillWaiting。
+- 设备不可用推后上限（`service/dispatch_device.go`）：
+  - 上限：作业单有 dispatch_deadline_at 时按它；没有（手动 REAL 单等）时按 outbox `created_at` + `dispatch.device_wait_max`。新配置键 `dispatch.device_wait_max`（默认 2h，须 > 0，环境变量 `AS_DISPATCH_DEVICE_WAIT_MAX`）。`OutboxMessage` 新增 `CreatedAt`（Claim 读回，推后不改）。
+  - 超限：首次投递的 APPROVED 单 → EXPIRED（迁移表里 APPROVED → FAILED 非法，EXPIRED 是「未在时限内下发」的现有终态）；重试（attempt > 1）的 DISPATCHED 单 → FAILED。两者 reason_code 都是新增的 `DEVICE_UNAVAILABLE`，写 DEVICE_UNAVAILABLE 审计（result FAILED，推后时仍是 DENIED），告警 `alert=DEVICE_UNAVAILABLE`，outbox 置 DONE。
+  - resume_epoch 仍每次推后递增：device.status 是 TimeSensitive 工具，gateway 的 call_key 含 epoch，epoch 不变会重放上一次的离线 / 忙结果，设备恢复后也选不到；④ 复检同理需要新 epoch。上限把递增次数限制在约 2h / 5s ≈ 1440 次。
+  - 测试：TestDispatch_DeviceUnavailableGivesUp（首次超时 EXPIRED、重试 FAILED、未超时 / 未到截止 / 无 created_at 都推后），TestLoad_Dispatch 新增 device wait / zero device wait，TestBuild_DispatchConfig 新增 zero device wait fails；集成 TestOutboxClaimCreatedAt_Integration。
+- 集成测试装配：TestOutboxDispatch_Integration、TestDispatchHeld_Integration 的 `newDispatchPoller` 原先手工构造 DispatchDeps，缺 L4-A 新增的必填依赖。现改为 `app.Build` + `App.NewOutboxPoller`（与 cmd/worker 同一份装配），断言不变。其余 `-tags integration` 测试没有手工构造 DispatchDeps / OrderOpsDeps。本地只过了 `go vet -tags integration ./...`，待调度方在主仓重跑。
+
+### P1-L4 已知问题（本轮不修）
+
+- 批量认领只租一次 60s：Claim 一次最多领 50 条、统一租到 now+60s，排在后面的消息处理前租约可能已过期而被再次领取（处理侧靠 dispatch_attempt 幂等与 lock:order 兜底）。
+- device.list 非 TimeSensitive：其 call_key 不含 resume_epoch，同一 run 内推后重选设备时重放的是旧设备清单。
+- 下发被拒不重试：Adapter 返回 ErrRejected 不进入重试。
+- Renew 无超时：持锁续期调用没有单独的超时。
+- 仅评测用的代码留在生产包内，待单独清理。

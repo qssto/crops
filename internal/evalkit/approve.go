@@ -23,6 +23,7 @@ type ApproveFunc func(ctx context.Context, a *app.App, s *sample.Sample, q agent
 //  3. env.ScriptedApprover 执行通过 / 驳回 / 超时 / approve_after，HIGH 票由 second 二次确认；
 //  4. 通过后等异步 Resume 收尾，再按下发前复检（RecheckService.PreDispatch，epoch 由 RecheckEpoch 分配）处置：
 //     条件变化时原单 CANCELED(CONDITION_CHANGED)，并等新建 run 结束。复检无结论不算错误（作业单保持 APPROVED）。
+//  5. P1-L4-A：样本有 fixtures.dispatch 时不做第 4 步，改为排空 outbox 走真实下发器（见 runDispatch，审批未通过也排空）。
 //
 // App.Clock 须为 *env.FrozenClock（PoolEnv 槽位时钟）。
 func ScriptApprover(first, second env.Identity) ApproveFunc {
@@ -34,21 +35,29 @@ func ScriptApprover(first, second env.Identity) ApproveFunc {
 		if !ok {
 			return errors.New("evalkit: approver needs env.FrozenClock")
 		}
-		script, err := env.ParseApproverScript(s.Fixtures.Approver)
-		if err != nil {
-			return err
+		act := func(script string, ticketID uint64) (bool, error) {
+			approver, err := newApprover(a, clk, script, first, second)
+			if err != nil {
+				return false, err
+			}
+			tk, err := openTicket(ctx, a, q.Scope, ticketID)
+			if err != nil {
+				return false, err
+			}
+			approved, err := approver.Act(ctx, q.Scope, tk)
+			a.HITL.Decisions.Wait()
+			return approved, err
 		}
-		approver, err := env.NewScriptedApprover(script, env.ApproverDeps{Clock: clk, Decider: a.HITL.Decisions,
-			Sweeper: a.HITL.Scanner, First: first, Second: second})
-		if err != nil {
-			return err
+		approved, err := act(s.Fixtures.Approver, ans.Ticket.TicketID)
+		if s.Fixtures.Dispatch != nil { // P1-L4-A：经 outbox 排空走真实下发器（含复检），不再模拟内联复检
+			if err != nil {
+				return err
+			}
+			return runDispatch(ctx, a, s, q.Scope, ans, func(script string, ticketID uint64) error {
+				_, err := act(script, ticketID)
+				return err
+			})
 		}
-		tk, err := openTicket(ctx, a, q.Scope, ans.Ticket.TicketID)
-		if err != nil {
-			return err
-		}
-		approved, err := approver.Act(ctx, q.Scope, tk)
-		a.HITL.Decisions.Wait()
 		if err != nil || !approved {
 			return err
 		}

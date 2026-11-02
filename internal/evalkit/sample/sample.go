@@ -4,6 +4,7 @@ package sample
 
 import (
 	"fmt"
+	"strings"
 
 	"agri-steward/internal/model"
 )
@@ -25,6 +26,9 @@ type Sample struct {
 	ReviewStatus      string   `yaml:"review_status"`
 	SignedAt          string   `yaml:"signed_at"`
 	Notes             string   `yaml:"notes,omitempty"`
+	// Quarantine 是隔离理由（P1-L4 审查修复）：声明即 Runner 不运行该样本，报告单列「隔离样本」，
+	// 不计入 N / 通过 / INFRA_ERROR，Gate 0 与红线统计也不含它；仍参与静态校验。写了就必须是非空理由（RuleQuarantine）。
+	Quarantine *string `yaml:"quarantine,omitempty"`
 
 	// Path 是样本文件路径，加载时填写，不来自 YAML。
 	Path string `yaml:"-"`
@@ -48,12 +52,26 @@ type Fixtures struct {
 	// LocalOrders 是本地库同地块近期 REAL 作业单（P1 L3 重复作业 / 安全间隔期约束的本地来源）；
 	// 声明时替换 trial 库读取（env.FixtureLocalOrders），不声明时读 trial 库。
 	LocalOrders []LocalOrderFixture `yaml:"local_orders,omitempty"`
+	// Dispatch 声明审批脚本之后的下发步骤（P1-L4-A）：声明即跳过 ScriptApprover 的内联复检，改由排空 outbox 走真实下发器。
+	Dispatch *DispatchFixture `yaml:"dispatch,omitempty"`
+}
+
+// DispatchFixture 是下发步骤（按序执行，每步之后都排空 outbox）：
+//  1. 排空 outbox（order.dispatch 走下发器 ①-⑦，notify.send 走占位处理器）；
+//  2. Reapprove 非空时对复检退回后的新票（ticket_seq > 1、OPEN）执行该审批脚本（取值同 approver）；
+//  3. Redeliver 次：把该单已 DONE 的 order.dispatch 消息重新置 PENDING（模拟重复投递 / 租约过期后另一 worker 取到同一消息）。
+type DispatchFixture struct {
+	Reapprove string `yaml:"reapprove,omitempty"`
+	Redeliver int    `yaml:"redeliver,omitempty"`
 }
 
 // DeviceFixture 是样本声明的设备回执序列：RecordingAdapter 的 Dispatch / QueryStatus / Cancel 按调用次序逐个返回；
 // 用完后 Dispatch 回 ACCEPTED、QueryStatus 重复最后一条、Cancel 回 CANCELED。
 type DeviceFixture struct {
 	Receipts []ReceiptFixture `yaml:"receipts"`
+	// P1-L4-B：按方法、按作业单的回执 / 错误脚本（优先于 Receipts），与回执投递步骤（见 device_script.go）。
+	Scripts []DeviceScript `yaml:"scripts,omitempty"`
+	Steps   []ReceiptStep  `yaml:"steps,omitempty"`
 }
 
 // ReceiptFixture 是一条标准回执（字段同 model.DeviceReceipt；device_job_id 为空时取 recorded-{order_id}）。
@@ -131,6 +149,17 @@ type Expect struct {
 	// Constraint 断言开票前约束拦截（P1 L3，constraint_blocked 使用）：rule_ids 须全部出现在拦截结果中。
 	// 不写表示不应被拦截。
 	Constraint *ConstraintExpect `yaml:"constraint,omitempty"`
+	// Dispatch 断言下发侧结果（P1-L4-A，recheck_returned 使用；须同时声明 fixtures.dispatch）。
+	Dispatch *DispatchExpect `yaml:"dispatch,omitempty"`
+	// WorkDone 断言作业完成回写（P1-L4-B，partially_done 使用）；不写表示不检查。
+	WorkDone *WorkDoneExpect `yaml:"work_done,omitempty"`
+}
+
+// DispatchExpect 是下发侧期望：RecheckReturned 为 true 时断言下发前复检不通过、单退回 PENDING_APPROVAL(RECHECK_FAILED)、
+// 新票 OPEN、notify.send 已入 outbox；为 false 时断言没有退回。DeviceDispatches 非空时断言设备下发调用（DryRun / Dispatch）次数。
+type DispatchExpect struct {
+	RecheckReturned  bool `yaml:"recheck_returned"`
+	DeviceDispatches *int `yaml:"device_dispatches,omitempty"`
 }
 
 // ConstraintExpect 是约束拦截期望：run 带 CONSTRAINT_BLOCKED、无票据、作业单留 DRAFT、设备零调用。
@@ -181,6 +210,14 @@ type Trajectory struct {
 type Budget struct {
 	MaxSteps  int `yaml:"max_steps,omitempty"`
 	MaxTokens int `yaml:"max_tokens,omitempty"`
+}
+
+// QuarantineReason 返回隔离理由；未声明 quarantine 时 ok 为 false。
+func (s *Sample) QuarantineReason() (reason string, ok bool) {
+	if s.Quarantine == nil {
+		return "", false
+	}
+	return strings.TrimSpace(*s.Quarantine), true
 }
 
 // IsRefusal 判断样本是否为应拒答样本。

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"slices"
 	"testing"
 	"time"
 
@@ -19,12 +20,13 @@ import (
 
 var dispatchNow = time.Date(2026, 10, 29, 2, 0, 0, 0, time.UTC)
 
-// memDispatch 是作业单 + outbox 的内存模型：同时实现 WorkOrderStore（Transition 用）与 DispatchStore；
-// InTx 失败时回滚到事务前快照。守卫语义同 repository 的 SQL。
+// memDispatch 是作业单 + dispatch_attempt 的内存模型：同时实现 WorkOrderStore（Transition 用）、DispatchStore 与
+// AttemptStore（dispatch_fakes_test.go）；InTx 失败时回滚到事务前快照。守卫语义同 repository 的 SQL。
 type memDispatch struct {
 	order       repository.DispatchOrder
 	result      []byte
-	outbox      string
+	attempts    []model.DispatchAttempt
+	dropBind    bool // BindDeviceTx 假装成功但不落库（模拟绑定丢失）
 	transitions []model.OrderTransition
 	checks      []model.ConstraintCheck
 	checkEpoch  int
@@ -33,10 +35,10 @@ type memDispatch struct {
 }
 
 type memDispatchSnap struct {
-	order  repository.DispatchOrder
-	result []byte
-	outbox string
-	trans  int
+	order    repository.DispatchOrder
+	result   []byte
+	attempts []model.DispatchAttempt
+	trans    int
 }
 
 func (m *memDispatch) fail(step string) error {
@@ -47,9 +49,9 @@ func (m *memDispatch) fail(step string) error {
 }
 
 func (m *memDispatch) InTx(_ context.Context, fn func(tx *repository.DB) error) error {
-	before := memDispatchSnap{order: m.order, result: m.result, outbox: m.outbox, trans: len(m.transitions)}
+	before := memDispatchSnap{order: m.order, result: m.result, attempts: slices.Clone(m.attempts), trans: len(m.transitions)}
 	if err := fn(nil); err != nil {
-		m.order, m.result, m.outbox, m.transitions = before.order, before.result, before.outbox, m.transitions[:before.trans]
+		m.order, m.result, m.attempts, m.transitions = before.order, before.result, before.attempts, m.transitions[:before.trans]
 		return err
 	}
 	return nil
@@ -110,18 +112,7 @@ func (m *memDispatch) SetDispatchResultTx(_ context.Context, _ *repository.DB, _
 	return nil
 }
 
-func (m *memDispatch) MarkDoneTx(context.Context, *repository.DB, model.Scope, uint64, time.Time) (bool, error) {
-	if err := m.fail("outbox"); err != nil {
-		return false, err
-	}
-	if m.outbox != repository.OutboxPending {
-		return false, nil
-	}
-	m.outbox = repository.OutboxDone
-	return true, nil
-}
-
-// fakePrecheck 模拟 RecheckService：结论变化时原单 CANCELED 并返回新 run。
+// fakePrecheck 模拟 RecheckService：首次复检结论变化且约束通过时原单 CANCELED 并返回新 run（重试 / 约束不通过不取消）。
 type fakePrecheck struct {
 	store *memDispatch
 	res   PreDispatchResult
@@ -133,7 +124,7 @@ type fakePrecheck struct {
 func (f *fakePrecheck) PreDispatch(_ context.Context, in PreDispatchInput) (PreDispatchResult, error) {
 	f.calls++
 	f.got = in
-	if f.err == nil && f.res.Changed {
+	if f.err == nil && f.res.Changed && !in.Retry && len(f.res.Blocked) == 0 {
 		f.store.order.Status = string(model.OrderCanceled)
 	}
 	return f.res, f.err
@@ -165,13 +156,18 @@ func (a *countingAdapter) DryRun(ctx context.Context, o model.WorkOrder) (adapte
 }
 
 type dispatchFixture struct {
-	store  *memDispatch
-	events *fakeEvents
-	pre    *fakePrecheck
-	dev    *countingAdapter
-	flags  *fakeLiveFlags
-	audit  *memAudit
-	svc    *WorkOrderService
+	store    *memDispatch
+	events   *fakeEvents
+	pre      *fakePrecheck
+	dev      *countingAdapter
+	real     *fakeDevice
+	picker   *fakePicker
+	reopener *fakeReopener
+	idem     *memIdem
+	flags    *fakeLiveFlags
+	audit    *memAudit
+	svc      *WorkOrderService
+	deps     DispatchDeps
 }
 
 // fakeLiveFlags 是 LiveFlagReader 的桩：robot 为 enable_robot_dispatch 的生效值。
@@ -210,19 +206,25 @@ func newDispatchFixture(t *testing.T, status model.WorkOrderStatus, lockHeld boo
 		t.Fatal(err)
 	}
 	deadline := dispatchNow.Add(time.Hour)
-	store := &memDispatch{outbox: repository.OutboxPending, order: repository.DispatchOrder{ID: 3, TenantID: 1, FarmID: 1,
+	store := &memDispatch{order: repository.DispatchOrder{ID: 3, TenantID: 1, FarmID: 1,
 		FieldID: 8, AdviceID: 4, RunID: 5, WorkType: string(model.WorkSpray), DeviceType: "drone",
 		Payload:        json.RawMessage(`{"product":"P1","dose_per_mu":{"value":30,"unit":"ml"},"area_mu":12}`),
 		TimeWindowFrom: dispatchNow, TimeWindowTo: dispatchNow.Add(4 * time.Hour), Status: string(status),
 		DispatchMode: string(model.DispatchDryRun), DispatchDeadlineAt: &deadline, RowVer: 2}}
 	f := &dispatchFixture{store: store, events: &fakeEvents{}, dev: &countingAdapter{}, flags: &fakeLiveFlags{},
-		audit: &memAudit{}}
+		audit: &memAudit{}, picker: &fakePicker{id: "uav-1"}, idem: &memIdem{m: map[string]string{}},
+		reopener: &fakeReopener{store: store},
+		real: &fakeDevice{caps: adapter.Capabilities{Cancel: true, IdemKey: true},
+			rc: model.DeviceReceipt{Status: model.AttemptAccepted, DeviceJobID: "job-1"}}}
 	f.pre = &fakePrecheck{store: store, res: PreDispatchResult{Checks: []model.ConstraintCheck{
 		{Phase: model.PhasePreDispatch, RuleID: "wind", Passed: true}}}}
 	f.svc = NewWorkOrderService(fixedClock{dispatchNow}, store, f.events)
-	if err := f.svc.SetDispatch(DispatchDeps{Adapter: f.dev, Recheck: f.pre, Store: store, Tx: store, Cards: fakeCards{},
+	f.deps = DispatchDeps{Adapter: f.dev, Devices: fakeRegistry{"drone": f.real}, Attempts: store, Idem: f.idem,
+		Picker: f.picker, Recheck: f.pre, Reopener: f.reopener, Store: store, Tx: store, Cards: fakeCards{},
 		Epochs: fakeEpochs{}, Locks: memLocks{held: lockHeld}, Keys: keys, Flags: f.flags, Audit: f.audit,
-		Logger: slog.New(slog.NewTextHandler(io.Discard, nil))}); err != nil {
+		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)), MaxAttempts: 2, ReceiptTimeout: 30 * time.Minute,
+		DeviceWaitMax: 2 * time.Hour}
+	if err := f.svc.SetDispatch(f.deps); err != nil {
 		t.Fatal(err)
 	}
 	return f
@@ -230,7 +232,7 @@ func newDispatchFixture(t *testing.T, status model.WorkOrderStatus, lockHeld boo
 
 func dispatchMsg(payload string) repository.OutboxMessage {
 	return repository.OutboxMessage{ID: 70, TenantID: 1, FarmID: 1, Topic: repository.TopicOrderDispatch, AggregateID: 3,
-		Payload: json.RawMessage(payload)}
+		Payload: json.RawMessage(payload), DedupKey: DispatchIdemKey(3, 7, 1)}
 }
 
 const okDispatchPayload = `{"order_id":3,"ticket_id":7,"run_id":5}`
@@ -259,7 +261,6 @@ func (f *dispatchFixture) dispatchedPhases(t *testing.T) []string {
 type dispatchWant struct {
 	err       error  // nil 表示应成功
 	status    string // 作业单最终状态
-	outbox    string
 	phases    string // DISPATCHED 事件 phase 序列（逗号分隔）
 	dryRuns   int
 	prechecks int
@@ -276,8 +277,8 @@ func (f *dispatchFixture) check(t *testing.T, err error, w dispatchWant) {
 	case w.err != nil && w.err != errAny && !errors.Is(err, w.err):
 		t.Fatalf("Dispatch err = %v, want %v", err, w.err)
 	}
-	if f.store.order.Status != w.status || f.store.outbox != w.outbox {
-		t.Errorf("order=%s outbox=%s, want %s / %s", f.store.order.Status, f.store.outbox, w.status, w.outbox)
+	if f.store.order.Status != w.status {
+		t.Errorf("order=%s, want %s", f.store.order.Status, w.status)
 	}
 	if got := fmt.Sprint(f.dispatchedPhases(t)); got != w.phases {
 		t.Errorf("DISPATCHED phases = %s, want %s", got, w.phases)
@@ -301,75 +302,66 @@ func TestDispatch(t *testing.T) {
 		mutate  func(*dispatchFixture)
 		want    dispatchWant
 	}{
-		{name: "normal dry-run", status: model.OrderApproved, want: dispatchWant{status: "DONE", outbox: "DONE",
-			phases: "[INTENT RESULT]", dryRuns: 1, prechecks: 1, hasResult: true}},
-		{name: "terminal duplicate delivery", status: model.OrderDone, want: dispatchWant{status: "DONE", outbox: "PENDING",
-			phases: "[]"}},
+		{name: "normal dry-run", status: model.OrderApproved, want: dispatchWant{status: "DONE", phases: "[INTENT RESULT]", dryRuns: 1, prechecks: 1, hasResult: true}},
+		{name: "terminal duplicate delivery", status: model.OrderDone, want: dispatchWant{status: "DONE", phases: "[]"}},
 		{name: "canceled duplicate delivery", status: model.OrderCanceled, want: dispatchWant{status: "CANCELED",
-			outbox: "PENDING", phases: "[]"}},
+			phases: "[]"}},
 		{name: "expired before dispatch", status: model.OrderApproved,
 			mutate: func(f *dispatchFixture) { f.store.order.DispatchDeadlineAt = &past },
-			want:   dispatchWant{status: "EXPIRED", outbox: "DONE", phases: "[]"}},
+			want:   dispatchWant{status: "EXPIRED", phases: "[]"}},
 		{name: "recheck changed cancels", status: model.OrderApproved,
 			mutate: func(f *dispatchFixture) { f.pre.res = PreDispatchResult{Changed: true, NewRunID: 9} },
-			want:   dispatchWant{status: "CANCELED", outbox: "PENDING", phases: "[]", prechecks: 1}},
+			want:   dispatchWant{status: "CANCELED", phases: "[]", prechecks: 1}},
 		{name: "dispatched without result resumes", status: model.OrderDispatched, want: dispatchWant{status: "DONE",
-			outbox: "DONE", phases: "[RESULT]", dryRuns: 1, hasResult: true}},
+			phases: "[RESULT]", dryRuns: 1, hasResult: true}},
 		{name: "back to approval dropped", status: model.OrderPendingApproval, want: dispatchWant{status: "PENDING_APPROVAL",
-			outbox: "PENDING", phases: "[]"}},
+			phases: "[]"}},
 		{name: "bad json", status: model.OrderApproved, payload: `{`, want: dispatchWant{err: ErrBadOutboxPayload,
-			status: "APPROVED", outbox: "PENDING", phases: "[]"}},
+			status: "APPROVED", phases: "[]"}},
 		{name: "order id mismatch", status: model.OrderApproved, payload: `{"order_id":4,"ticket_id":7}`,
-			want: dispatchWant{err: ErrBadOutboxPayload, status: "APPROVED", outbox: "PENDING", phases: "[]"}},
+			want: dispatchWant{err: ErrBadOutboxPayload, status: "APPROVED", phases: "[]"}},
 		{name: "run id mismatch", status: model.OrderApproved, payload: `{"order_id":3,"ticket_id":7,"run_id":6}`,
-			want: dispatchWant{err: ErrBadOutboxPayload, status: "APPROVED", outbox: "PENDING", phases: "[]"}},
+			want: dispatchWant{err: ErrBadOutboxPayload, status: "APPROVED", phases: "[]"}},
 		{name: "draft not dispatchable", status: model.OrderDraft, want: dispatchWant{err: ErrDispatchState,
-			status: "DRAFT", outbox: "PENDING", phases: "[]"}},
+			status: "DRAFT", phases: "[]"}},
 		{name: "real held when flag off", status: model.OrderApproved,
 			mutate: func(f *dispatchFixture) { f.store.order.DispatchMode = string(model.DispatchReal) },
-			want:   dispatchWant{status: "APPROVED", outbox: "DONE", phases: "[]"}},
-		{name: "real with flag on refused (no real adapter)", status: model.OrderApproved,
-			mutate: func(f *dispatchFixture) { f.store.order.DispatchMode, f.flags.robot = string(model.DispatchReal), true },
-			want:   dispatchWant{err: ErrDispatchState, status: "APPROVED", outbox: "PENDING", phases: "[]"}},
+			want:   dispatchWant{status: "APPROVED", phases: "[]"}},
 		{name: "real flag read error retries", status: model.OrderApproved,
 			mutate: func(f *dispatchFixture) {
 				f.store.order.DispatchMode, f.flags.err = string(model.DispatchReal), errors.New("mysql down")
 			},
-			want: dispatchWant{err: errAny, status: "APPROVED", outbox: "PENDING", phases: "[]"}},
+			want: dispatchWant{err: errAny, status: "APPROVED", phases: "[]"}},
 		{name: "real held audit fails rolls back", status: model.OrderApproved,
 			mutate: func(f *dispatchFixture) {
 				f.store.order.DispatchMode, f.audit.fail = string(model.DispatchReal), errors.New("audit down")
 			},
-			want: dispatchWant{err: errAny, status: "APPROVED", outbox: "PENDING", phases: "[]"}},
+			want: dispatchWant{err: errAny, status: "APPROVED", phases: "[]"}},
 		{name: "real overdue expires first", status: model.OrderApproved,
 			mutate: func(f *dispatchFixture) {
 				f.store.order.DispatchMode, f.store.order.DispatchDeadlineAt = string(model.DispatchReal), &past
 			},
-			want: dispatchWant{status: "EXPIRED", outbox: "DONE", phases: "[]"}},
+			want: dispatchWant{status: "EXPIRED", phases: "[]"}},
 		{name: "unknown dispatch mode refused", status: model.OrderApproved,
 			mutate: func(f *dispatchFixture) { f.store.order.DispatchMode = "SHADOW" },
-			want:   dispatchWant{err: ErrDispatchState, status: "APPROVED", outbox: "PENDING", phases: "[]"}},
+			want:   dispatchWant{err: ErrDispatchState, status: "APPROVED", phases: "[]"}},
 		{name: "real dispatched without result not resumed", status: model.OrderDispatched,
 			mutate: func(f *dispatchFixture) { f.store.order.DispatchMode = string(model.DispatchReal) },
-			want:   dispatchWant{err: ErrDispatchState, status: "DISPATCHED", outbox: "PENDING", phases: "[]"}},
+			want:   dispatchWant{err: ErrDispatchState, status: "DISPATCHED", phases: "[]"}},
 		{name: "lock busy", status: model.OrderApproved, lock: true, want: dispatchWant{err: ErrOrderBusy,
-			status: "APPROVED", outbox: "PENDING", phases: "[]", prechecks: 1}},
+			status: "APPROVED", phases: "[]"}},
 		{name: "recheck inconclusive", status: model.OrderApproved,
 			mutate: func(f *dispatchFixture) { f.pre.err = agent.ErrRecheckInconclusive },
-			want: dispatchWant{err: agent.ErrRecheckInconclusive, status: "APPROVED", outbox: "PENDING", phases: "[]",
+			want: dispatchWant{err: agent.ErrRecheckInconclusive, status: "APPROVED", phases: "[]",
 				prechecks: 1}},
 		{name: "checks write fails", status: model.OrderApproved, mutate: func(f *dispatchFixture) { f.store.failOn = "checks" },
-			want: dispatchWant{err: errAny, status: "APPROVED", outbox: "PENDING", phases: "[]", prechecks: 1}},
+			want: dispatchWant{err: errAny, status: "APPROVED", phases: "[]", prechecks: 1}},
 		{name: "dry-run fails keeps intent", status: model.OrderApproved,
 			mutate: func(f *dispatchFixture) { f.dev.err = errors.New("adapter down") },
-			want: dispatchWant{err: errAny, status: "DISPATCHED", outbox: "PENDING", phases: "[INTENT]", dryRuns: 1,
+			want: dispatchWant{err: errAny, status: "DISPATCHED", phases: "[INTENT]", dryRuns: 1,
 				prechecks: 1}},
 		{name: "result write rolls back", status: model.OrderApproved, mutate: func(f *dispatchFixture) { f.store.failOn = "result" },
-			want: dispatchWant{err: errAny, status: "DISPATCHED", outbox: "PENDING", phases: "[INTENT]", dryRuns: 1,
-				prechecks: 1}},
-		{name: "outbox done rolls back result", status: model.OrderApproved,
-			mutate: func(f *dispatchFixture) { f.store.failOn = "outbox" },
-			want: dispatchWant{err: errAny, status: "DISPATCHED", outbox: "PENDING", phases: "[INTENT]", dryRuns: 1,
+			want: dispatchWant{err: errAny, status: "DISPATCHED", phases: "[INTENT]", dryRuns: 1,
 				prechecks: 1}},
 	}
 	for _, tt := range tests {
@@ -466,6 +458,9 @@ func TestDispatch_DryRunDetails(t *testing.T) {
 		params.WorkType != model.WorkSpray || params.DeviceType != "drone" || !params.TimeWindow.From.Equal(dispatchNow) {
 		t.Errorf("dispatch_result = %s", f.store.result)
 	}
+	if payloadDeviceID(f.store.order.Payload) != "uav-1" || payloadDeviceID(f.pre.got.Work.Payload) != "uav-1" {
+		t.Errorf("device_id not bound before recheck: order %s, recheck %s", f.store.order.Payload, f.pre.got.Work.Payload)
+	}
 	if len(f.store.checks) != 1 || f.store.checkEpoch != 3 {
 		t.Errorf("pre-dispatch checks = %+v epoch %d", f.store.checks, f.store.checkEpoch)
 	}
@@ -520,7 +515,7 @@ func TestDispatch_RetryAfterDryRunFailure(t *testing.T) {
 	if err := f.svc.Dispatch(context.Background(), dispatchMsg(okDispatchPayload)); err != nil {
 		t.Fatal(err)
 	}
-	f.check(t, nil, dispatchWant{status: "DONE", outbox: "DONE", phases: "[INTENT RESULT]", dryRuns: 2, prechecks: 1,
+	f.check(t, nil, dispatchWant{status: "DONE", phases: "[INTENT RESULT]", dryRuns: 2, prechecks: 1,
 		hasResult: true})
 }
 
@@ -530,15 +525,23 @@ func TestDispatch_NotConfigured(t *testing.T) {
 	if err := svc.Dispatch(context.Background(), dispatchMsg(okDispatchPayload)); !errors.Is(err, ErrDispatchNotConfigured) {
 		t.Errorf("Dispatch err = %v, want ErrDispatchNotConfigured", err)
 	}
-	store := &memDispatch{}
-	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	for name, d := range map[string]DispatchDeps{
-		"no adapter": {Store: store, Tx: store, Locks: memLocks{}, Flags: &fakeLiveFlags{}, Audit: &memAudit{}, Logger: log},
-		"no flags":   {Adapter: adapter.MockAdapter{}, Store: store, Tx: store, Locks: memLocks{}, Audit: &memAudit{}, Logger: log},
-		"no audit":   {Adapter: adapter.MockAdapter{}, Store: store, Tx: store, Locks: memLocks{}, Flags: &fakeLiveFlags{}, Logger: log},
-		"recheck needs cards": {Adapter: adapter.MockAdapter{}, Recheck: &fakePrecheck{}, Store: store, Tx: store, Locks: memLocks{},
-			Flags: &fakeLiveFlags{}, Audit: &memAudit{}, Logger: log},
+	full := newDispatchFixture(t, model.OrderApproved, false).deps
+	for name, mutate := range map[string]func(*DispatchDeps){
+		"no adapter":           func(d *DispatchDeps) { d.Adapter = nil },
+		"no flags":             func(d *DispatchDeps) { d.Flags = nil },
+		"no audit":             func(d *DispatchDeps) { d.Audit = nil },
+		"no devices":           func(d *DispatchDeps) { d.Devices = nil },
+		"no attempts":          func(d *DispatchDeps) { d.Attempts = nil },
+		"no idem":              func(d *DispatchDeps) { d.Idem = nil },
+		"no picker":            func(d *DispatchDeps) { d.Picker = nil },
+		"no epochs":            func(d *DispatchDeps) { d.Epochs = nil },
+		"recheck needs cards":  func(d *DispatchDeps) { d.Cards = nil },
+		"recheck needs reopen": func(d *DispatchDeps) { d.Reopener = nil },
+		"zero max attempts":    func(d *DispatchDeps) { d.MaxAttempts = 0 },
+		"zero receipt timeout": func(d *DispatchDeps) { d.ReceiptTimeout = 0 },
 	} {
+		d := full
+		mutate(&d)
 		if err := svc.SetDispatch(d); !errors.Is(err, ErrDispatchNotConfigured) {
 			t.Errorf("%s: SetDispatch err = %v", name, err)
 		}

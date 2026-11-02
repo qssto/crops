@@ -79,6 +79,26 @@ func TestLoad_MemorySwitch(t *testing.T) {
 	}
 }
 
+// 回执 HMAC 密钥（P1-L4-B）：只从环境变量读、yaml 中出现即拒绝，未配置为空（回执路由不挂载）。
+func TestLoad_DeviceReceiptSecret(t *testing.T) {
+	dir := t.TempDir()
+	base := writeFile(t, dir, "app.yaml", "env: dev\n")
+	leaked := writeFile(t, dir, "bad.yaml", "device_receipt: {secret: leaked}\n")
+	for _, n := range []string{"AS_DEVICE_RECEIPT_SECRET", "DEVICE_RECEIPT_SECRET"} {
+		t.Setenv(n, "")
+	}
+	if c, err := Load(base, ""); err != nil || c.DeviceReceipt.Secret != "" {
+		t.Fatalf("unset: %+v, %v", c.DeviceReceipt, err)
+	}
+	t.Setenv("AS_DEVICE_RECEIPT_SECRET", "from-env")
+	if c, err := Load(base, ""); err != nil || c.DeviceReceipt.Secret != "from-env" {
+		t.Fatalf("env: err %v", err)
+	}
+	if _, err := Load(leaked, ""); !errors.Is(err, ErrSecretInFile) {
+		t.Fatalf("yaml secret err = %v", err)
+	}
+}
+
 func TestRequireSecrets(t *testing.T) {
 	c := &Config{MySQL: MySQL{Password: "x"}}
 	if err := c.RequireSecrets("mysql.password"); err != nil {

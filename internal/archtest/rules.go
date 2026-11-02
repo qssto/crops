@@ -153,7 +153,8 @@ var Rules = []Rule{
 }
 
 // systemScopeCallers 是可构造 repository.SystemScope 的文件白名单（server 内扫描与 outbox 轮询）。
-var systemScopeCallers = []string{"internal/service/scan.go", "internal/service/outbox.go"}
+var systemScopeCallers = []string{"internal/service/scan.go", "internal/service/outbox.go",
+	"internal/service/receipt.go"} // P1-L4-B：回执 webhook 反查与回执超时扫描
 
 // adapterCaller 是唯一可调用设备 Adapter 的业务文件（WorkOrderService.Dispatch）。
 const adapterCaller = "internal/service/workorder_dispatch.go"

@@ -90,7 +90,7 @@ func (s *stats) meanLatency() time.Duration {
 	return s.latencies / time.Duration(s.trials)
 }
 
-// Render 输出 Markdown：首行门禁结论，然后配置快照、总览、Gate 0 自动项、baseline 指标、分项打分、红线 pass^k、
+// Render 输出 Markdown：首行门禁结论，然后配置快照、总览、隔离样本（有才输出）、Gate 0 自动项、baseline 指标、分项打分、红线 pass^k、
 // flaky / unexpected_call / error 清单、按 tag 分组统计、trial 明细。聚合一律取 reduce.Reduce 的结果。
 func Render(w io.Writer, exp *evalkit.Experiment) error {
 	r := reduce.Reduce(exp.Trials)
@@ -110,7 +110,7 @@ func Render(w io.Writer, exp *evalkit.Experiment) error {
 
 	ew := &errWriter{w: w}
 	ew.printf("# 评测报告 %s\n\n", exp.ID)
-	ew.printf("> %s\n\n", GateLine(r))
+	ew.printf("> %s%s\n\n", GateLine(r), quarantineNote(exp))
 	renderSnapshot(ew, exp.Snapshot)
 
 	ew.printf("## 总览\n\n")
@@ -120,6 +120,7 @@ func Render(w io.Writer, exp *evalkit.Experiment) error {
 	ew.printf("| tag 过滤 | %s |\n", joinOr(exp.Tags, "无"))
 	ew.printf("| 每样本次数 n | %d |\n", exp.N)
 	ew.printf("| 样本数 | %d |\n", exp.Samples)
+	ew.printf("| 隔离样本（未运行，不计入 N / 通过 / INFRA_ERROR） | %d |\n", len(exp.Quarantined))
 	ew.printf("| trial 数 | %d |\n", total.trials)
 	ew.printf("| ADVICE / REFUSED / error | %d / %d / %d |\n", total.advice, total.refused, total.errored)
 	ew.printf("| outcome 与期望一致 | %d / %d |\n", total.matched, total.trials)
@@ -129,6 +130,7 @@ func Render(w io.Writer, exp *evalkit.Experiment) error {
 	ew.printf("| 开始时间（UTC） | %s |\n", exp.StartedAt.UTC().Format(time.RFC3339))
 	ew.printf("| 总耗时 | %s |\n\n", fmtLatency(exp.FinishedAt.Sub(exp.StartedAt)))
 
+	renderQuarantined(ew, exp.Quarantined)
 	renderGate(ew, r)
 	renderMetrics(ew, r)
 	renderScores(ew, r)

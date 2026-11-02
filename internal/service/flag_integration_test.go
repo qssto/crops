@@ -148,12 +148,7 @@ func TestDispatchHeld_Integration(t *testing.T) {
   WHERE id = ?`, slot.Clock.Now().Add(time.Hour), orderID).Error; err != nil {
 			t.Fatal(err)
 		}
-		payload, err := json.Marshal(map[string]uint64{"order_id": orderID, "ticket_id": 1, "run_id": runID})
-		if err != nil {
-			t.Fatal(err)
-		}
-		return runID, orderID, insertOutbox(t, slot.DB, repository.TopicOrderDispatch, orderID, string(payload), 0,
-			slot.Clock.Now())
+		return runID, orderID, insertDispatchOutbox(t, slot.DB, orderID, 1, runID, slot.Clock.Now())
 	}
 
 	runID, orderID, outboxID := enqueue()

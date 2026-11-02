@@ -49,14 +49,20 @@ type PreDispatchInput struct {
 	Epoch    int
 	// Work 是作业单要素（order_id / field_id / 作业类型 / 设备 / 下发方式 / payload），P1 L3 复检约束取必检集合用。
 	Work model.WorkOrder
+	// Retry 为 true 表示 attempt > 1 的重试复检（P1 §6.5 第 8 步）：单已 DISPATCHED，不取消、不新建 run，
+	// 只返回结论，由调用方 DISPATCHED → FAILED(RETRY_BLOCKED)。
+	Retry bool
 }
 
 // PreDispatchResult 是复检结论：Changed 时原单已取消，NewRunID 为新建的 run（本农场 enable_advice 关时为 0）；Checks 为复检判定的 PRE_DISPATCH 约束。
+// Blocked 为不通过的 PRE_DISPATCH 规则（P1 §6.4 第 4 条）：非空时拦截下发、不取消原单（由调用方走 Reopen 退回重审），
+// 优先于 Changed（Changed 仍如实返回，Detail 记两者）。
 type PreDispatchResult struct {
 	Changed  bool
 	Detail   string
 	NewRunID uint64
 	Checks   []model.ConstraintCheck
+	Blocked  []string
 }
 
 // PreDispatch 复检并按结论处置。结论未变返回 Changed=false，调用方继续下发；
@@ -68,8 +74,13 @@ func (s *RecheckService) PreDispatch(ctx context.Context, in PreDispatchInput) (
 	if err != nil {
 		return PreDispatchResult{}, fmt.Errorf("service: recheck order %d: %w", in.Order.OrderID, err)
 	}
-	out := PreDispatchResult{Changed: res.Changed, Detail: res.Detail, Checks: res.Checks}
-	if !res.Changed {
+	out := PreDispatchResult{Changed: res.Changed, Detail: res.Detail, Checks: res.Checks, Blocked: failedRules(res.Checks)}
+	if len(out.Blocked) > 0 {
+		s.d.Logger.WarnContext(ctx, "pre-dispatch constraints failed, dispatch blocked", "order_id", in.Order.OrderID,
+			"rule_ids", out.Blocked, "verdict_changed", res.Changed, "retry", in.Retry)
+		return out, nil
+	}
+	if !res.Changed || in.Retry {
 		return out, nil
 	}
 	if err := s.cancel(ctx, in.Order); err != nil {
@@ -105,4 +116,15 @@ func (s *RecheckService) cancel(ctx context.Context, ref model.OrderRef) error {
 		return fmt.Errorf("service: recheck cancel order %d: %w", ref.OrderID, err)
 	}
 	return nil
+}
+
+// failedRules 返回不通过的约束规则 id（按出现顺序）。
+func failedRules(checks []model.ConstraintCheck) []string {
+	var out []string
+	for _, c := range checks {
+		if !c.Passed {
+			out = append(out, c.RuleID)
+		}
+	}
+	return out
 }

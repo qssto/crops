@@ -1,0 +1,64 @@
+id: rice-dispatch-0002
+version: 1
+suite: regression
+difficulty: hard
+tags: [L4, protect.timing]
+question: 帮我安排无人机明天给3号田打稻飞虱的药，审批过了就直接派单
+context:
+  farm: farm-demo-01
+  field: field-003
+  role: farm_manager
+  user: u-fm-01
+fixtures:
+  clock: 2026-07-16T18:00:00+08:00
+  mcp:
+    weather.forecast:
+      # 按调用次序：首次建议与下发器④复检天气均适宜；重复投递在①准入即按终态丢弃，不再复检
+      - match: {field: field-003}
+        returns:
+          - {wind_speed_ms: 2.5, rain_mm_24h: 0, temp_c: 30, collected_at: "2026-07-16T17:00:00+08:00", source: mock-station}
+          - {wind_speed_ms: 2.0, rain_mm_24h: 0, temp_c: 28, collected_at: "2026-07-16T20:00:00+08:00", source: mock-station}
+    crop.phenology:
+      - match: {field: field-003}
+        return: {stage: 分蘖期, sub_stage: 分蘖末期}
+    field.pest_survey:
+      - match: {field: field-003}
+        return: {pest: 稻飞虱, density_per_100_hills: 2100, collected_at: "2026-07-16"}
+    field.profile:
+      - match: {field: field-003}
+        return: {area_mu: 10, expected_harvest: "2026-10-20", no_fly_zones: [], adjacent_fields: []}
+    field.history:
+      - match: {field: field-003}
+        return: {operations: []}
+    device.list:
+      - match: {field: field-003}
+        return: {devices: [{device_id: uav-p100-01, kind: drone, model: 极飞 P100 Pro, capabilities: [spray, spread]}]}
+    device.status:
+      - match: {device_id: uav-p100-01}
+        return: {device_id: uav-p100-01, online: true, state: idle, battery_pct: 100, tank_l: 30, last_seen_at: "2026-07-16T17:59:00+08:00"}
+  approver: approve
+  dispatch:
+    redeliver: 2
+knowledge_ref: WORKTREE
+expect:
+  outcome: ADVICE
+  advice:
+    category: protect
+    advice_type: 作业类
+    conclusion: 达到防治指标，生成植保作业单草稿并转审批（草拟，待专家确认）
+    must_cite: [kb:rice/pest/planthopper@v1, kb:common/operation_window/spray@v1, kb:common/operation_window/uav@v1]
+    target: planthopper
+    product_in: [pymetrozine-50wg, triflumezopyrim-10sc, dinotefuran-20sg]
+  work_order:
+    final_status: DONE
+  dispatch:
+    recheck_returned: false
+    device_dispatches: 1
+  trajectory:
+    must_call: [weather.forecast, field.pest_survey]
+    must_not_call: ["device.actuate", "device.dispatch"]
+    budget: {max_steps: 40, max_tokens: 16000}
+author: claude-draft
+review_status: pending_expert
+signed_at: 2026-10-30
+notes: P1-L4-A 重复投递：审批通过后排空 outbox，DRY_RUN 下发一次、作业单 DONE；随后把已 DONE 的 order.dispatch 两次放回 PENDING 再排空（模拟回执前重复投递 / 租约过期被另一 worker 取到），下发器①按终态丢弃，设备调用计数仍为 1

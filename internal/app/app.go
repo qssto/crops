@@ -61,6 +61,13 @@ type Deps struct {
 	// Env 是部署环境（configs/app.yaml 的 env，如 dev / staging / prod）。devicesim 开启时必填：
 	// env=prod 或为空即 Build 失败（Devicesim.CheckDeploy），其余场景不读。
 	Env string
+	// Dispatch 是下发与重试配置（configs/app.yaml 的 dispatch 段，P1-L4-A；零值取 config.DefaultDispatch）。
+	Dispatch config.Dispatch
+	// ReceiptSecret 是设备回执 webhook 的 HMAC 密钥（P1-L4-B，config.DeviceReceipt.Secret；可选：为空不挂回执路由）。
+	ReceiptSecret []byte
+	// FieldHistory 是 field.history 回写写端（P1-L4-B，可选：为空取 mock 的 service.MemFieldHistory；
+	// mcp-field real 无写接口时传 service.UnwiredFieldHistory 失败关闭为告警）。不对模型可见。
+	FieldHistory service.FieldHistoryWriter
 }
 
 // metaer 是能报告自身版本信息的主链路（graph.Agent）。
@@ -92,19 +99,22 @@ type App struct {
 	Events    agent.EventSink
 	// Adapter 即 Deps.Adapter，为空时是 adapter.MockAdapter。
 	Adapter adapter.DryRunner
-	// L8：outbox 轮询器（cmd/server 启动 Outbox.Run；评测不跑，见 dev-log L8-A）与 run 事件流（SSE）。
-	Outbox      *service.OutboxPoller
+	// L8：run 事件流（SSE）。outbox 轮询器只在 cmd/worker 里由 NewOutboxPoller 构造（P1-L4-A，server 不再跑）。
 	EventStream *service.EventService
-	// L6：检查点 / 记忆供主链路注入；审批决策入口与扫描任务（cmd/server 启动 Scanner.Run）。
+	// P1-L4-A：下发与重试配置（Deps.Dispatch，零值取 config.DefaultDispatch；L4-B 回执侧读同一个 MaxAttempts）。
+	DispatchConfig config.Dispatch
+	// outboxStore 是 outbox 领取 / 续租仓储（NewOutboxPoller 用）。
+	outboxStore service.OutboxStore
+	// L6：检查点 / 记忆供主链路注入；审批决策入口与扫描任务（cmd/worker 启动 Scanner.Run）。
 	HITL *HITL
 	// L7 读路径：run 详情与看板指标，只读 Deps.DB（生产为 agri_steward）。
 	RunDetail    *service.RunDetailService
 	Metrics      *service.MetricsService
 	DashboardDir string
-	// L7：带授权审计的原文读取（Deps.Presign 为空时 nil）；分区维护（cmd/server 启动 Partitions.Run）。
+	// L7：带授权审计的原文读取（Deps.Presign 为空时 nil）；分区维护（cmd/worker 启动 Partitions.Run）。
 	Audit      *service.AuditService
 	Partitions *service.PartitionMaintainer
-	// P1-L0：开关统一读写入口（cmd/server 启动 Flags.Run 订阅 flags:changed）。
+	// P1-L0：开关统一读写入口（cmd/server 与 cmd/worker 都启动 Flags.Run 订阅 flags:changed）。
 	Flags *service.FlagService
 	// P1-L1-A：权限矩阵与拒绝审计（CROSS_FARM_DENIED）。
 	Perms   *service.PermissionMatrix
@@ -117,6 +127,11 @@ type App struct {
 	constraints service.ConstraintReviewer
 	// eventRepo 是唯一的 run_event 写入口（同事务 audit_log 投影 + 提交后 PUBLISH sse:run:{run_id}）。
 	eventRepo repository.EventRepo
+	// P1-L4-B：回执 / 中止 / 对账 / field.history 回写；receiptWebhook 表示回执密钥已配置、webhook 挂载。
+	// FieldHistory 是实际装配的回写写端（评测读 *service.MemFieldHistory 的记录）。
+	OrderOps       *service.OrderOpsService
+	FieldHistory   service.FieldHistoryWriter
+	receiptWebhook bool
 }
 
 // 缺依赖时返回的错误。
@@ -221,10 +236,13 @@ func Build(deps Deps) (*App, error) {
 	if err := a.buildHITLServices(); err != nil {
 		return nil, err
 	}
-	if err := a.buildDispatch(); err != nil {
+	if err := a.buildDispatch(deps.Dispatch); err != nil {
 		return nil, err
 	}
 	if err := a.buildAudit(deps); err != nil {
+		return nil, err
+	}
+	if err := a.buildOrderOps(deps); err != nil {
 		return nil, err
 	}
 	return a, nil
@@ -256,30 +274,48 @@ func (a *App) Handler(auth *service.AuthService) http.Handler {
 	if a.Audit != nil {
 		mounts = append(mounts, controller.AuditRoutes(a.Audit))
 	}
+	mounts = append(mounts, a.orderOpsMounts()...)
 	g := a.guard(auth)
 	r := controller.NewRouter(g, a.Ask, mounts...)
 	controller.MountAdmin(r, g, a.Flags) // P1-L0：/api/v1/admin/flags（flag.write）
+	// P1-L4：设备回执 webhook（签名校验，不经用户鉴权）
+	for _, m := range a.orderOpsEngineMounts() {
+		m(r)
+	}
 	if a.DashboardDir != "" {
 		controller.MountDashboard(r, a.DashboardDir)
 	}
 	return r
 }
 
-// buildDispatch 装配 L8 下发器（WorkOrderService.Dispatch）、outbox 轮询器与 SSE 事件流。
-// 主链路不支持复检（a.HITL.Recheck 为空）时下发跳过 ④ 并告警。
-func (a *App) buildDispatch() error {
+// buildDispatch 装配下发器（WorkOrderService.Dispatch：L8 dry-run + P1-L4-A 真实通道 / 设备绑定 / 复检退回）与 SSE 事件流。
+// outbox 轮询器在 cmd/worker 启动时由 NewOutboxPoller 按合并后的处理器表构造（见 worker.go）。
+// 主链路不支持复检（a.HITL.Recheck 为空）时 DRY_RUN 单跳过 ④ 并告警，REAL 单失败关闭。
+func (a *App) buildDispatch(cfg config.Dispatch) error {
+	if cfg == (config.Dispatch{}) {
+		cfg = config.DefaultDispatch()
+	}
+	if err := cfg.Validate(); err != nil {
+		return fmt.Errorf("app: build dispatch: %w", err)
+	}
+	a.DispatchConfig = cfg
+	reopener, err := service.NewReopenService(a.Approvals, repository.ReopenRepo{DB: a.DB})
+	if err != nil {
+		return fmt.Errorf("app: build dispatch: %w", err)
+	}
 	store := repository.NewDispatchRepo(a.DB)
+	a.outboxStore = store.OutboxRepo
 	d := service.DispatchDeps{Adapter: a.Adapter, Store: store, Tx: a.HITL.decisions, Cards: a.Advice, Epochs: a.Runs,
-		Locks: a.Locker, Keys: a.Keys, Logger: a.Logger, Flags: a.Flags, Audit: repository.AuditRepo{DB: a.DB}}
+		Locks: a.Locker, Keys: a.Keys, Logger: a.Logger, Flags: a.Flags, Audit: repository.AuditRepo{DB: a.DB},
+		Devices: a.Devices, Attempts: repository.DispatchAttemptRepo{DB: a.DB}, Idem: repository.NewRedisIdem(a.Redis),
+		Picker: service.ToolDevicePicker{Tools: a.Tools}, Reopener: reopener,
+		MaxAttempts: cfg.MaxAttempts, ReceiptTimeout: cfg.ReceiptTimeout, DeviceWaitMax: cfg.DeviceWaitMax}
 	if a.HITL.Recheck != nil {
 		d.Recheck = a.HITL.Recheck
 	}
 	if err := a.WorkOrders.SetDispatch(d); err != nil {
 		return fmt.Errorf("app: build dispatch: %w", err)
 	}
-	a.Outbox = service.NewOutboxPoller(service.OutboxDeps{Store: store.OutboxRepo,
-		Handlers: map[string]service.OutboxHandler{repository.TopicOrderDispatch: a.WorkOrders.Dispatch},
-		Clock:    a.Clock, Logger: a.Logger})
 	a.EventStream = service.NewEventService(service.EventDeps{Subscriber: repository.RedisSubscriber{Client: a.Redis},
 		Backfill: repository.EventBackfillRepo{DB: a.DB}, Runs: a.Runs, Keys: a.Keys, Logger: a.Logger})
 	return nil

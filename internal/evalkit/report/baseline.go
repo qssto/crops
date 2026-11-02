@@ -53,7 +53,9 @@ type Baseline struct {
 	Tags        []string         `yaml:"tags,omitempty"`
 	N           int              `yaml:"n"`
 	Samples     int              `yaml:"samples"`
-	Trials      int              `yaml:"trials"`
+	// Quarantined 是本次未运行的隔离样本 id（不计入 samples / trials / 门禁）；配对比较时两边须一致。
+	Quarantined []string `yaml:"quarantined,omitempty"`
+	Trials      int      `yaml:"trials"`
 	// Gate 是报告首行门禁结论（Gate 0 自动项）。
 	Gate  string   `yaml:"gate"`
 	Notes []string `yaml:"notes"`
@@ -120,6 +122,18 @@ func NewBaseline(name, bucket string, exp *evalkit.Experiment, now time.Time) *B
 	}
 	return &Baseline{Name: name, ExpID: exp.ID, GeneratedAt: now.UTC(), Model: exp.Snapshot.Model, Bucket: bucket,
 		ReportKey: ReportKey(exp.ID), SnapshotKey: SnapshotKey(exp.ID), Snapshot: exp.Snapshot,
-		Suites: exp.Suites, Tags: exp.Tags, N: exp.N, Samples: exp.Samples, Trials: len(exp.Trials),
+		Suites: exp.Suites, Tags: exp.Tags, N: exp.N, Samples: exp.Samples, Quarantined: quarantinedIDs(exp), Trials: len(exp.Trials),
 		Gate: GateLine(reduce.Reduce(exp.Trials)), Notes: notes}
+}
+
+// quarantinedIDs 是实验内隔离样本的 id 列表；无隔离样本时为 nil（baseline 省略该键）。
+func quarantinedIDs(exp *evalkit.Experiment) []string {
+	if len(exp.Quarantined) == 0 {
+		return nil
+	}
+	ids := make([]string, len(exp.Quarantined))
+	for i, q := range exp.Quarantined {
+		ids[i] = q.ID
+	}
+	return ids
 }

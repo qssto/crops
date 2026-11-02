@@ -22,6 +22,7 @@ const (
 	RuleUniqueID    = "unique_id"
 	RuleRefuseRatio = "refuse_ratio"
 	RuleFixtures    = "fixtures"
+	RuleQuarantine  = "quarantine"
 )
 
 // MinRefuseRatio 是每个套件中应拒答样本的最低占比（P0 §6.1）。
@@ -83,7 +84,17 @@ func DefaultRules(tx *knowledge.Taxonomy, kb KnowledgeOpener) []Rule {
 		PerSample(RuleMustCiteKB, mustCiteKBCheck(kb)),
 		PerSample(RuleProductInCandidates, productInCheck(tx, kb)),
 		PerSample(RuleConstraint, checkConstraint),
+		PerSample(RuleDispatch, checkDispatch),
+		PerSample(RuleQuarantine, checkQuarantine),
 	}
+}
+
+// checkQuarantine：声明 quarantine 时理由不得为空（空白也算空），隔离必须说清楚为什么、去哪里看。
+func checkQuarantine(s *Sample) []string {
+	if reason, ok := s.QuarantineReason(); ok && reason == "" {
+		return []string{"quarantine requires a non-empty reason"}
+	}
+	return nil
 }
 
 func checkRequired(s *Sample) []string {
@@ -243,7 +254,7 @@ func checkDeviceFixture(d *DeviceFixture) []string {
 			msgs = append(msgs, fmt.Sprintf("fixtures.device.receipts[%d]: %v", i, err))
 		}
 	}
-	return msgs
+	return append(msgs, checkDeviceScripts(d)...)
 }
 
 // checkExpectShape 检查期望结构与 outcome 一致。
@@ -276,7 +287,7 @@ func checkExpectShape(s *Sample) []string {
 			msgs = append(msgs, fmt.Sprintf("expect.foreign[%d] %q does not appear in question", i, f))
 		}
 	}
-	return msgs
+	return append(msgs, checkWorkDone(e.WorkDone)...) // P1-L4-B
 }
 
 // checkPIIShape：每条 pii 须有 kind 与 value，且 value 原样出现在 question 中（否则断言无从谈起）。

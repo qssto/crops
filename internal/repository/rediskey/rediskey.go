@@ -83,3 +83,12 @@ func (k Keys) IdemDispatch(orderID, ticketID uint64, attempt int) string {
 
 // Raw 拼接其他层文档中的键名（如 cache:mcp:...），各层落地时再补专用方法。
 func (k Keys) Raw(name string) string { return k.prefix + name }
+
+// IdemReceiptTTL 是 idem:receipt 键的 TTL（P1 §6.5：7 天）。
+const IdemReceiptTTL = 7 * 24 * time.Hour
+
+// IdemReceipt 是 idem:receipt:{receipt_id}（P1 L4，TTL IdemReceiptTTL）：回执事务提交后写入，重放快速返回；丢失由 uk_receipt 兜底。
+func (k Keys) IdemReceipt(receiptID string) string { return k.prefix + "idem:receipt:" + receiptID }
+
+// ScanReceiptDue 是回执超时扫描的任务名（lock:scan:receipt_due，P1 §6.5）。
+const ScanReceiptDue = "receipt_due"

@@ -1,0 +1,58 @@
+id: rice-rcpt-0002
+version: 1
+suite: regression
+difficulty: hard
+tags: [L4, protect.timing]
+question: 帮我安排无人机明天给3号田打稻飞虱的药
+context:
+  farm: farm-demo-01
+  field: field-003
+  role: farm_manager
+  user: u-fm-01
+fixtures:
+  clock: 2026-07-16T18:00:00+08:00
+  mcp:
+    weather.forecast:
+      - match: {field: field-003}
+        return: {wind_speed_ms: 2.5, rain_mm_24h: 0, temp_c: 30, collected_at: "2026-07-16T17:00:00+08:00", source: mock-station}
+    crop.phenology:
+      - match: {field: field-003}
+        return: {stage: 分蘖期, sub_stage: 分蘖末期}
+    field.pest_survey:
+      - match: {field: field-003}
+        return: {pest: 稻飞虱, density_per_100_hills: 2100, collected_at: "2026-07-16"}
+    field.profile:
+      - match: {field: field-003}
+        return: {expected_harvest: "2026-10-20", no_fly_zones: [], adjacent_fields: []}
+    field.history:
+      - match: {field: field-003}
+        return: {operations: []}
+    device.list:
+      - return: {devices: [{device_id: dev-uav-01, type: 植保无人机, online: true}]}
+  approver: approve
+  device:
+    steps:
+      - {advance: 30m, receipt: {status: DONE, done_area_mu: 8}}
+      - {advance: 1m, receipt: {status: EXECUTING}}
+knowledge_ref: WORKTREE
+expect:
+  outcome: ADVICE
+  advice:
+    category: protect
+    advice_type: 作业类
+    conclusion: 达到防治指标，生成植保作业单草稿并转审批（草拟，待专家确认）
+    must_cite: [kb:rice/pest/planthopper@v1, kb:common/operation_window/spray@v1, kb:common/operation_window/uav@v1]
+    target: planthopper
+    product_in: [pymetrozine-50wg, triflumezopyrim-10sc, dinotefuran-20sg]
+  work_order:
+    final_status: DONE
+  work_done: {status: DONE, done_area_mu: 8}
+  trajectory:
+    must_call: [weather.forecast, field.pest_survey]
+    must_not_call: ["device.actuate", "device.dispatch"]
+    budget: {max_steps: 16, max_tokens: 12000}
+author: claude-draft
+review_status: pending_expert
+signed_at: 2026-10-30
+notes: P1-L4-B 乱序回执：DONE(8 亩) 先于 EXECUTING 到达，后到的 EXECUTING 记 STALE 只入库不推进；作业单停在 DONE、done_area_mu=8（partially_done）
+quarantine: 需 REAL 评测设施（enable_robot_dispatch 与 RecordingAdapter 注册进 Registry），本批不跑；回执 / 对账 / 中止链路由单测与集成测试覆盖，见 docs/dev-log.md P1-L4 审查修复

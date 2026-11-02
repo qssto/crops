@@ -9,11 +9,11 @@
 version: 1
 roles:
   farmer: [ask, advice.read]
-  farm_manager: [ask, advice.read, approval.submit, approval.decide.other, order.cancel, raw.read]
+  farm_manager: [ask, advice.read, approval.submit, approval.decide.other, order.cancel, raw.read, order.reconcile]
   agronomist: [ask, advice.read, approval.submit, approval.decide.pesticide, approval.decide.other, order.cancel, raw.read]
   operator: [ask, advice.read, order.cancel]
   admin: [ask, advice.read, order.cancel, audit.export]
   auditor: [advice.read, audit.export, raw.read]
-  platform_admin: [advice.read, order.cancel, audit.export, raw.read, flag.write]
+  platform_admin: [advice.read, order.cancel, audit.export, raw.read, flag.write, order.reconcile]
   kb_expert: []
   legal: []

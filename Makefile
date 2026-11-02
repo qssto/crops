@@ -8,7 +8,7 @@ BASELINE ?=
 -include deploy/.env
 export
 
-.PHONY: build test test-integration eval validate vet up minio-local migrate migrate-eval seed server reconcile devicesim
+.PHONY: build test test-integration eval validate vet up minio-local migrate migrate-eval seed server worker reconcile devicesim
 
 build:
 	$(GO) build ./...
@@ -45,6 +45,10 @@ seed:
 
 server:
 	$(GO) run ./cmd/server
+
+# P1-L4-A 后台任务进程：outbox 轮询（下发 / 通知）、扫描任务、分区维护、开关订阅；可多副本
+worker:
+	$(GO) run ./cmd/worker
 
 # P1-L2 本地设备模拟平台（只用于本地 / 预发演练；地址与 configs/devices.yaml 的 devicesim.base_url 一致）
 devicesim:

@@ -1,4 +1,4 @@
-package main
+package boot
 
 import (
 	"fmt"
@@ -16,6 +16,7 @@ import (
 	"agri-steward/internal/config"
 	"agri-steward/internal/repository"
 	"agri-steward/internal/repository/rediskey"
+	"agri-steward/internal/service"
 )
 
 // toolDeps 是装配 gateway 所需的基础设施。
@@ -33,6 +34,7 @@ type toolDeps struct {
 // buildTools 读 tools 配置并按 mode 装配四个 MCP Server，再用 mcp gateway 包装
 // （注册表、策略、租户校验、去重缓存、超时重试、错误码归一、tool_call 落库）。
 // policyPath 是 tool_policy.yaml：与注册表比对不符时返回错误，进程退出（P0 §6.6 验收 1）。
+// P1-L4-A 自 cmd/server/tools.go 原样迁入，server 与 worker 共用。
 func buildTools(path, policyPath string, d toolDeps) (agent.ToolProvider, error) {
 	cfg, err := config.LoadTools(path)
 	if err != nil {
@@ -69,4 +71,17 @@ func buildTools(path, policyPath string, d toolDeps) (agent.ToolProvider, error)
 		return nil, fmt.Errorf("build mcp gateway: %w", err)
 	}
 	return gw, nil
+}
+
+// fieldHistoryWriter 按 tools.field.mode 选 field.history 回写写端（P1-L4-B）：mock → 内存幂等实现；
+// real → mcp-field 写接口待对接，失败关闭为告警（outbox 退避重试）。写端只给 outbox 处理器用，不对模型可见。
+func fieldHistoryWriter(path string) (service.FieldHistoryWriter, error) {
+	cfg, err := config.LoadTools(path)
+	if err != nil {
+		return nil, err
+	}
+	if cfg.Field.Mode == config.ToolModeReal {
+		return service.UnwiredFieldHistory{}, nil
+	}
+	return service.NewMemFieldHistory(), nil
 }

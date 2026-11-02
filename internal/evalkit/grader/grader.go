@@ -51,6 +51,29 @@ type Trial struct {
 	DeviceTargets []DeviceTarget
 	// P1 L3：ConstraintBlocked 取自 agent.Answer，开票前约束拦截的 rule_id（未拦截为空），constraint_blocked 使用。
 	ConstraintBlocked []string
+	// P1-L4-A：Outbox 是该 run 作业单的全部 outbox 消息（按写入顺序），recheck_returned 使用；
+	// Runner 在 App 有库且有作业单时读取，未记录为 nil。
+	Outbox []OutboxRecord
+	// P1-L4-B：WorkDone 是回执步骤（fixtures.device.steps）结束后该 run 各作业单的完成态，partially_done 使用；
+	// 样本未声明回执步骤或 App 无库时为 nil。
+	WorkDone []WorkDoneObs
+}
+
+// OutboxRecord 是一条 outbox 消息的状态（topic 如 order.dispatch / notify.send）。
+type OutboxRecord struct {
+	Topic    string `json:"topic"`
+	DedupKey string `json:"dedup_key"`
+	Status   string `json:"status"`
+}
+
+// WorkDoneObs 是一张作业单在回执步骤后的观测：状态与 done_area_mu 取自 trial 库 work_order；
+// LocalVisible 表示 LocalOrderRepo（PHI 推算的同地块近期单来源）读得到它；FieldHistory 表示已回写 field.history。
+type WorkDoneObs struct {
+	OrderID      uint64
+	Status       model.WorkOrderStatus
+	DoneAreaMu   *float64
+	LocalVisible bool
+	FieldHistory bool
 }
 
 // DeviceTarget 是一次设备调用作用的作业单归属（RecordingAdapter 从 WorkOrder 取），cross_farm_isolation 按结构判归属。

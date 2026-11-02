@@ -131,7 +131,7 @@ func (e *testEnv) bearer(t *testing.T, uid, tenant uint64) string {
 // allMounts 挂上全部业务路由（handler 依赖为空桩）。
 func allMounts() []Mount {
 	return []Mount{ApprovalRoutes(&fakeDecider{}), RunRoutes(&fakeRunDetailer{}, &fakeMetrics{}),
-		EventRoutes(&fakeStreamer{}), AuditRoutes(&fakeRawReader{})}
+		EventRoutes(&fakeStreamer{}), AuditRoutes(&fakeRawReader{}), OrderOpsRoutes(&fakeOrderOps{})}
 }
 
 // routeOps 与实际路由双向核对：每条 farms 路由都登记了所需操作，登记表里没有多余项。

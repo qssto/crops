@@ -83,6 +83,14 @@ func scopeRequiredCalls() map[string]func(model.Scope) error {
 			_, err := WorkOrderRepo{}.TransitionsByRun(ctx, nil, s, 1)
 			return err
 		},
+		"OutboxRepo.OutboxByAggregate": func(s model.Scope) error {
+			_, err := OutboxRepo{}.OutboxByAggregate(ctx, nil, s, 1)
+			return err
+		},
+		"OutboxRepo.RedeliverDone": func(s model.Scope) error {
+			_, err := OutboxRepo{}.RedeliverDone(ctx, nil, s, 1, TopicOrderDispatch, now)
+			return err
+		},
 		// 参数自带归属（OrderRef / TicketRow / RunKey）的方法：缺 farm_id 同样拒绝。
 		"ApprovalRepo.TicketByOrderSeq": func(model.Scope) error {
 			_, _, err := ApprovalRepo{}.TicketByOrderSeq(ctx, nil, noFarm, 1)
@@ -138,6 +146,39 @@ func scopeRequiredCalls() map[string]func(model.Scope) error {
 		},
 		"DispatchRepo.InsertPreDispatchChecks": func(model.Scope) error {
 			return DispatchRepo{}.InsertPreDispatchChecks(ctx, noFarm, 1, nil, now)
+		},
+		// P1-L4-A：下发器绑定设备 / 幂等尝试 / 复检退回。
+		"DispatchRepo.BindDeviceTx": func(model.Scope) error {
+			return DispatchRepo{}.BindDeviceTx(ctx, nil, noFarm, "uav-1", 1, now)
+		},
+		"DispatchAttemptRepo.ByIdemKey": func(s model.Scope) error {
+			_, err := DispatchAttemptRepo{}.ByIdemKey(ctx, nil, s, "k")
+			return err
+		},
+		"ReopenRepo.Ticket": func(s model.Scope) error { _, err := ReopenRepo{}.Ticket(ctx, nil, s, 1); return err },
+		"ReopenRepo.SupersedeTicketTx": func(model.Scope) error {
+			return ReopenRepo{}.SupersedeTicketTx(ctx, nil, noFarmTicket, now)
+		},
+		"ReopenRepo.InsertReopenedTicketTx": func(s model.Scope) error {
+			_, err := ReopenRepo{}.InsertReopenedTicketTx(ctx, nil,
+				model.ApprovalTicket{TenantID: s.TenantID, FarmID: s.FarmID, OrderID: 1}, now, now)
+			return err
+		},
+		"ReopenRepo.InsertNotifyOutboxTx": func(model.Scope) error {
+			_, err := ReopenRepo{}.InsertNotifyOutboxTx(ctx, nil, noFarm, "k", []byte(`{}`), now)
+			return err
+		},
+		// P1-L4 审查修复：中止关票 / 条件收尾 run。
+		"DecisionRepo.CloseWaitingRunTx": func(s model.Scope) error {
+			_, err := (&DecisionRepo{}).CloseWaitingRunTx(ctx, nil, s, 1, "", now)
+			return err
+		},
+		"DecisionRepo.LiveTicketsTx": func(model.Scope) error {
+			_, err := (&DecisionRepo{}).LiveTicketsTx(ctx, nil, noFarm)
+			return err
+		},
+		"DecisionRepo.SupersedeLiveTicketTx": func(model.Scope) error {
+			return (&DecisionRepo{}).SupersedeLiveTicketTx(ctx, nil, noFarmTicket, now)
 		},
 		"OutboxRepo.SetDispatchResultTx": func(model.Scope) error {
 			return OutboxRepo{}.SetDispatchResultTx(ctx, nil, noFarm, []byte(`{}`), 0, now)
@@ -214,6 +255,47 @@ func scopeRequiredCalls() map[string]func(model.Scope) error {
 			_, err := DispatchAttemptRepo{}.PendingReconcile(ctx, s, 10)
 			return err
 		},
+		// P1-L4-B 回执侧
+		"DeviceReceiptRepo.InsertReceiptTx": func(s model.Scope) error {
+			_, err := DeviceReceiptRepo{}.InsertReceiptTx(ctx, nil, ReceiptRow{TenantID: s.TenantID, FarmID: s.FarmID, ReceiptID: "r",
+				DeviceJobID: "j", Source: model.SourceWebhook})
+			return err
+		},
+		"DeviceReceiptRepo.ReceiptsByOrder": func(s model.Scope) error {
+			_, err := DeviceReceiptRepo{}.ReceiptsByOrder(ctx, model.OrderRef{TenantID: s.TenantID, FarmID: s.FarmID, OrderID: 1})
+			return err
+		},
+		"DeviceReceiptRepo.AttemptTx": func(s model.Scope) error {
+			_, err := DeviceReceiptRepo{}.AttemptTx(ctx, nil, model.OrderRef{TenantID: s.TenantID, FarmID: s.FarmID, OrderID: 1}, 1)
+			return err
+		},
+		"DeviceReceiptRepo.LatestAttemptTx": func(s model.Scope) error {
+			_, err := DeviceReceiptRepo{}.LatestAttemptTx(ctx, nil, model.OrderRef{TenantID: s.TenantID, FarmID: s.FarmID, OrderID: 1})
+			return err
+		},
+		"DeviceReceiptRepo.MarkNoReceiptTx": func(s model.Scope) error {
+			return DeviceReceiptRepo{}.MarkNoReceiptTx(ctx, nil, model.OrderRef{TenantID: s.TenantID, FarmID: s.FarmID, OrderID: 1}, 1, 0, now)
+		},
+		"DeviceReceiptRepo.SetDoneAreaTx": func(s model.Scope) error {
+			return DeviceReceiptRepo{}.SetDoneAreaTx(ctx, nil, model.OrderRef{TenantID: s.TenantID, FarmID: s.FarmID, OrderID: 1}, 1, now)
+		},
+		"DeviceReceiptRepo.InsertWorkDoneMemoryTx": func(s model.Scope) error {
+			return DeviceReceiptRepo{}.InsertWorkDoneMemoryTx(ctx, nil, model.OrderRef{TenantID: s.TenantID, FarmID: s.FarmID, OrderID: 1}, 1, "s", now)
+		},
+		"DeviceReceiptRepo.InsertFieldHistoryOutboxTx": func(s model.Scope) error {
+			return DeviceReceiptRepo{}.InsertFieldHistoryOutboxTx(ctx, nil, model.OrderRef{TenantID: s.TenantID, FarmID: s.FarmID, OrderID: 1}, 1, []byte(`{}`), now)
+		},
+		"DeviceReceiptRepo.InsertRetryDispatchOutboxTx": func(s model.Scope) error {
+			return DeviceReceiptRepo{}.InsertRetryDispatchOutboxTx(ctx, nil, model.OrderRef{TenantID: s.TenantID, FarmID: s.FarmID, OrderID: 1}, 1, 2, []byte(`{}`), now)
+		},
+		"DeviceReceiptRepo.InsertCancelOutboxTx": func(s model.Scope) error {
+			_, err := DeviceReceiptRepo{}.InsertCancelOutboxTx(ctx, nil, model.OrderRef{TenantID: s.TenantID, FarmID: s.FarmID, OrderID: 1}, 1, []byte(`{}`), now)
+			return err
+		},
+		"DeviceReceiptRepo.WorkDone": func(s model.Scope) error {
+			_, err := DeviceReceiptRepo{}.WorkDone(ctx, model.OrderRef{TenantID: s.TenantID, FarmID: s.FarmID, OrderID: 1})
+			return err
+		},
 		"CheckpointRepo.Get": func(s model.Scope) error {
 			_, _, err := (&CheckpointRepo{}).Get(agent.WithCheckpointTarget(ctx, agent.CheckpointTarget{Scope: s, RunID: 1}), "1")
 			return err
@@ -248,8 +330,10 @@ func TestSystemScopeRequired(t *testing.T) {
 	var zero SystemScope
 	calls := map[string]func() error{
 		"OutboxRepo.Claim":     func() error { _, err := OutboxRepo{}.Claim(ctx, zero, now, now); return err },
-		"OutboxRepo.MarkDone":  func() error { _, err := OutboxRepo{}.MarkDone(ctx, zero, 1, now); return err },
-		"OutboxRepo.MarkRetry": func() error { _, err := OutboxRepo{}.MarkRetry(ctx, zero, 1, now, "e", now); return err },
+		"OutboxRepo.MarkDone":  func() error { _, err := OutboxRepo{}.MarkDone(ctx, zero, 1, 1, now); return err },
+		"OutboxRepo.MarkRetry": func() error { _, err := OutboxRepo{}.MarkRetry(ctx, zero, 1, 1, now, "e", now); return err },
+		"OutboxRepo.Renew":     func() error { _, err := OutboxRepo{}.Renew(ctx, zero, 1, 1, now, now); return err },
+		"OutboxRepo.Defer":     func() error { _, err := OutboxRepo{}.Defer(ctx, zero, 1, 1, now, now); return err },
 		"DecisionRepo.ListExpired": func() error {
 			_, err := (&DecisionRepo{}).ListExpired(ctx, zero, now)
 			return err
@@ -269,6 +353,7 @@ func TestSystemScopeRequired(t *testing.T) {
 			_, err := DispatchAttemptRepo{}.ByJob(ctx, zero, "uav", "sim-1")
 			return err
 		},
+		"DeviceReceiptRepo.DueAttempts": func() error { _, err := DeviceReceiptRepo{}.DueAttempts(ctx, zero, now); return err },
 	}
 	for name, call := range calls {
 		t.Run(name, func(t *testing.T) {

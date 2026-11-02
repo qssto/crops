@@ -10,6 +10,21 @@ import (
 
 const repoRoot = "../.."
 
+// TestNewReceiptSecret（P1-L4 合并统一）：评测回执密钥进程内由 crypto/rand 生成，32 字节且每次不同（不读 deploy/.env）。
+func TestNewReceiptSecret(t *testing.T) {
+	a, err := newReceiptSecret()
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := newReceiptSecret()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(a) != receiptSecretLen || len(b) != receiptSecretLen || bytes.Equal(a, b) {
+		t.Fatalf("secret lengths %d/%d, equal=%t", len(a), len(b), bytes.Equal(a, b))
+	}
+}
+
 func TestRun_ExitCodes(t *testing.T) {
 	// 指向不可达端口：run 必须明确报错退出，不得静默跳过 DB
 	t.Setenv("AS_MYSQL_PORT", "1")
@@ -59,7 +74,10 @@ signed_at: 2026-10-28
 	}{
 		{name: "no args", args: nil, wantCode: exitUsage},
 		{name: "unknown subcommand", args: []string{"foo"}, wantCode: exitUsage},
-		{name: "validate repo samples", wantCode: exitOK, wantStdout: "validate OK: 154 samples",
+		// 163 个样本全部静态校验；其中 rice-rcpt-0001..0006 共 6 个隔离（需 REAL 评测设施），run 只跑 157 个。
+		{name: "validate repo samples", wantCode: exitOK, wantStdout: "validate OK: 163 samples",
+			args: []string{"validate", "--suites-dir", suites, "--taxonomy", tax, "--repo", repoRoot}},
+		{name: "validate counts quarantined", wantCode: exitOK, wantStdout: "6 quarantined (run skips them)\n",
 			args: []string{"validate", "--suites-dir", suites, "--taxonomy", tax, "--repo", repoRoot}},
 		{name: "validate rejects missing author", wantCode: exitFailed, wantStderr: "failed sample ids: tmp-no-author",
 			args: []string{"validate", "--suites-dir", filepath.Dir(badDir), "--taxonomy", tax, "--repo", repoRoot}},
@@ -79,7 +97,7 @@ signed_at: 2026-10-28
 		{name: "run baseline bad name", wantCode: exitFailed, wantStderr: "baseline name",
 			args: []string{"run", "--suites-dir", suites, "--taxonomy", tax, "--repo", repoRoot, "--out", outDir,
 				"--baseline", "../escape"}},
-		{name: "kbdump regression", wantCode: exitOK, wantStdout: "kbdump: 108 samples",
+		{name: "kbdump regression", wantCode: exitOK, wantStdout: "kbdump: 117 samples",
 			args: []string{"kbdump", "--suites-dir", suites, "--taxonomy", tax, "--repo", repoRoot, "--suite", "regression"}},
 		{name: "kbdump unknown suite", wantCode: exitFailed, wantStderr: "no sample matches",
 			args: []string{"kbdump", "--suites-dir", suites, "--taxonomy", tax, "--repo", repoRoot, "--suite", "nope"}},

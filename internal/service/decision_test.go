@@ -129,6 +129,15 @@ func (m *memDecisions) CloseRunTx(_ context.Context, _ *repository.DB, _ model.S
 	return nil
 }
 
+func (m *memDecisions) CloseWaitingRunTx(_ context.Context, _ *repository.DB, _ model.Scope, _ uint64, r model.ReasonCode,
+	_ time.Time) (bool, error) {
+	if m.runStatus != model.RunInterrupted {
+		return false, nil
+	}
+	m.runStatus, m.runReason = model.RunCompleted, r
+	return true, nil
+}
+
 func (m *memDecisions) InsertRejectedMemoryTx(context.Context, *repository.DB, repository.TicketRow, string, time.Time) error {
 	m.memories++
 	return nil

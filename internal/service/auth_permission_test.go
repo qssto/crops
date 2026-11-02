@@ -23,13 +23,13 @@ func TestPermissionMatrix_RepoFile_AllRolesAllOps(t *testing.T) {
 	m := testPerms(t)
 	allowed := map[model.Role][]Operation{
 		model.RoleFarmer:      {OpAsk, OpAdviceRead},
-		model.RoleFarmManager: {OpAsk, OpAdviceRead, OpApprovalSubmit, OpApprovalDecideOther, OpOrderCancel, OpRawRead},
+		model.RoleFarmManager: {OpAsk, OpAdviceRead, OpApprovalSubmit, OpApprovalDecideOther, OpOrderCancel, OpRawRead, OpOrderReconcile},
 		model.RoleAgronomist: {OpAsk, OpAdviceRead, OpApprovalSubmit, OpApprovalDecidePesticide, OpApprovalDecideOther,
 			OpOrderCancel, OpRawRead},
 		model.RoleOperator:      {OpAsk, OpAdviceRead, OpOrderCancel},
 		model.RoleAdmin:         {OpAsk, OpAdviceRead, OpOrderCancel, OpAuditExport},
 		model.RoleAuditor:       {OpAdviceRead, OpAuditExport, OpRawRead},
-		model.RolePlatformAdmin: {OpAdviceRead, OpOrderCancel, OpAuditExport, OpRawRead, OpFlagWrite},
+		model.RolePlatformAdmin: {OpAdviceRead, OpOrderCancel, OpAuditExport, OpRawRead, OpFlagWrite, OpOrderReconcile},
 		model.RoleKBExpert:      nil,
 		model.RoleLegal:         nil,
 	}

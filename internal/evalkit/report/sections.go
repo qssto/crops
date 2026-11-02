@@ -48,6 +48,27 @@ func renderSnapshot(ew *errWriter, s evalkit.Snapshot) {
 	}
 }
 
+// quarantineNote 附在门禁行后：隔离样本未运行，门禁与红线结论不覆盖它们（不能读成「全部通过」）。
+func quarantineNote(exp *evalkit.Experiment) string {
+	if len(exp.Quarantined) == 0 {
+		return ""
+	}
+	return fmt.Sprintf("；隔离样本 %d 个未运行，不计入门禁与红线统计（见「隔离样本」）", len(exp.Quarantined))
+}
+
+// renderQuarantined 单列隔离样本（P1-L4 审查修复）：未运行，不计入 N / 通过 / INFRA_ERROR；无隔离样本时不输出。
+func renderQuarantined(ew *errWriter, qs []evalkit.QuarantinedSample) {
+	if len(qs) == 0 {
+		return
+	}
+	ew.printf("## 隔离样本\n\n以下样本声明了 quarantine，本次未运行：不计入样本数 / trial / 通过 / INFRA_ERROR，")
+	ew.printf("Gate 0 与红线 pass^k 不覆盖它们。\n\n| sample_id | 套件 | 隔离理由 |\n|-----------|------|----------|\n")
+	for _, q := range qs {
+		ew.printf("| %s | %s | %s |\n", q.ID, q.Suite, escapeCell(q.Reason))
+	}
+	ew.printf("\n")
+}
+
 // renderGate 输出 Gate 0 自动项逐条判定。
 func renderGate(ew *errWriter, r *reduce.Result) {
 	ew.printf("## Gate 0 自动项（pass^%d）\n\n| # | 通过标准 | 维度 | 结论 | 说明 |\n|---|----------|------|------|------|\n", reduce.GateK)

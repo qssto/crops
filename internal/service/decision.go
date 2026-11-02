@@ -77,6 +77,8 @@ type DecisionStore interface {
 	SetDispatchDeadlineTx(ctx context.Context, tx *repository.DB, ref model.OrderRef, deadline, now time.Time) error
 	InsertDispatchOutboxTx(ctx context.Context, tx *repository.DB, t repository.TicketRow, payload []byte, now time.Time) error
 	CloseRunTx(ctx context.Context, tx *repository.DB, scope model.Scope, runID uint64, reason model.ReasonCode, now time.Time) error
+	CloseWaitingRunTx(ctx context.Context, tx *repository.DB, scope model.Scope, runID uint64, reason model.ReasonCode,
+		now time.Time) (bool, error)
 	InsertRejectedMemoryTx(ctx context.Context, tx *repository.DB, t repository.TicketRow, summary string, now time.Time) error
 	AuditDenied(ctx context.Context, scope model.Scope, t repository.TicketRow, code string) error
 	ListPending(ctx context.Context, scope model.Scope) ([]repository.PendingRow, error)
@@ -303,11 +305,8 @@ func (s *DecisionService) lockOrder(ctx context.Context, orderID uint64) (func()
 // acquireOrderLock 取 lock:order:{order_id}（审批决策与扫描共用）；被持有返回 ErrOrderBusy。返回的 release 只告警不报错。
 func acquireOrderLock(ctx context.Context, locks KeyLocker, keys rediskey.Keys, log *slog.Logger, orderID uint64) (func(), error) {
 	lease, err := locks.AcquireLease(ctx, keys.LockOrder(orderID), orderLockTTL)
-	if errors.Is(err, repository.ErrLockHeld) {
-		return nil, fmt.Errorf("service: order %d: %w", orderID, ErrOrderBusy)
-	}
 	if err != nil {
-		return nil, fmt.Errorf("service: lock order %d: %w", orderID, err)
+		return nil, lockAcquireErr(orderID, err)
 	}
 	return func() {
 		if err := lease.Release(context.WithoutCancel(ctx)); err != nil {
@@ -520,6 +519,10 @@ func (s *DecisionService) approve(ctx context.Context, scope model.Scope, t repo
 	if err != nil {
 		return DecideResult{}, fmt.Errorf("service: approve ticket %d: %w", t.ID, err)
 	}
+	if reopened(t) {
+		// P1-L4-A：复检退回后的新票（ticket_seq > 1）批准只写 order.dispatch:{order}:{新票}:1，run 已在首张票批准后收尾，不再唤醒
+		return DecideResult{DecisionID: id, TicketID: t.ID, Status: model.TicketApproved}, nil
+	}
 	s.resumeAsync(ctx, t)
 	return DecideResult{DecisionID: id, TicketID: t.ID, Status: model.TicketApproved}, nil
 }
@@ -541,7 +544,7 @@ func (s *DecisionService) reject(ctx context.Context, scope model.Scope, t repos
 		if err := s.d.Orders.Transition(ctx, tx, t.OrderRef(), model.OrderRejected, actor, model.ReasonApprovalRejected); err != nil {
 			return err
 		}
-		if err := s.d.Store.CloseRunTx(ctx, tx, t.Scope(), t.RunID, model.ReasonApprovalRejected, now); err != nil {
+		if err := s.closeRunTx(ctx, tx, t, model.ReasonApprovalRejected, now); err != nil {
 			return err
 		}
 		summary := fmt.Sprintf("作业单 %d 审批驳回", t.OrderID)
@@ -591,7 +594,7 @@ func (s *DecisionService) expireLocked(ctx context.Context, t repository.TicketR
 		if err := s.d.Orders.Transition(ctx, tx, t.OrderRef(), model.OrderExpired, actor, model.ReasonApprovalExpired); err != nil {
 			return err
 		}
-		if err := s.d.Store.CloseRunTx(ctx, tx, t.Scope(), t.RunID, model.ReasonApprovalExpired, now); err != nil {
+		if err := s.closeRunTx(ctx, tx, t, model.ReasonApprovalExpired, now); err != nil {
 			return err
 		}
 		expired = true
@@ -602,6 +605,29 @@ func (s *DecisionService) expireLocked(ctx context.Context, t repository.TicketR
 		return false, fmt.Errorf("service: expire ticket %d: %w", t.ID, err)
 	}
 	return expired, nil
+}
+
+// reopened 表示复检退回后另开的票（ticket_seq > 1，P1 §6.4 第 4 条）：决策不唤醒 run。run 通常已在首张票批准后续跑收尾，
+// 但首张票批准后 Resume 失败时 run 仍停在 INTERRUPTED(WAIT_APPROVAL)，而首张票已 SUPERSEDED，run_finalize 再也取不到它；
+// 因此新票驳回 / 过期按条件收尾 run（见 closeRunTx）。
+func reopened(t repository.TicketRow) bool { return t.TicketSeq > firstTicketSeq }
+
+// closeRunTx 在驳回 / 过期事务内收尾 run。首张票：run 必在 INTERRUPTED(WAIT_APPROVAL)，0 行即不一致、回滚整个事务；
+// 退回重审的新票：run 仍等审批才收尾，已终态则不动（不能断言 run 状态，CloseRunTx 的 0 行守卫会误回滚决策）。
+func (s *DecisionService) closeRunTx(ctx context.Context, tx *repository.DB, t repository.TicketRow, reason model.ReasonCode,
+	now time.Time) error {
+	if reopened(t) {
+		closed, err := s.d.Store.CloseWaitingRunTx(ctx, tx, t.Scope(), t.RunID, reason, now)
+		if err != nil {
+			return err
+		}
+		if closed {
+			s.d.Logger.WarnContext(ctx, "decide: reopened ticket closed a run still waiting approval", "run_id", t.RunID,
+				"ticket_id", t.ID, "reason", reason)
+		}
+		return nil
+	}
+	return s.d.Store.CloseRunTx(ctx, tx, t.Scope(), t.RunID, reason, now)
 }
 
 // resumeAsync 在生效事务提交后异步续跑 run（不阻塞决策响应）；失败只告警，由 run_finalize 扫描补偿。

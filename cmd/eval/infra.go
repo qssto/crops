@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
 	"errors"
 	"flag"
 	"fmt"
@@ -70,6 +71,21 @@ type infra struct {
 	model *config.Model
 	// devices 是设备显式绑定，Runner 据此记录提问农场的设备清单（地块清单读 trial 库）。
 	devices *device.Bindings
+	// receiptSecret 是本次评测进程内生成的回执 HMAC 密钥（crypto/rand，不落盘、不打印、不读 deploy/.env），
+	// 同时注入每个 trial 的 Deps.ReceiptSecret 与 Runner 的 ReceiptSteps.Secret。
+	receiptSecret []byte
+}
+
+// receiptSecretLen 是评测回执密钥的字节数。
+const receiptSecretLen = 32
+
+// newReceiptSecret 生成评测用回执密钥。
+func newReceiptSecret() ([]byte, error) {
+	b := make([]byte, receiptSecretLen)
+	if _, err := rand.Read(b); err != nil {
+		return nil, fmt.Errorf("eval: generate receipt secret: %w", err)
+	}
+	return b, nil
 }
 
 // open 依次连 agri_eval、Redis、trial 池；任一不可用都返回错误（不静默跳过）。
@@ -124,6 +140,9 @@ func (f *infraFlags) open(ctx context.Context, logW io.Writer, ls *loadedSamples
 		return nil, err
 	}
 	in := &infra{model: mcfg, approvers: [2]env.Identity{first, second}, devices: devices}
+	if in.receiptSecret, err = newReceiptSecret(); err != nil {
+		return nil, err
+	}
 	defer func() {
 		if err != nil {
 			err = errors.Join(err, in.close())
@@ -183,6 +202,7 @@ func (f *infraFlags) open(ctx context.Context, logW io.Writer, ls *loadedSamples
 			// 主链路（桩模型）在 Build 内用本 trial 的 Runs / Advice / Drafts / RunLocker 装配；Tools 为每 trial 一个 FixtureMCP。
 			NewAgent: app.GraphAgent(ctx, gc),
 			Tools:    tools, Risk: risk, Constraints: constraints, Permissions: perms, Adapter: dev,
+			ReceiptSecret: in.receiptSecret,
 			// L6：检查点读回走 MinIO；记忆按配置开关注入样本 fixtures.memory（不读 trial 库 episodic_memory）。
 			HITL: app.HITLDeps{Objects: repository.MinIOGetter{Client: mc}, RawBucket: cfg.MinIO.BucketRaw,
 				Memory: memory.Options{Enabled: cfg.Memory.Enabled, EpisodicLimit: cfg.Memory.EpisodicLimit,

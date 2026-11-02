@@ -35,6 +35,12 @@ type OutboxMessage struct {
 	Payload     json.RawMessage `gorm:"-"`
 	// Attempts 是本次处理前已失败的次数。
 	Attempts int
+	// DedupKey 是 {topic}:{order_id}:{ticket_id}:{n}，即下发幂等键（P1 §6.5 功能任务 2）。
+	DedupKey string
+	// RowVer 是认领后的 row_ver：租约凭证（P1 §6.5 技术实现第 2 步），续租 / 完成 / 退避都带它作条件。
+	RowVer int
+	// CreatedAt 是入队时刻（推后不改它）：下发器据此判断选不到设备的等待是否超过 dispatch.device_wait_max。
+	CreatedAt time.Time
 }
 
 // OutboxRepo 是 outbox 轮询 / 完成 / 退避（P0 §6.9 ② 定版 SQL 照抄）；跨农场扫描：Claim / MarkDone / MarkRetry 须持 SystemScope，
@@ -70,7 +76,7 @@ func (r OutboxRepo) Claim(ctx context.Context, sys SystemScope, now, leaseUntil 
 			PayloadRaw []byte `gorm:"column:payload"`
 		}
 		if err := tx.Raw(
-			`SELECT id, tenant_id, farm_id, topic, aggregate_id, payload, attempts FROM outbox WHERE id IN (?) ORDER BY next_run_at, id`,
+			`SELECT id, tenant_id, farm_id, topic, aggregate_id, dedup_key, payload, attempts, row_ver, created_at FROM outbox WHERE id IN (?) ORDER BY next_run_at, id`,
 			ids).Scan(&rows).Error; err != nil {
 			return fmt.Errorf("repository: read outbox: %w", err)
 		}
@@ -88,13 +94,41 @@ func (r OutboxRepo) Claim(ctx context.Context, sys SystemScope, now, leaseUntil 
 	return out, nil
 }
 
-// MarkDone 照抄 ② 完成 UPDATE；已 DONE（如 Dispatch 在 ⑦ 同事务置过）时影响 0 行，返回 false。
-func (r OutboxRepo) MarkDone(ctx context.Context, sys SystemScope, id uint64, now time.Time) (bool, error) {
+// Renew 照抄 P1 §6.5 续租 UPDATE：带认领 / 上次续租后的 row_ver 把 next_run_at 推到 leaseUntil。
+// 影响 0 行返回 false：租约已被他人接走（或消息已非 PENDING），调用方放弃本条且不再写结果。
+func (r OutboxRepo) Renew(ctx context.Context, sys SystemScope, id uint64, rowVer int, leaseUntil, now time.Time) (bool, error) {
+	if err := requireSystem(sys); err != nil {
+		return false, err
+	}
+	return leaseResult(id, "renew", r.DB.WithContext(ctx).Exec(
+		`UPDATE outbox SET next_run_at=?, row_ver=row_ver+1, updated_at=? WHERE id=? AND row_ver=? AND status='PENDING'`,
+		leaseUntil, now, id, rowVer))
+}
+
+// MarkDone 照抄 P1 §6.5 完成 UPDATE（带 row_ver 租约条件）；影响 0 行（租约已丢 / 已非 PENDING）返回 false。
+func (r OutboxRepo) MarkDone(ctx context.Context, sys SystemScope, id uint64, rowVer int, now time.Time) (bool, error) {
 	if err := requireSystem(sys); err != nil {
 		return false, err
 	}
 	return doneResult(id, r.DB.WithContext(ctx).Exec(
-		`UPDATE outbox SET status='DONE', row_ver=row_ver+1, updated_at=? WHERE id=? AND status='PENDING'`, now, id))
+		`UPDATE outbox SET status='DONE', row_ver=row_ver+1, updated_at=? WHERE id=? AND row_ver=? AND status='PENDING'`,
+		now, id, rowVer))
+}
+
+// Defer 照抄 P1 §6.5「拿不到 lock:order」UPDATE：只推后 next_run_at、不计 attempts（带 row_ver 租约条件）。
+func (r OutboxRepo) Defer(ctx context.Context, sys SystemScope, id uint64, rowVer int, nextRunAt, now time.Time) (bool, error) {
+	if err := requireSystem(sys); err != nil {
+		return false, err
+	}
+	return leaseResult(id, "defer", r.DB.WithContext(ctx).Exec(
+		`UPDATE outbox SET next_run_at=?, row_ver=row_ver+1, updated_at=? WHERE id=? AND row_ver=?`, nextRunAt, now, id, rowVer))
+}
+
+func leaseResult(id uint64, op string, res *gorm.DB) (bool, error) {
+	if res.Error != nil {
+		return false, fmt.Errorf("repository: outbox %d %s: %w", id, op, res.Error)
+	}
+	return res.RowsAffected > 0, nil
 }
 
 // MarkDoneTx 同 MarkDone，但在调用方事务内按工单 Scope 执行（下发结果 / 过期 / 挂起收尾同事务置 DONE）：
@@ -118,16 +152,17 @@ func doneResult(id uint64, res *gorm.DB) (bool, error) {
 	return res.RowsAffected > 0, nil
 }
 
-// MarkRetry 照抄 ② 失败退避 UPDATE（status 写在 attempts 前：MySQL 按书写顺序赋值，IF 读到的是旧 attempts）；
-// 第 OutboxMaxAttempts 次失败转 DEAD。影响 0 行（已 DONE / 已 DEAD）返回 false。
-func (r OutboxRepo) MarkRetry(ctx context.Context, sys SystemScope, id uint64, nextRunAt time.Time, lastErr string, now time.Time) (bool, error) {
+// MarkRetry 照抄 ② 失败退避 UPDATE 并按 P1 §6.5 加 row_ver 租约条件（status 写在 attempts 前：MySQL 按书写顺序赋值，
+// IF 读到的是旧 attempts）；第 OutboxMaxAttempts 次失败转 DEAD。影响 0 行（租约已丢 / 已 DONE / 已 DEAD）返回 false。
+func (r OutboxRepo) MarkRetry(ctx context.Context, sys SystemScope, id uint64, rowVer int, nextRunAt time.Time, lastErr string,
+	now time.Time) (bool, error) {
 	if err := requireSystem(sys); err != nil {
 		return false, err
 	}
 	res := r.DB.WithContext(ctx).Exec(
 		`UPDATE outbox SET status=IF(attempts+1>=5,'DEAD','PENDING'), attempts=attempts+1, next_run_at=?, last_error=?,
-       row_ver=row_ver+1, updated_at=? WHERE id=? AND status='PENDING'`,
-		nextRunAt, truncateRunes(lastErr, outboxLastErrorMax), now, id)
+       row_ver=row_ver+1, updated_at=? WHERE id=? AND row_ver=? AND status='PENDING'`,
+		nextRunAt, truncateRunes(lastErr, outboxLastErrorMax), now, id, rowVer)
 	if res.Error != nil {
 		return false, fmt.Errorf("repository: outbox %d retry: %w", id, res.Error)
 	}

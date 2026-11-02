@@ -50,11 +50,25 @@ func Reference(s *sample.Sample, tx *knowledge.Taxonomy, kb grader.KnowledgeInde
 	for _, tool := range exp.Trajectory.MustCall {
 		calls[tool] = 1
 	}
-	return &grader.Trial{Sample: s, Outcome: exp.Outcome, RefuseReason: exp.RefuseReason,
+	t = &grader.Trial{Sample: s, Outcome: exp.Outcome, RefuseReason: exp.RefuseReason,
 		Card: card, KB: kb, ToolCalls: calls, ToolFailures: referenceFailures(s),
 		Approval: referenceApproval(exp), DeviceCalls: []string{}, Logs: []byte{},
 		OrderTransitions: referenceTransitions(exp.WorkOrder), ConstraintBlocked: referenceBlocked(exp),
-		Scope: model.Scope{TenantID: refID, FarmID: refID}, Fields: []uint64{refID}, Devices: []string{}}, skip, notes
+		Scope: model.Scope{TenantID: refID, FarmID: refID}, Fields: []uint64{refID}, Devices: []string{},
+		WorkDone: referenceWorkDone(exp)}
+	referenceDispatch(s, t) // P1-L4-A：expect.dispatch 的理想下发观测
+	return t, skip, notes
+}
+
+// referenceWorkDone 是理想完成态观测（P1-L4-B）：断言 expect.work_done 时一张满足断言的作业单，否则为 nil。
+func referenceWorkDone(exp sample.Expect) []grader.WorkDoneObs {
+	w := exp.WorkDone
+	if w == nil {
+		return nil
+	}
+	area := w.DoneAreaMu
+	return []grader.WorkDoneObs{{OrderID: refID, Status: model.WorkOrderStatus(w.Status), DoneAreaMu: &area,
+		LocalVisible: true, FieldHistory: true}}
 }
 
 // referenceBlocked 是理想约束拦截观测（P1 L3）：断言 expect.constraint 时即其 rule_ids，否则为空。

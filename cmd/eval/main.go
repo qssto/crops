@@ -147,14 +147,18 @@ func cmdValidate(args []string, stdout io.Writer) error {
 		return err
 	}
 	samples := ls.samples
-	refused := 0
+	refused, quarantined := 0, 0
 	for _, s := range samples {
 		if s.IsRefusal() {
 			refused++
 		}
+		if _, ok := s.QuarantineReason(); ok {
+			quarantined++
+		}
 	}
-	fmt.Fprintf(stdout, "validate OK: %d samples, %d refused (%.0f%%)\n",
-		len(samples), refused, 100*float64(refused)/float64(len(samples)))
+	// 隔离样本仍参与静态校验（计入 samples），但 run 不运行它们（P1-L4 审查修复）。
+	fmt.Fprintf(stdout, "validate OK: %d samples, %d refused (%.0f%%), %d quarantined (run skips them)\n",
+		len(samples), refused, 100*float64(refused)/float64(len(samples)), quarantined)
 	if len(ls.refNotes) > 0 {
 		fmt.Fprintf(stdout, "reference not judged: %s\n", strings.Join(ls.refNotes, "; "))
 	}
@@ -217,8 +221,8 @@ func cmdRun(ctx context.Context, args []string, stdout, stderr io.Writer) (err e
 	if err != nil {
 		return err
 	}
-	fmt.Fprintf(stdout, "eval done: exp_id=%s samples=%d trials=%d report=%s transcripts=%d bucket=%s\n",
-		exp.ID, exp.Samples, len(exp.Trials), path, uploaded, in.evalBucket)
+	fmt.Fprintf(stdout, "eval done: exp_id=%s samples=%d trials=%d quarantined=%d report=%s transcripts=%d bucket=%s\n",
+		exp.ID, exp.Samples, len(exp.Trials), len(exp.Quarantined), path, uploaded, in.evalBucket)
 	if *baseline == "" {
 		return nil
 	}
@@ -248,7 +252,9 @@ func runWithStore(ctx context.Context, in *infra, ls *loadedSamples, samples []*
 	opts.ExperimentID = store.FormatID(id)
 	runner, err := evalkit.NewRunner(evalkit.PoolEnv(in.pool, in.deps), wall.Now,
 		evalkit.WithQuestion(in.question), evalkit.WithGraders(ls.kb, ls.graders...),
-		evalkit.WithApprover(evalkit.ScriptApprover(in.approvers[0], in.approvers[1])), evalkit.WithDevices(in.devices))
+		evalkit.WithApprover(evalkit.ScriptApprover(in.approvers[0], in.approvers[1])), evalkit.WithDevices(in.devices),
+		// P1-L4 合并统一：回执步骤用与 Deps.ReceiptSecret 相同的进程内密钥签名，排空复用 DrainOutbox。
+		evalkit.WithReceiptSteps(evalkit.ReceiptSteps{Secret: in.receiptSecret, Drain: evalkit.DrainStep}))
 	if err != nil {
 		return nil, 0, err
 	}

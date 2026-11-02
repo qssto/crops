@@ -136,6 +136,68 @@ func TestValidator_DefaultRules(t *testing.T) {
 			s[1].Fixtures.Device = &DeviceFixture{Receipts: []ReceiptFixture{{Status: "PARTIALLY_DONE"}}}
 			return s
 		}},
+		// P1-L4-B：按方法 / 作业单的脚本、回执投递步骤与 expect.work_done。
+		{name: "valid device scripts and steps", mutate: func(s []*Sample) []*Sample {
+			mu := 4.0
+			s[1].Fixtures.Device = &DeviceFixture{
+				Scripts: []DeviceScript{
+					{Method: "Dispatch", Order: 1, Steps: []ScriptStep{{Error: "TIMEOUT", Accepted: true}, {ReceiptFixture: ReceiptFixture{Status: "ACCEPTED"}}}},
+					{Method: "Cancel", Steps: []ScriptStep{{ReceiptFixture: ReceiptFixture{Status: "CANCELED", DoneAreaMu: &mu}}}},
+					{Method: "QueryStatus", Order: 2, Steps: []ScriptStep{{Error: "UNAVAILABLE"}}}},
+				Steps: []ReceiptStep{{Receipt: &ReceiptFixture{Status: "EXECUTING"}}, {Repeat: true}, {Advance: "45m", Scan: true}}}
+			s[1].Expect.WorkDone = &WorkDoneExpect{Status: "PARTIALLY_DONE", DoneAreaMu: 4}
+			return s
+		}},
+		{name: "script unknown method", wantRule: RuleFixtures, wantID: "s-1", mutate: func(s []*Sample) []*Sample {
+			s[1].Fixtures.Device = &DeviceFixture{Scripts: []DeviceScript{{Method: "DryRun", Steps: []ScriptStep{{Error: "TIMEOUT"}}}}}
+			return s
+		}},
+		{name: "script unknown error", wantRule: RuleFixtures, wantID: "s-1", mutate: func(s []*Sample) []*Sample {
+			s[1].Fixtures.Device = &DeviceFixture{Scripts: []DeviceScript{{Method: "Cancel", Steps: []ScriptStep{{Error: "BOOM"}}}}}
+			return s
+		}},
+		{name: "script error with status", wantRule: RuleFixtures, wantID: "s-1", mutate: func(s []*Sample) []*Sample {
+			s[1].Fixtures.Device = &DeviceFixture{Scripts: []DeviceScript{{Method: "Cancel",
+				Steps: []ScriptStep{{Error: "TIMEOUT", ReceiptFixture: ReceiptFixture{Status: "CANCELED"}}}}}}
+			return s
+		}},
+		{name: "script accepted outside dispatch", wantRule: RuleFixtures, wantID: "s-1", mutate: func(s []*Sample) []*Sample {
+			s[1].Fixtures.Device = &DeviceFixture{Scripts: []DeviceScript{{Method: "Cancel", Steps: []ScriptStep{{Error: "TIMEOUT", Accepted: true}}}}}
+			return s
+		}},
+		{name: "script empty steps", wantRule: RuleFixtures, wantID: "s-1", mutate: func(s []*Sample) []*Sample {
+			s[1].Fixtures.Device = &DeviceFixture{Scripts: []DeviceScript{{Method: "Cancel"}}}
+			return s
+		}},
+		{name: "script bad receipt", wantRule: RuleFixtures, wantID: "s-1", mutate: func(s []*Sample) []*Sample {
+			s[1].Fixtures.Device = &DeviceFixture{Scripts: []DeviceScript{{Method: "QueryStatus",
+				Steps: []ScriptStep{{ReceiptFixture: ReceiptFixture{Status: "FAILED"}}}}}}
+			return s
+		}},
+		{name: "step bad advance", wantRule: RuleFixtures, wantID: "s-1", mutate: func(s []*Sample) []*Sample {
+			s[1].Fixtures.Device = &DeviceFixture{Steps: []ReceiptStep{{Advance: "soon"}}}
+			return s
+		}},
+		{name: "step empty", wantRule: RuleFixtures, wantID: "s-1", mutate: func(s []*Sample) []*Sample {
+			s[1].Fixtures.Device = &DeviceFixture{Steps: []ReceiptStep{{Order: 1}}}
+			return s
+		}},
+		{name: "step repeat with receipt", wantRule: RuleFixtures, wantID: "s-1", mutate: func(s []*Sample) []*Sample {
+			s[1].Fixtures.Device = &DeviceFixture{Steps: []ReceiptStep{{Repeat: true, Receipt: &ReceiptFixture{Status: "DONE"}}}}
+			return s
+		}},
+		{name: "step cancel with receipt", wantRule: RuleFixtures, wantID: "s-1", mutate: func(s []*Sample) []*Sample {
+			s[1].Fixtures.Device = &DeviceFixture{Steps: []ReceiptStep{{Cancel: true, Receipt: &ReceiptFixture{Status: "DONE"}}}}
+			return s
+		}},
+		{name: "step cancel with repeat", wantRule: RuleFixtures, wantID: "s-1", mutate: func(s []*Sample) []*Sample {
+			s[1].Fixtures.Device = &DeviceFixture{Steps: []ReceiptStep{{Cancel: true, Repeat: true}}}
+			return s
+		}},
+		{name: "work_done bad status", wantRule: RuleExpect, wantID: "s-1", mutate: func(s []*Sample) []*Sample {
+			s[1].Expect.WorkDone = &WorkDoneExpect{Status: "CANCELED"}
+			return s
+		}},
 		{name: "valid fixtures", mutate: func(s []*Sample) []*Sample {
 			s[1].Fixtures.MCP = map[string][]ToolFixture{
 				"weather.forecast":  {{Match: map[string]any{"field": "field-002"}, Returns: []any{map[string]any{"a": 1}, "x"}}},

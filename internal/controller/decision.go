@@ -21,6 +21,9 @@ type Decider interface {
 // Mount 在 /api/v1/farms/:farm_id 分组上追加路由（分组已带 RequestID + FarmAuth + Authorize，新路由须登记 routeOps）。
 type Mount func(farms *gin.RouterGroup)
 
+// EngineMount 在根路由上追加不经用户鉴权的路由（如设备回执 webhook，自带签名校验）。
+type EngineMount func(r *gin.Engine)
+
 // ApprovalRoutes 挂载待审批列表与审批决策（P0 §6.6 / §6.7）。
 func ApprovalRoutes(d Decider) Mount {
 	return func(farms *gin.RouterGroup) {

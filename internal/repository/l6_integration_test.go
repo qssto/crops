@@ -107,6 +107,83 @@ func TestMarkResumedAndRecheckEpoch_Integration(t *testing.T) {
 	}
 }
 
+// P1-L4 审查修复（中止关票）：LiveTicketsTx 取 OPEN 票 → SupersedeLiveTicketTx 置 SUPERSEDED（row_ver 守卫，旧 row_ver 再写
+// → ErrConcurrentUpdate）；CloseWaitingRunTx 只收尾 INTERRUPTED(WAIT_APPROVAL) 的 run，再调返回 false 不报错；
+// 作废后的过期票不再被 ListExpired（approval_expire）取到。
+func TestCancelClosesTicket_Integration(t *testing.T) {
+	e := itest.Setup(t, "repol6")
+	slot := e.Fresh(t, t0)
+	ctx := t.Context()
+	repo := repository.NewDecisionRepo(slot.DB, slot.Clock)
+	runID := itest.InsertRun(t, slot.DB, t0)
+	orderID := itest.InsertOrder(t, slot.DB, runID, "PENDING_APPROVAL", t0)
+	l6Exec(t, slot.DB, `UPDATE agent_run SET status='INTERRUPTED', interrupt_type='WAIT_APPROVAL' WHERE id=?`, runID)
+	l6Ticket(t, slot.DB, runID, orderID, "OPEN", t0)
+	sys := repository.NewSystemScope("approval_expire")
+	after := t0.Add(2 * time.Hour) // 票据 expires_at = t0+1h
+	if rows, err := repo.ListExpired(ctx, sys, after); err != nil || len(rows) != 1 {
+		t.Fatalf("expired before cancel = %+v, %v", rows, err)
+	}
+	ref := model.OrderRef{TenantID: itest.TenantID, FarmID: itest.FarmID, OrderID: orderID}
+	err := repo.InTx(ctx, func(tx *repository.DB) error {
+		live, err := repo.LiveTicketsTx(ctx, tx, ref)
+		if err != nil || len(live) != 1 {
+			return fmt.Errorf("live tickets = %+v, %w", live, err)
+		}
+		if err := repo.SupersedeLiveTicketTx(ctx, tx, live[0], after); err != nil {
+			return err
+		}
+		if err := repo.SupersedeLiveTicketTx(ctx, tx, live[0], after); !errors.Is(err, model.ErrConcurrentUpdate) {
+			return fmt.Errorf("stale supersede: %v, want ErrConcurrentUpdate", err)
+		}
+		if closed, err := repo.CloseWaitingRunTx(ctx, tx, l4Scope, runID, model.ReasonCanceledByUser, after); err != nil || !closed {
+			return fmt.Errorf("close waiting run = %t, %v", closed, err)
+		}
+		if closed, err := repo.CloseWaitingRunTx(ctx, tx, l4Scope, runID, model.ReasonCanceledByUser, after); err != nil || closed {
+			return fmt.Errorf("close completed run = %t, %v; want false, nil", closed, err)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := itest.Count(t, slot.DB, `SELECT COUNT(*) FROM approval_ticket WHERE order_id=? AND status='SUPERSEDED' AND row_ver=1`,
+		orderID); n != 1 {
+		t.Error("ticket not SUPERSEDED with row_ver+1")
+	}
+	if n := itest.Count(t, slot.DB, `SELECT COUNT(*) FROM agent_run WHERE id=? AND status='COMPLETED' AND interrupt_type IS NULL
+  AND reason_code='CANCELED_BY_USER'`, runID); n != 1 {
+		t.Error("run not COMPLETED(CANCELED_BY_USER)")
+	}
+	if rows, err := repo.ListExpired(ctx, sys, after); err != nil || len(rows) != 0 {
+		t.Fatalf("expired after cancel = %+v, %v; want none", rows, err)
+	}
+}
+
+// P1-L4 审查修复（设备不可用推后上限）：Claim 读回入队时刻 created_at，领取续租不改它（下发器据此判断 device_wait_max）。
+func TestOutboxClaimCreatedAt_Integration(t *testing.T) {
+	e := itest.Setup(t, "repol6")
+	slot := e.Fresh(t, t0)
+	enq := t0.Add(-30 * time.Minute)
+	l6Exec(t, slot.DB, `INSERT INTO outbox (tenant_id, farm_id, topic, aggregate_id, dedup_key, payload, status, attempts,
+  next_run_at, created_at, updated_at) VALUES (?, ?, 'order.dispatch', 1, 'order.dispatch:1:1:1', '{"order_id":1}', 'PENDING', 0, ?, ?, ?)`,
+		itest.TenantID, itest.FarmID, t0, enq, enq)
+	id := uint64(itest.Count(t, slot.DB, `SELECT id FROM outbox WHERE dedup_key='order.dispatch:1:1:1'`))
+	msgs, err := repository.OutboxRepo{DB: slot.DB}.Claim(t.Context(), repository.NewSystemScope("outbox"), t0, t0.Add(time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, m := range msgs {
+		if m.ID == id {
+			if !m.CreatedAt.UTC().Equal(enq) {
+				t.Fatalf("created_at = %v, want %v", m.CreatedAt, enq)
+			}
+			return
+		}
+	}
+	t.Fatalf("outbox %d not claimed: %+v", id, msgs)
+}
+
 // TransitionsByRun 按 id 顺序返回 run 名下作业单的迁移（state_machine_legal 的数据源）。
 func TestTransitionsByRun_Integration(t *testing.T) {
 	e := itest.Setup(t, "repol6")

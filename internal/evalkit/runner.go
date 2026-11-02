@@ -67,6 +67,11 @@ type Trial struct {
 	Devices       []string
 	ToolArgs      []grader.ToolArg
 	DeviceTargets []grader.DeviceTarget
+	// P1-L4-A：Outbox 是该 run 作业单的 outbox 消息（App.DB 非空且有作业单时，归还槽位前读取），recheck_returned 使用。
+	Outbox []grader.OutboxRecord
+	// P1-L4-B：WorkDone 是回执步骤后该 run 各作业单的完成态（样本声明 fixtures.device.steps 且 App.DB 非空时记录），
+	// 供 partially_done，不写入报告与 agri_eval。
+	WorkDone []grader.WorkDoneObs
 }
 
 // ToolRecorder 是评测工具接缝的调用记录（env.FixtureMCP 实现）。
@@ -186,10 +191,34 @@ type Experiment struct {
 	N          int
 	StartedAt  time.Time
 	FinishedAt time.Time
-	Samples    int
-	Trials     []Trial
+	// Samples 是实际运行的样本数（不含隔离样本）。
+	Samples int
+	Trials  []Trial
+	// Quarantined 是声明 quarantine 而未运行的样本（P1-L4 审查修复）：无 trial，不计入 N / 通过 / INFRA_ERROR，
+	// Gate 0 与红线统计只看 Trials，因此不会把它们当通过；报告单列「隔离样本」。
+	Quarantined []QuarantinedSample
 	// Snapshot 是配置快照（L8，cmd/eval 填写；单测与 Runner 不填为零值，报告不输出快照节）。
 	Snapshot Snapshot
+}
+
+// QuarantinedSample 是一个被隔离（跳过）的样本及其理由。
+type QuarantinedSample struct {
+	ID     string
+	Suite  string
+	Reason string
+}
+
+// splitQuarantined 把样本分成可运行与隔离两组，保持原顺序。
+func splitQuarantined(samples []*sample.Sample) (run []*sample.Sample, quarantined []QuarantinedSample) {
+	run = make([]*sample.Sample, 0, len(samples))
+	for _, s := range samples {
+		if reason, ok := s.QuarantineReason(); ok {
+			quarantined = append(quarantined, QuarantinedSample{ID: s.ID, Suite: s.Suite, Reason: reason})
+			continue
+		}
+		run = append(run, s)
+	}
+	return run, quarantined
 }
 
 // Options 是一次评测的参数。
@@ -224,6 +253,7 @@ type Runner struct {
 	grading  grading
 	fields   FieldLister
 	devices  DeviceLister
+	receipts *ReceiptSteps
 }
 
 // FieldLister 列出农场全部地块 id（cross_farm_isolation 判 field_id 归属）。
@@ -264,6 +294,19 @@ func WithApprover(fn ApproveFunc) RunnerOption {
 	return func(r *Runner) { r.approve = fn }
 }
 
+// WithReceiptSteps 设置回执投递步骤（P1-L4 合并统一）：样本声明 fixtures.device.steps 时，在审批脚本之后
+// 先排空 outbox（steps.Drain，通常为 DrainStep），再按样本推进时钟 / 投递签名回执 / 扫描（每步后再排空）。
+// steps.Secret 须与装配 App 时的 Deps.ReceiptSecret 相同；未配置时回执步骤不执行（无库单测 harness）。
+func WithReceiptSteps(steps ReceiptSteps) RunnerOption {
+	return func(r *Runner) { r.receipts = &steps }
+}
+
+// DrainStep 是 ReceiptSteps.Drain 的标准实现：与 fixtures.dispatch 同一个排空 outbox 步骤（DrainOutbox）。
+func DrainStep(ctx context.Context, a *app.App) error {
+	_, err := DrainOutbox(ctx, a, drainMaxRounds)
+	return err
+}
+
 // NewRunner 构造 Runner；now 为 nil 时用系统时钟；未配置打分器时只跑 outcome_match。
 func NewRunner(env EnvFunc, now func() time.Time, opts ...RunnerOption) (*Runner, error) {
 	if env == nil {
@@ -286,19 +329,21 @@ func NewRunner(env EnvFunc, now func() time.Time, opts ...RunnerOption) (*Runner
 }
 
 // Run 对 samples 中每个样本顺序跑 opts.N 次。单个 trial 的 agent 错误记入 Trial.Error，
-// 不中断评测；ctx 取消时停止并返回已完成部分与错误。
+// 不中断评测；ctx 取消时停止并返回已完成部分与错误。声明 quarantine 的样本不运行，记入 Experiment.Quarantined。
 func (r *Runner) Run(ctx context.Context, samples []*sample.Sample, opts Options) (*Experiment, error) {
 	if opts.N < 1 {
 		return nil, fmt.Errorf("evalkit: n must be >= 1, got %d", opts.N)
 	}
+	samples, quarantined := splitQuarantined(samples)
 	exp := &Experiment{
-		ID:        opts.ExperimentID,
-		Suites:    opts.Suites,
-		Tags:      opts.Tags,
-		N:         opts.N,
-		StartedAt: r.now(),
-		Samples:   len(samples),
-		Trials:    make([]Trial, 0, len(samples)*opts.N),
+		ID:          opts.ExperimentID,
+		Suites:      opts.Suites,
+		Tags:        opts.Tags,
+		N:           opts.N,
+		StartedAt:   r.now(),
+		Samples:     len(samples),
+		Trials:      make([]Trial, 0, len(samples)*opts.N),
+		Quarantined: quarantined,
 	}
 	defer func() { exp.FinishedAt = r.now() }()
 
@@ -363,6 +408,11 @@ func (r *Runner) ask(ctx context.Context, t *Trial, a *app.App, s *sample.Sample
 			err = fmt.Errorf("approver: %w", err)
 		}
 	}
+	if err == nil {
+		if err = r.runReceipts(ctx, t, a, s, q.Scope, ans.RunID); err != nil {
+			err = fmt.Errorf("receipt steps: %w", err)
+		}
+	}
 	recordTools(t, a.Tools)
 	recordDevice(t, a.Adapter)
 	recordLogs(t, a.Logger)
@@ -378,6 +428,9 @@ func (r *Runner) ask(ctx context.Context, t *Trial, a *app.App, s *sample.Sample
 	if err := recordTransitions(ctx, t, a, q.Scope, ans.RunID); err != nil {
 		return ans, err
 	}
+	if err := recordOutbox(ctx, t, a, q.Scope, ans); err != nil {
+		return ans, err
+	}
 	if err := r.recordFields(ctx, t, a, q.Scope); err != nil {
 		return ans, err
 	}
@@ -385,6 +438,21 @@ func (r *Runner) ask(ctx context.Context, t *Trial, a *app.App, s *sample.Sample
 		return ans, err
 	}
 	return ans, recordDetail(ctx, t, a, q.Scope, ans.RunID)
+}
+
+// runReceipts 执行样本的回执步骤（未配置 WithReceiptSteps 或样本未声明 fixtures.device.steps 时不动）：
+// 先排空 outbox 让审批后的 order.dispatch 落地（审批脚本未排空时，如样本无 fixtures.dispatch），再 ReceiptSteps.Run；
+// 须在 recordDevice / recordTransitions 之前，回执步骤里的 Cancel / QueryStatus 与状态迁移才进入 trial 观测。
+func (r *Runner) runReceipts(ctx context.Context, t *Trial, a *app.App, s *sample.Sample, scope model.Scope, runID uint64) error {
+	if r.receipts == nil || s.Fixtures.Device == nil || len(s.Fixtures.Device.Steps) == 0 {
+		return nil
+	}
+	if r.receipts.Drain != nil {
+		if err := r.receipts.Drain(ctx, a); err != nil {
+			return fmt.Errorf("drain before steps: %w", err)
+		}
+	}
+	return r.receipts.Run(ctx, t, a, s, scope, runID)
 }
 
 // recordDetail 从 trial 库读该 run 的完整链路（App.DB / App.RunDetail 为空或无 run 时不动）。
@@ -427,6 +495,33 @@ func recordTransitions(ctx context.Context, t *Trial, a *app.App, scope model.Sc
 		return fmt.Errorf("record transitions: %w", err)
 	}
 	t.OrderTransitions = ts
+	return nil
+}
+
+// recordOutbox（P1-L4-A）读该 run 作业单的全部 outbox 消息（App.DB 为空或无作业单时不动；有单无消息时是空切片）。
+// 作业单取 Answer.Order，无单时取审批票据指向的单（同 recordApproval）。
+func recordOutbox(ctx context.Context, t *Trial, a *app.App, scope model.Scope, ans agent.Answer) error {
+	if a.DB == nil {
+		return nil
+	}
+	var orderID uint64
+	switch {
+	case ans.Order != nil:
+		orderID = ans.Order.OrderID
+	case t.Approval != nil && t.Approval.Ticket != nil:
+		orderID = t.Approval.Ticket.OrderID
+	}
+	if orderID == 0 {
+		return nil
+	}
+	rows, err := repository.OutboxRepo{}.OutboxByAggregate(ctx, a.DB, scope, orderID)
+	if err != nil {
+		return fmt.Errorf("record outbox: %w", err)
+	}
+	t.Outbox = make([]grader.OutboxRecord, 0, len(rows))
+	for _, r := range rows {
+		t.Outbox = append(t.Outbox, grader.OutboxRecord{Topic: r.Topic, DedupKey: r.DedupKey, Status: r.Status})
+	}
 	return nil
 }
 

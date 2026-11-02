@@ -21,6 +21,8 @@ func TestKeys(t *testing.T) {
 		{k.IdemApprove("r-1"), "as:dev:idem:approve:r-1"},
 		{k.CacheMCP("weather.forecast", 2, 3, "d1"), "as:dev:cache:mcp:weather.forecast:2:3:d1"},
 		{k.IdemDispatch(7, 5, 2), "as:dev:idem:dispatch:7:5:2"},
+		{k.IdemReceipt("rc-1"), "as:dev:idem:receipt:rc-1"},
+		{k.LockScan(ScanReceiptDue), "as:dev:lock:scan:receipt_due"},
 		{EvalTrialEnv(3), "eval-t3"},
 	}
 	for _, tt := range tests {

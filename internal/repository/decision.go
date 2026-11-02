@@ -266,17 +266,73 @@ VALUES (?, ?, 'order.dispatch', ?, CONCAT('order.dispatch:', ?, ':', ?, ':1'), ?
 // 影响行数 0 → model.ErrConcurrentUpdate（票据 OPEN 时 run 必为 INTERRUPTED(WAIT_APPROVAL)，不一致即回滚）。
 func (r *DecisionRepo) CloseRunTx(ctx context.Context, tx *gorm.DB, scope model.Scope, runID uint64,
 	reason model.ReasonCode, now time.Time) error {
+	res, err := closeWaitingRun(ctx, tx, scope, runID, reason, now)
+	if err != nil {
+		return err
+	}
+	return affected(res, "close agent_run "+strconv.FormatUint(runID, 10))
+}
+
+// CloseWaitingRunTx 与 CloseRunTx 同一 UPDATE，但 run 不在 INTERRUPTED(WAIT_APPROVAL)（已终态 / 续跑中）时不报错、返回 false。
+// 用于不能断言 run 状态的收尾：复检退回后的新票驳回 / 过期（首张票批准后 Resume 失败时 run 仍等审批），以及中止 PENDING_APPROVAL 单。
+func (r *DecisionRepo) CloseWaitingRunTx(ctx context.Context, tx *gorm.DB, scope model.Scope, runID uint64,
+	reason model.ReasonCode, now time.Time) (bool, error) {
+	res, err := closeWaitingRun(ctx, tx, scope, runID, reason, now)
+	if err != nil {
+		return false, err
+	}
+	if res.Error != nil {
+		return false, fmt.Errorf("repository: close agent_run %d: %w", runID, res.Error)
+	}
+	return res.RowsAffected > 0, nil
+}
+
+func closeWaitingRun(ctx context.Context, tx *gorm.DB, scope model.Scope, runID uint64, reason model.ReasonCode,
+	now time.Time) (*gorm.DB, error) {
 	if err := requireScope(scope); err != nil {
+		return nil, err
+	}
+	if err := requireTx(tx); err != nil {
+		return nil, err
+	}
+	return tx.WithContext(ctx).Exec(
+		`UPDATE agent_run SET status='COMPLETED', interrupt_type=NULL, reason_code=?, row_ver=row_ver+1, updated_at=?
+ WHERE tenant_id=? AND farm_id=? AND id=? AND status='INTERRUPTED' AND interrupt_type='WAIT_APPROVAL'`,
+		string(reason), now, scope.TenantID, scope.FarmID, runID), nil
+}
+
+// LiveTicketsTx 锁定读作业单上未决的票（OPEN / PREPARING），供中止关票（文档未给 SQL）。
+func (r *DecisionRepo) LiveTicketsTx(ctx context.Context, tx *gorm.DB, ref model.OrderRef) ([]TicketRow, error) {
+	if err := requireFarm(ref.TenantID, ref.FarmID); err != nil {
+		return nil, err
+	}
+	if err := requireTx(tx); err != nil {
+		return nil, err
+	}
+	var rows []TicketRow
+	if err := tx.WithContext(ctx).Raw(
+		`SELECT id, tenant_id, farm_id, run_id, order_id, ticket_seq, status, row_ver FROM approval_ticket
+ WHERE tenant_id=? AND farm_id=? AND order_id=? AND ticket_kind='ORDER' AND status IN ('OPEN','PREPARING') FOR UPDATE`,
+		ref.TenantID, ref.FarmID, ref.OrderID).Scan(&rows).Error; err != nil {
+		return nil, fmt.Errorf("repository: live approval_ticket of order %d: %w", ref.OrderID, err)
+	}
+	return rows, nil
+}
+
+// SupersedeLiveTicketTx 中止作业单时作废未决票：OPEN / PREPARING → SUPERSEDED（row_ver 守卫；影响 0 行 → model.ErrConcurrentUpdate，
+// 整个中止事务回滚）。文档未给 SQL，按 SupersedeTicketTx 的写法。
+func (r *DecisionRepo) SupersedeLiveTicketTx(ctx context.Context, tx *gorm.DB, t TicketRow, now time.Time) error {
+	if err := requireFarm(t.TenantID, t.FarmID); err != nil {
 		return err
 	}
 	if err := requireTx(tx); err != nil {
 		return err
 	}
 	res := tx.WithContext(ctx).Exec(
-		`UPDATE agent_run SET status='COMPLETED', interrupt_type=NULL, reason_code=?, row_ver=row_ver+1, updated_at=?
- WHERE tenant_id=? AND farm_id=? AND id=? AND status='INTERRUPTED' AND interrupt_type='WAIT_APPROVAL'`,
-		string(reason), now, scope.TenantID, scope.FarmID, runID)
-	return affected(res, "close agent_run "+strconv.FormatUint(runID, 10))
+		`UPDATE approval_ticket SET status='SUPERSEDED', row_ver=row_ver+1, updated_at=?
+ WHERE tenant_id=? AND farm_id=? AND id=? AND ticket_kind='ORDER' AND status IN ('OPEN','PREPARING') AND row_ver=?`,
+		now, t.TenantID, t.FarmID, t.ID, t.RowVer)
+	return affected(res, "supersede live approval_ticket "+strconv.FormatUint(t.ID, 10))
 }
 
 // InsertRejectedMemoryTx 驳回同事务写 episodic_memory(REJECTED)，ref_id 取 order_id，INSERT IGNORE 幂等（P0 §6.7 流程 5）。

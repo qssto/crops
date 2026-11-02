@@ -28,3 +28,11 @@ memory:
   enabled: true
   episodic_limit: 5
   rune_budget: 600
+# 下发与重试（P1-L4）：max_attempts 是同一张作业单的设备下发次数上限（NOT_EXECUTED 回执可再下发到该上限，L4-B 读同一值）；
+# receipt_timeout 是回执时限（dispatch_attempt.receipt_due_at）；device_wait_max 是选不到设备时的最长等待（单无 dispatch_deadline_at 时
+# 自 order.dispatch 入队起算，超限放弃下发：首次 → EXPIRED、重试 → FAILED，reason DEVICE_UNAVAILABLE）。
+# AS_DISPATCH_MAX_ATTEMPTS / AS_DISPATCH_RECEIPT_TIMEOUT / AS_DISPATCH_DEVICE_WAIT_MAX 覆盖。
+dispatch:
+  max_attempts: 2
+  receipt_timeout: 30m
+  device_wait_max: 2h

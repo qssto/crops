@@ -23,15 +23,16 @@ const (
 	OpApprovalSubmit          Operation = "approval.submit"           // 提交审批（暂无独立路由，开票由主链路发起）
 	OpApprovalDecidePesticide Operation = "approval.decide.pesticide" // 审批用药类作业单（SPRAY）
 	OpApprovalDecideOther     Operation = "approval.decide.other"     // 审批非用药类作业单
-	OpOrderCancel             Operation = "order.cancel"              // 中止作业（暂无路由）
+	OpOrderCancel             Operation = "order.cancel"              // 中止作业（POST /orders/:order_id/cancel）
 	OpAuditExport             Operation = "audit.export"              // 导出审计（暂无路由）
 	OpRawRead                 Operation = "raw.read"                  // 读 raw_store 原文
 	OpFlagWrite               Operation = "flag.write"                // 改开关（admin 路由，只限 platform_admin）
+	OpOrderReconcile          Operation = "order.reconcile"           // 人工对账（POST /orders/:order_id/reconcile，P1-L4-B）
 )
 
 // Operations 是全部已登记操作（矩阵校验与测试枚举用）。
 var Operations = []Operation{OpAsk, OpAdviceRead, OpApprovalSubmit, OpApprovalDecidePesticide, OpApprovalDecideOther,
-	OpOrderCancel, OpAuditExport, OpRawRead, OpFlagWrite}
+	OpOrderCancel, OpAuditExport, OpRawRead, OpFlagWrite, OpOrderReconcile}
 
 // Roles 是全部已登记角色（矩阵校验与测试枚举用）。
 var Roles = []model.Role{model.RoleFarmer, model.RoleFarmManager, model.RoleAgronomist, model.RoleOperator,

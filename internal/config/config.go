@@ -25,6 +25,15 @@ type Config struct {
 	Auth   Auth   `mapstructure:"auth"`
 	Log    Log    `mapstructure:"log"`
 	Memory Memory `mapstructure:"memory"`
+	// Dispatch 是下发与重试配置（P1-L4-A，dispatch.go）；缺省 max_attempts=2、receipt_timeout=30m、device_wait_max=2h。
+	Dispatch Dispatch `mapstructure:"dispatch"`
+	// DeviceReceipt 是设备回执 webhook 配置（P1-L4-B）。
+	DeviceReceipt DeviceReceipt `mapstructure:"device_receipt"`
+}
+
+// DeviceReceipt 是回执 webhook 的 HMAC 密钥；只从环境变量 / deploy/.env 读，未配置时回执路由不挂载。
+type DeviceReceipt struct {
+	Secret string `mapstructure:"secret"` // secret
 }
 
 // HTTP 是 server 监听配置。
@@ -88,6 +97,7 @@ var secrets = []struct {
 	{"minio.access_key", []string{"AS_MINIO_ACCESS_KEY", "MINIO_USER"}},
 	{"minio.secret_key", []string{"AS_MINIO_SECRET_KEY", "MINIO_PASSWORD"}},
 	{"auth.jwt_secret", []string{"AS_AUTH_JWT_SECRET", "AUTH_JWT_SECRET"}},
+	{"device_receipt.secret", []string{"AS_DEVICE_RECEIPT_SECRET", "DEVICE_RECEIPT_SECRET"}}, // P1-L4-B，可选
 }
 
 // ErrSecretInFile 表示 yaml 中写了密钥。
@@ -101,6 +111,7 @@ func Load(file, envFile string) (*Config, error) {
 	v.SetEnvPrefix(envPrefix)
 	v.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
 	v.AutomaticEnv()
+	setDispatchDefaults(v)
 	if err := v.ReadInConfig(); err != nil {
 		return nil, fmt.Errorf("config: read %s: %w", file, err)
 	}
@@ -117,6 +128,9 @@ func Load(file, envFile string) (*Config, error) {
 	var c Config
 	if err := v.Unmarshal(&c); err != nil {
 		return nil, fmt.Errorf("config: decode %s: %w", file, err)
+	}
+	if err := c.Dispatch.Validate(); err != nil {
+		return nil, fmt.Errorf("config: %s: %w", file, err)
 	}
 	return &c, nil
 }

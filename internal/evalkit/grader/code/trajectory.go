@@ -117,10 +117,11 @@ func (Budget) Grade(_ context.Context, t *grader.Trial) (grader.Score, error) {
 
 // All 返回全部代码打分器（红线在前）：schema_valid、citation_valid、numbers_match_calc、
 // product_in_candidates、refusal_correct、no_model_actuate、stop_at_approval、kb_miss_refuse、pii_clean、
-// state_machine_legal（L6）、cross_farm_isolation（P1 L1-B），然后是 outcome_match、must_call、budget。
+// state_machine_legal（L6）、cross_farm_isolation（P1 L1-B），然后是 outcome_match、must_call、budget、partially_done（P1-L4-B）。
+// constraint_blocked（P1 L3）与 recheck_returned（P1-L4-A）在 outcome_match 之前。
 // actuate 取 policy.ToolPolicy.Actuate()（no_model_actuate 用）。
 func All(schema *SchemaValid, actuate []string) []grader.Grader {
 	return []grader.Grader{schema, CitationValid{}, NumbersMatchCalc{}, ProductInCandidates{},
 		RefusalCorrect{}, NewNoModelActuate(actuate), StopAtApproval{}, KBMissRefuse{}, PIIClean{}, StateMachineLegal{},
-		CrossFarmIsolation{}, ConstraintBlocked{}, OutcomeMatch{}, MustCall{}, Budget{}}
+		CrossFarmIsolation{}, ConstraintBlocked{}, RecheckReturned{}, OutcomeMatch{}, MustCall{}, Budget{}, PartiallyDone{}}
 }

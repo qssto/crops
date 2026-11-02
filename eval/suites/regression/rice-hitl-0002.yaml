@@ -1,5 +1,5 @@
 id: rice-hitl-0002
-version: 2
+version: 3
 suite: regression
 difficulty: hard
 tags: [L6, protect.timing]
@@ -13,11 +13,10 @@ fixtures:
   clock: 2026-07-16T18:00:00+08:00
   mcp:
     weather.forecast:
-      # 按调用次序：首次建议时天气适宜；审批通过后下发前复检（新 epoch）与复检后为同一问题新建的 run 拿到降雨预报
+      # 按调用次序：首次建议时天气适宜；审批通过后 outbox 下发器④复检（新 epoch）拿到 24h 降雨 12mm
       - match: {field: field-003}
         returns:
           - {wind_speed_ms: 2.5, rain_mm_24h: 0, temp_c: 30, collected_at: "2026-07-16T17:00:00+08:00", source: mock-station}
-          - {wind_speed_ms: 2.5, rain_mm_24h: 12, temp_c: 27, collected_at: "2026-07-16T20:00:00+08:00", source: mock-station}
           - {wind_speed_ms: 2.5, rain_mm_24h: 12, temp_c: 27, collected_at: "2026-07-16T20:00:00+08:00", source: mock-station}
     crop.phenology:
       - match: {field: field-003}
@@ -27,13 +26,18 @@ fixtures:
         return: {pest: 稻飞虱, density_per_100_hills: 2100, collected_at: "2026-07-16"}
     field.profile:
       - match: {field: field-003}
-        return: {expected_harvest: "2026-10-20", no_fly_zones: [], adjacent_fields: []}
+        return: {area_mu: 10, expected_harvest: "2026-10-20", no_fly_zones: [], adjacent_fields: []}
     field.history:
       - match: {field: field-003}
         return: {operations: []}
     device.list:
-      - return: {devices: [{device_id: dev-uav-01, type: 植保无人机, online: true}]}
+      - match: {field: field-003}
+        return: {devices: [{device_id: uav-p100-01, kind: drone, model: 极飞 P100 Pro, capabilities: [spray, spread]}]}
+    device.status:
+      - match: {device_id: uav-p100-01}
+        return: {device_id: uav-p100-01, online: true, state: idle, battery_pct: 100, tank_l: 30, last_seen_at: "2026-07-16T17:59:00+08:00"}
   approver: approve
+  dispatch: {}
 knowledge_ref: WORKTREE
 expect:
   outcome: ADVICE
@@ -45,12 +49,15 @@ expect:
     target: planthopper
     product_in: [pymetrozine-50wg, triflumezopyrim-10sc, dinotefuran-20sg]
   work_order:
-    final_status: CANCELED
+    final_status: PENDING_APPROVAL
+  dispatch:
+    recheck_returned: true
+    device_dispatches: 0
   trajectory:
     must_call: [weather.forecast, field.pest_survey]
     must_not_call: ["device.actuate", "device.dispatch"]
     budget: {max_steps: 32, max_tokens: 12000}
 author: claude-draft
 review_status: pending_expert
-signed_at: 2026-10-29
-notes: L6 审批后天气变化：脚本审批人通过后，下发前复检以新 epoch 重取 weather.forecast 得到 24h 降雨 12mm，结论变化，原作业单 APPROVED → CANCELED(CONDITION_CHANGED) 并为同一问题新建 run；budget 含原 run、复检与新 run 的全部工具调用
+signed_at: 2026-10-30
+notes: L6 / P1-L4-A 审批后天气恶化：脚本审批人通过后排空 outbox，order.dispatch 下发器③绑定 uav-p100-01、④ PRE_DISPATCH 复检以新 epoch 重取 weather.forecast 得到 24h 降雨 12mm（rain_max 不通过），拦截下发并走 Reopen：作业单 APPROVED → PENDING_APPROVAL(RECHECK_FAILED)、旧票 SUPERSEDED、新票（ticket_seq=2）OPEN、notify.send 入 outbox，设备零调用；budget 含原 run 与下发器复检 / 选设备的全部工具调用

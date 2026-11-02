@@ -285,6 +285,63 @@ func TestNewRunner_NilApp(t *testing.T) {
 	}
 }
 
+// TestRunner_ReceiptSteps（P1-L4 合并统一）：WithReceiptSteps 在审批脚本之后、按样本声明的 fixtures.device.steps
+// 先排空 outbox 再执行回执步骤；未声明步骤 / 未配置 / 审批失败时不排空。无库 App 上 ReceiptSteps.Run 报缺 DB，
+// 记为 trial 错误（INFRA_ERROR）而非静默通过——应失败：回执步骤被跳过、在审批前执行，或排空错误被吞掉。
+func TestRunner_ReceiptSteps(t *testing.T) {
+	withSteps := func() *sample.Sample {
+		s := mkSample("rcpt", "regression")
+		s.Fixtures.Device = &sample.DeviceFixture{Steps: []sample.ReceiptStep{{Advance: "10m",
+			Receipt: &sample.ReceiptFixture{Status: "DONE"}}}}
+		return s
+	}
+	for name, tc := range map[string]struct {
+		sample     *sample.Sample
+		noOption   bool
+		approveErr error
+		drainErr   error
+		wantOrder  string
+		wantErr    string
+	}{
+		"steps declared: approve, drain, then run": {sample: withSteps(), wantOrder: "approve,drain",
+			wantErr: "receipt steps: evalkit: receipt steps need App.DB and App.OrderOps"},
+		"no steps declared":     {sample: mkSample("plain", "regression"), wantOrder: "approve"},
+		"option not configured": {sample: withSteps(), noOption: true, wantOrder: "approve"},
+		"approver failed":       {sample: withSteps(), approveErr: errors.New("deny"), wantOrder: "approve", wantErr: "approver: deny"},
+		"drain failed": {sample: withSteps(), drainErr: errors.New("stuck"), wantOrder: "approve,drain",
+			wantErr: "receipt steps: drain before steps: stuck"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			var order []string
+			opts := []RunnerOption{WithApprover(func(context.Context, *app.App, *sample.Sample, agent.Question, agent.Answer) error {
+				order = append(order, "approve")
+				return tc.approveErr
+			})}
+			if !tc.noOption {
+				opts = append(opts, WithReceiptSteps(ReceiptSteps{Secret: []byte("k"), Drain: func(context.Context, *app.App) error {
+					order = append(order, "drain")
+					return tc.drainErr
+				}}))
+			}
+			r, err := NewRunner(StaticEnv(&app.App{Agent: RefuseAllAgent{}}), nil, opts...)
+			if err != nil {
+				t.Fatal(err)
+			}
+			exp, err := r.Run(context.Background(), []*sample.Sample{tc.sample}, Options{N: 1})
+			if err != nil {
+				t.Fatal(err)
+			}
+			tr := exp.Trials[0]
+			if got := strings.Join(order, ","); got != tc.wantOrder {
+				t.Fatalf("order = %q, want %q", got, tc.wantOrder)
+			}
+			if tc.wantErr == "" && tr.Error != "" || !strings.Contains(tr.Error, tc.wantErr) {
+				t.Fatalf("trial error = %q, want containing %q", tr.Error, tc.wantErr)
+			}
+		})
+	}
+}
+
 func TestRefuseAllAgent(t *testing.T) {
 	ans, err := RefuseAllAgent{}.Ask(context.Background(), agent.Question{Text: "x"})
 	if err != nil || ans.Outcome != model.OutcomeRefused || ans.RefuseReason != RefuseReasonStub {
@@ -338,5 +395,30 @@ func TestNewExperimentID(t *testing.T) {
 	}
 	if other == id {
 		t.Fatalf("two ids collided: %s", id)
+	}
+}
+
+// TestRunner_SkipsQuarantined（P1-L4 审查修复）：声明 quarantine 的样本不运行、无 trial，不计入 Samples，
+// 记入 Experiment.Quarantined（含理由）。应失败：隔离样本照常运行或被记成 INFRA_ERROR trial。
+func TestRunner_SkipsQuarantined(t *testing.T) {
+	q := mkSample("q", "regression", "L4")
+	reason := "  需 REAL 评测设施，见 dev-log P1-L4 "
+	q.Quarantine = &reason
+	ag := &scriptedAgent{failOn: "q-q"}
+	exp, err := mustRunner(t, ag, nil).Run(context.Background(), []*sample.Sample{mkSample("a", "regression"), q}, Options{N: 3})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if exp.Samples != 1 || len(exp.Trials) != 3 || ag.calls != 3 {
+		t.Fatalf("samples = %d trials = %d calls = %d, want 1 / 3 / 3", exp.Samples, len(exp.Trials), ag.calls)
+	}
+	for _, tr := range exp.Trials {
+		if tr.SampleID == "q" {
+			t.Fatalf("quarantined sample ran: %+v", tr)
+		}
+	}
+	want := QuarantinedSample{ID: "q", Suite: "regression", Reason: "需 REAL 评测设施，见 dev-log P1-L4"}
+	if len(exp.Quarantined) != 1 || exp.Quarantined[0] != want {
+		t.Fatalf("quarantined = %+v, want %+v", exp.Quarantined, want)
 	}
 }

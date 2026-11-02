@@ -56,6 +56,8 @@ func TestRecheckService_PreDispatch(t *testing.T) {
 		wantErr    error
 		wantTo     []model.WorkOrderStatus
 		wantRun    uint64
+		retry      bool
+		wantBlock  []string
 	}{
 		{name: "unchanged keeps order", rc: fakeRechecker{}},
 		{name: "changed cancels and reasks", rc: fakeRechecker{res: agent.RecheckResult{Changed: true, Detail: "rain"}},
@@ -67,13 +69,20 @@ func TestRecheckService_PreDispatch(t *testing.T) {
 			starterErr: ErrRateLimited, wantErr: ErrRateLimited, wantTo: []model.WorkOrderStatus{model.OrderCanceled}},
 		{name: "advice disabled cancels without new run", rc: fakeRechecker{res: agent.RecheckResult{Changed: true}},
 			starterErr: fmt.Errorf("wrap: %w", ErrAdviceDisabled), wantTo: []model.WorkOrderStatus{model.OrderCanceled}},
+		// P1 §6.4 第 4 条：约束不通过优先于结论变化，不取消、不新建 run（应失败：单被取消）
+		{name: "failed constraint blocks without cancel", rc: fakeRechecker{res: agent.RecheckResult{Changed: true,
+			Checks: []model.ConstraintCheck{{RuleID: "weather.wind", Passed: false}, {RuleID: "phi", Passed: true}}}},
+			wantBlock: []string{"weather.wind"}},
+		{name: "retry changed does not cancel", rc: fakeRechecker{res: agent.RecheckResult{Changed: true}}, retry: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			rc, orders, starter := tt.rc, &memTransitions{}, &fakeStarter{err: tt.starterErr}
 			svc := NewRecheckService(RecheckDeps{Rechecker: &rc, Tx: noTx{}, Orders: orders, Starter: starter,
 				Locks: memLocks{held: tt.lockHeld}, Keys: keys, Logger: slog.New(slog.NewTextHandler(io.Discard, nil))})
-			got, err := svc.PreDispatch(context.Background(), in)
+			call := in
+			call.Retry = tt.retry
+			got, err := svc.PreDispatch(context.Background(), call)
 			if !errors.Is(err, tt.wantErr) {
 				t.Fatalf("err = %v, want %v", err, tt.wantErr)
 			}
@@ -82,6 +91,9 @@ func TestRecheckService_PreDispatch(t *testing.T) {
 			}
 			if !reflect.DeepEqual(orders.to, tt.wantTo) {
 				t.Errorf("transitions = %v, want %v", orders.to, tt.wantTo)
+			}
+			if !reflect.DeepEqual(got.Blocked, tt.wantBlock) {
+				t.Errorf("blocked = %v, want %v", got.Blocked, tt.wantBlock)
 			}
 			if tt.wantErr == nil && got.NewRunID != tt.wantRun {
 				t.Errorf("new run = %d, want %d", got.NewRunID, tt.wantRun)
