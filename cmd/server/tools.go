@@ -46,6 +46,10 @@ func buildTools(path, policyPath string, d toolDeps) (agent.ToolProvider, error)
 	if err != nil {
 		return nil, fmt.Errorf("build mcp servers: %w", err)
 	}
+	devices, err := servers.DeviceOwnership(cfg)
+	if err != nil {
+		return nil, err
+	}
 	levels := map[string]mcp.Level{}
 	timeouts := map[string]time.Duration{}
 	for _, s := range cfg.Servers() {
@@ -55,8 +59,10 @@ func buildTools(path, policyPath string, d toolDeps) (agent.ToolProvider, error)
 	gw, err := mcp.NewGateway(srv, mcp.Options{
 		Clock: d.clk, Logger: d.logger, Keys: d.keys, ToolPolicy: tp,
 		Idem: repository.NewRedisIdem(d.rdb), Cache: repository.NewRedisCache(d.rdb),
-		Calls: repository.NewToolCallRepo(d.db), Raw: d.raw, Fields: repository.FieldScope{DB: d.db},
-		Levels: levels, Timeouts: timeouts, Mask: pii.MaskJSON, RawReader: d.rawRead,
+		Calls: repository.NewToolCallRepo(d.db), Raw: d.raw,
+		Fields:  repository.FieldScopeGuard{DB: d.db, Clock: d.clk, Logger: d.logger}, // 越界写 CROSS_FARM_DENIED 审计
+		Devices: devices,                                                              // device_id 按显式绑定判归属
+		Levels:  levels, Timeouts: timeouts, Mask: pii.MaskJSON, RawReader: d.rawRead,
 		// Events: L7 接 EventRepo。
 	})
 	if err != nil {

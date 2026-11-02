@@ -100,14 +100,14 @@ func NewRunDetailService(rows RunDetailLoader) *RunDetailService {
 	return &RunDetailService{rows: rows}
 }
 
-// Get 返回 run 的完整链路；run 不在 Scope 内返回 model.ErrNotFound，其余表缺数据不报错。
+// Get 返回 run 的完整链路；run 不在 Scope 内返回 ErrNotInScope（同时 errors.Is model.ErrNotFound），其余表缺数据不报错。
 func (s *RunDetailService) Get(ctx context.Context, scope model.Scope, runID uint64) (RunDetail, error) {
 	if runID == 0 {
 		return RunDetail{}, fmt.Errorf("%w: run_id required", ErrBadInput)
 	}
 	rows, err := s.rows.Load(ctx, scope, runID)
 	if err != nil {
-		return RunDetail{}, fmt.Errorf("service: run %d detail: %w", runID, err)
+		return RunDetail{}, fmt.Errorf("service: run %d detail: %w", runID, notInScope(err))
 	}
 	return assembleRunDetail(rows), nil
 }

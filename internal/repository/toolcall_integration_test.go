@@ -125,7 +125,7 @@ func TestRedisIdemAndCache_Integration(t *testing.T) {
 	}
 
 	cache := repository.NewRedisCache(e.Redis)
-	ck := slot.Keys.CacheMCP("weather.now", "d")
+	ck := slot.Keys.CacheMCP("weather.now", 1, 1, "d")
 	if _, ok, err := cache.Get(ctx, ck); err != nil || ok {
 		t.Fatalf("cache miss = %v, %v", ok, err)
 	}

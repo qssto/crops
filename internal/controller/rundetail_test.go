@@ -42,18 +42,8 @@ func (f *fakeMetrics) Daily(_ context.Context, _ model.Scope, from, to time.Time
 }
 
 func TestRunRoutes(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	now := time.Date(2026, 10, 29, 1, 0, 0, 0, time.UTC)
-	grants := map[uint64][]model.Grant{1001: {{TenantID: 1, FarmID: 1, Roles: []model.Role{model.RoleFarmManager}}}}
-	auth, err := service.NewAuthService("0123456789abcdef0123456789abcdef", grants, fixedClock{now})
-	if err != nil {
-		t.Fatal(err)
-	}
-	tok, err := auth.Issue(1001, time.Hour)
-	if err != nil {
-		t.Fatal(err)
-	}
-	bearer := "Bearer " + tok
+	e := newTestEnv(t)
+	bearer := e.bearer(t, 1001, 1)
 	tests := []struct {
 		name       string
 		path       string
@@ -67,8 +57,10 @@ func TestRunRoutes(t *testing.T) {
 		{name: "detail other farm 403", path: "/api/v1/farms/2/runs/7", auth: bearer, wantStatus: http.StatusForbidden},
 		{name: "detail bad id 400", path: "/api/v1/farms/1/runs/abc", auth: bearer, wantStatus: http.StatusBadRequest},
 		{name: "detail id 0 400", path: "/api/v1/farms/1/runs/0", auth: bearer, wantStatus: http.StatusBadRequest},
-		{name: "detail not found 404", path: "/api/v1/farms/1/runs/7", auth: bearer, detailErr: model.ErrNotFound,
-			wantStatus: http.StatusNotFound},
+		{name: "detail not found 403", path: "/api/v1/farms/1/runs/7", auth: bearer, detailErr: notInScope,
+			wantStatus: http.StatusForbidden},
+		{name: "detail related data missing 500", path: "/api/v1/farms/1/runs/7", auth: bearer, detailErr: model.ErrNotFound,
+			wantStatus: http.StatusInternalServerError},
 		{name: "detail internal 500", path: "/api/v1/farms/1/runs/7", auth: bearer, detailErr: errors.New("db down"),
 			wantStatus: http.StatusInternalServerError},
 		{name: "metrics default range 200", path: "/api/v1/farms/1/metrics", auth: bearer, wantStatus: http.StatusOK},
@@ -84,8 +76,9 @@ func TestRunRoutes(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			e.den.got = nil
 			d, m := &fakeRunDetailer{err: tt.detailErr}, &fakeMetrics{err: tt.metricsErr}
-			router := NewRouter(auth, &fakeAsker{}, RunRoutes(d, m))
+			router := NewRouter(e.guard, &fakeAsker{}, RunRoutes(d, m))
 			req := httptest.NewRequest(http.MethodGet, tt.path, nil)
 			if tt.auth != "" {
 				req.Header.Set("Authorization", tt.auth)
@@ -94,6 +87,12 @@ func TestRunRoutes(t *testing.T) {
 			router.ServeHTTP(rec, req)
 			if rec.Code != tt.wantStatus {
 				t.Fatalf("status = %d, want %d; body=%s", rec.Code, tt.wantStatus, rec.Body.String())
+			}
+			if tt.name == "detail not found 403" {
+				assertResourceDenied(t, e, rec, "run:7")
+			}
+			if tt.name == "detail related data missing 500" {
+				assertIntegrity500(t, e, rec)
 			}
 			if tt.name == "detail 200" {
 				var got map[string]json.RawMessage

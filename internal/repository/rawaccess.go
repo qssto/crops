@@ -51,6 +51,9 @@ func (r RawAccessRepo) InTx(ctx context.Context, fn func(tx *DB) error) error {
 
 // RawTx 按 id 取 raw_object（限定租户 / 农场）；不存在或不属于该 scope 均返回 model.ErrNotFound。
 func (r RawAccessRepo) RawTx(ctx context.Context, tx *DB, scope model.Scope, rawID uint64) (RawObjectRow, error) {
+	if err := requireScope(scope); err != nil {
+		return RawObjectRow{}, err
+	}
 	var row struct {
 		ID        uint64
 		RunID     *uint64
@@ -58,8 +61,8 @@ func (r RawAccessRepo) RawTx(ctx context.Context, tx *DB, scope model.Scope, raw
 		ObjectKey string
 	}
 	res := tx.WithContext(ctx).Raw(
-		`SELECT id, run_id, kind, object_key FROM raw_object WHERE id=? AND tenant_id=? AND farm_id=?`,
-		rawID, scope.TenantID, scope.FarmID).Scan(&row)
+		`SELECT id, run_id, kind, object_key FROM raw_object WHERE tenant_id=? AND farm_id=? AND id=?`,
+		scope.TenantID, scope.FarmID, rawID).Scan(&row)
 	if res.Error != nil {
 		return RawObjectRow{}, fmt.Errorf("repository: get raw_object %d: %w", rawID, res.Error)
 	}

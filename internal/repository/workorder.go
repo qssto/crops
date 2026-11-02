@@ -16,6 +16,9 @@ type WorkOrderRepo struct{}
 // GetState 读取迁移前的状态与 row_ver（不加锁，靠 UpdateStatus 的 row_ver 条件兜底），
 // 以及开票定级与归属校验用的 run_id / work_type。
 func (WorkOrderRepo) GetState(ctx context.Context, tx *gorm.DB, ref model.OrderRef) (model.OrderState, error) {
+	if err := requireFarm(ref.TenantID, ref.FarmID); err != nil {
+		return model.OrderState{}, err
+	}
 	var row struct {
 		RunID    uint64
 		WorkType string
@@ -23,8 +26,8 @@ func (WorkOrderRepo) GetState(ctx context.Context, tx *gorm.DB, ref model.OrderR
 		RowVer   int
 	}
 	res := tx.WithContext(ctx).Raw(
-		`SELECT run_id, work_type, status, row_ver FROM work_order WHERE id=? AND tenant_id=? AND farm_id=?`,
-		ref.OrderID, ref.TenantID, ref.FarmID).Scan(&row)
+		`SELECT run_id, work_type, status, row_ver FROM work_order WHERE tenant_id=? AND farm_id=? AND id=?`,
+		ref.TenantID, ref.FarmID, ref.OrderID).Scan(&row)
 	if res.Error != nil {
 		return model.OrderState{}, fmt.Errorf("repository: get work_order %d: %w", ref.OrderID, res.Error)
 	}
@@ -38,12 +41,15 @@ func (WorkOrderRepo) GetState(ctx context.Context, tx *gorm.DB, ref model.OrderR
 // UpdateStatus 执行 P0 L1 定版的乐观锁 UPDATE；影响行数 0 返回 model.ErrConcurrentUpdate。
 func (WorkOrderRepo) UpdateStatus(ctx context.Context, tx *gorm.DB, ref model.OrderRef,
 	from, to model.WorkOrderStatus, rowVer int, now time.Time) error {
+	if err := requireFarm(ref.TenantID, ref.FarmID); err != nil {
+		return err
+	}
 	if err := requireTx(tx); err != nil {
 		return err
 	}
 	res := tx.WithContext(ctx).Exec(
-		`UPDATE work_order SET status=?, row_ver=row_ver+1, updated_at=? WHERE id=? AND tenant_id=? AND farm_id=? AND status=? AND row_ver=?`,
-		string(to), now, ref.OrderID, ref.TenantID, ref.FarmID, string(from), rowVer)
+		`UPDATE work_order SET status=?, row_ver=row_ver+1, updated_at=? WHERE tenant_id=? AND farm_id=? AND id=? AND status=? AND row_ver=?`,
+		string(to), now, ref.TenantID, ref.FarmID, ref.OrderID, string(from), rowVer)
 	if res.Error != nil {
 		return fmt.Errorf("repository: update work_order %d status: %w", ref.OrderID, res.Error)
 	}
@@ -55,6 +61,9 @@ func (WorkOrderRepo) UpdateStatus(ctx context.Context, tx *gorm.DB, ref model.Or
 
 // InsertTransition 追加一条迁移记录。
 func (WorkOrderRepo) InsertTransition(ctx context.Context, tx *gorm.DB, t model.OrderTransition) error {
+	if err := requireFarm(t.Ref.TenantID, t.Ref.FarmID); err != nil {
+		return err
+	}
 	if err := requireTx(tx); err != nil {
 		return err
 	}
@@ -70,6 +79,9 @@ func (WorkOrderRepo) InsertTransition(ctx context.Context, tx *gorm.DB, t model.
 
 // TransitionsByRun 按写入顺序读该 run 的全部作业单迁移（L6 评测 state_machine_legal 用；db 可为连接）。
 func (WorkOrderRepo) TransitionsByRun(ctx context.Context, db *gorm.DB, scope model.Scope, runID uint64) ([]model.OrderTransition, error) {
+	if err := requireScope(scope); err != nil {
+		return nil, err
+	}
 	var rows []struct {
 		OrderID    uint64
 		FromStatus string

@@ -7,33 +7,34 @@ import (
 	"fmt"
 	"time"
 
+	"agri-steward/internal/agent/tools/mcp"
 	"agri-steward/internal/model"
 )
 
 // FieldDirectory 把 field_id（field_profile.id）翻成外部地块编码（ext_field_code），
-// mock 数据按编码组织，与种子和评测样本的 field-00x 一致。
+// mock 数据按编码组织，与种子和评测样本的 field-00x 一致。一律按 Scope（gateway 经 mcp.WithScope 注入）过滤。
 // 生产实现：repository.FieldDirectory（查 field_profile）；单测用 StaticFields。
 type FieldDirectory interface {
-	FieldCode(ctx context.Context, fieldID uint64) (string, error)
+	FieldCode(ctx context.Context, scope model.Scope, fieldID uint64) (string, error)
 }
 
-// StaticFields 是内存版 FieldDirectory（单测与本地联调）。
+// StaticFields 是内存版 FieldDirectory（单测与本地联调，单农场，不看 scope）。
 type StaticFields map[uint64]string
 
 // FieldCode 实现 FieldDirectory；未登记返回 model.ErrNotFound。
-func (m StaticFields) FieldCode(_ context.Context, fieldID uint64) (string, error) {
+func (m StaticFields) FieldCode(_ context.Context, _ model.Scope, fieldID uint64) (string, error) {
 	if code, ok := m[fieldID]; ok {
 		return code, nil
 	}
 	return "", fmt.Errorf("field %d: %w", fieldID, model.ErrNotFound)
 }
 
-// ResolveField 校验 field_id 并查出地块编码：地块不存在按 EMPTY（无数据）返回，其余错误原样包装。
+// ResolveField 校验 field_id 并按 ctx 中的 Scope 查出地块编码：地块不存在按 EMPTY（无数据）返回，其余错误原样包装。
 func ResolveField(ctx context.Context, dir FieldDirectory, a FieldArgs) (string, error) {
 	if err := a.Require(); err != nil {
 		return "", err
 	}
-	code, err := dir.FieldCode(ctx, a.FieldID)
+	code, err := dir.FieldCode(ctx, mcp.ScopeFrom(ctx), a.FieldID)
 	if errors.Is(err, model.ErrNotFound) {
 		return "", Empty("field %d not found", a.FieldID)
 	}

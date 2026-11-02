@@ -18,12 +18,15 @@ type RawReader struct {
 
 // Get 取 object_key 后读对象；行不存在返回 model.ErrNotFound。
 func (r RawReader) Get(ctx context.Context, scope model.Scope, rawObjectID uint64) ([]byte, error) {
+	if err := requireScope(scope); err != nil {
+		return nil, err
+	}
 	if r.DB == nil || r.Obj == nil {
 		return nil, fmt.Errorf("repository: raw_object %d: RawReader not configured", rawObjectID)
 	}
 	var key string
-	res := r.DB.WithContext(ctx).Raw(`SELECT object_key FROM raw_object WHERE id=? AND tenant_id=? AND farm_id=?`,
-		rawObjectID, scope.TenantID, scope.FarmID).Scan(&key)
+	res := r.DB.WithContext(ctx).Raw(`SELECT object_key FROM raw_object WHERE tenant_id=? AND farm_id=? AND id=?`,
+		scope.TenantID, scope.FarmID, rawObjectID).Scan(&key)
 	if res.Error != nil {
 		return nil, fmt.Errorf("repository: get raw_object %d: %w", rawObjectID, res.Error)
 	}

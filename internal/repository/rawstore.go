@@ -79,6 +79,9 @@ func Digest(body []byte) string {
 // Put 写对象后登记 raw_object；同一 key 再次写入会覆盖对象本体并返回已有行 id（uk_key 幂等）。
 // 不同内容不得复用同一 key：需要区分版本的调用方把内容摘要放进 Name（如审批快照 ticket-{order}-{seq}-{digest 前缀}）。
 func (s *RawStore) Put(ctx context.Context, p model.RawPut) (model.RawObject, error) {
+	if err := requireFarm(p.TenantID, p.FarmID); err != nil {
+		return model.RawObject{}, err
+	}
 	key, err := RawObjectKey(p)
 	if err != nil {
 		return model.RawObject{}, err

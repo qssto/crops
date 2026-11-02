@@ -5,6 +5,7 @@ package memory
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"unicode/utf8"
 
@@ -68,16 +69,23 @@ func New(src Source, opts Options) *Store {
 // Enabled 报告记忆注入是否开启。
 func (s *Store) Enabled() bool { return s != nil && s.opts.Enabled && s.src != nil }
 
-// Recent 按相关性组装注入记忆：working（当前会话）→ profile → episodic（越近越相关）；limit 限制 episodic 条数
+// ErrScopeRequired 表示 Recent 的 Scope 缺 tenant_id / farm_id（三层记忆一律按农场隔离，P1 L1-B）。
+var ErrScopeRequired = errors.New("memory: scope tenant_id/farm_id required")
+
+// Recent 按相关性组装注入记忆：working（当前会话，仅取同农场）→ profile → episodic（越近越相关）；limit 限制 episodic 条数
 // （≤ 0 取配置），总字符超 RuneBudget 时从最不相关的一端截断。
+// Scope 闸门先于开关判断：关闭或 nil 的 Store 遇缺归属的调用同样报错，不因开关状态放过（P1-L1-B 审查 P2-10）。
 func (s *Store) Recent(ctx context.Context, scope model.Scope, fieldID uint64, limit int) ([]agent.MemoryItem, error) {
+	if scope.TenantID == 0 || scope.FarmID == 0 {
+		return nil, fmt.Errorf("%w: got (%d,%d)", ErrScopeRequired, scope.TenantID, scope.FarmID)
+	}
 	if !s.Enabled() {
 		return nil, nil
 	}
 	if limit <= 0 || limit > s.opts.EpisodicLimit {
 		limit = s.opts.EpisodicLimit
 	}
-	items := append([]agent.MemoryItem(nil), WorkingFrom(ctx)...)
+	items := append([]agent.MemoryItem(nil), WorkingFrom(ctx, scope)...)
 	p, err := s.src.Profile(ctx, scope, fieldID)
 	if err != nil {
 		return nil, fmt.Errorf("memory: profile field %d: %w", fieldID, err)
@@ -107,18 +115,27 @@ func truncate(items []agent.MemoryItem, budget int) []agent.MemoryItem {
 
 type workingKey struct{}
 
-// WithWorking 把当前会话的工作记忆放进 ctx（P0 单轮问答为空；多轮会话由上层注入）。
-func WithWorking(ctx context.Context, items ...agent.MemoryItem) context.Context {
+// working 是绑定到农场的工作记忆。
+type working struct {
+	tenantID, farmID uint64
+	items            []agent.MemoryItem
+}
+
+// WithWorking 把当前会话的工作记忆绑定 scope 的农场放进 ctx（P0 单轮问答为空；多轮会话由上层注入）。
+func WithWorking(ctx context.Context, scope model.Scope, items ...agent.MemoryItem) context.Context {
 	own := make([]agent.MemoryItem, len(items))
 	for i, it := range items {
 		it.Kind = KindWorking
 		own[i] = it
 	}
-	return context.WithValue(ctx, workingKey{}, own)
+	return context.WithValue(ctx, workingKey{}, working{tenantID: scope.TenantID, farmID: scope.FarmID, items: own})
 }
 
-// WorkingFrom 取 ctx 中的工作记忆。
-func WorkingFrom(ctx context.Context) []agent.MemoryItem {
-	items, _ := ctx.Value(workingKey{}).([]agent.MemoryItem)
-	return items
+// WorkingFrom 取 ctx 中属于 scope 农场的工作记忆；他场或未绑定农场的一律不返回。
+func WorkingFrom(ctx context.Context, scope model.Scope) []agent.MemoryItem {
+	w, ok := ctx.Value(workingKey{}).(working)
+	if !ok || w.tenantID == 0 || w.farmID == 0 || w.tenantID != scope.TenantID || w.farmID != scope.FarmID {
+		return nil
+	}
+	return w.items
 }

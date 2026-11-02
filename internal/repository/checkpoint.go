@@ -73,6 +73,9 @@ func checkpointTarget(ctx context.Context, checkpointID string) (agent.Checkpoin
 	if !ok || strconv.FormatUint(t.RunID, 10) != checkpointID {
 		return agent.CheckpointTarget{}, fmt.Errorf("%w: checkpoint %s without matching target", ErrBadCheckpoint, checkpointID)
 	}
+	if err := requireScope(t.Scope); err != nil {
+		return agent.CheckpointTarget{}, err
+	}
 	return t, nil
 }
 
@@ -95,8 +98,8 @@ func (r *CheckpointRepo) Set(ctx context.Context, checkpointID string, payload [
 			Status string
 			RowVer int
 		}
-		res := tx.WithContext(ctx).Raw(`SELECT status, row_ver FROM agent_run WHERE id=? AND tenant_id=? AND farm_id=?`,
-			t.RunID, t.Scope.TenantID, t.Scope.FarmID).Scan(&run)
+		res := tx.WithContext(ctx).Raw(`SELECT status, row_ver FROM agent_run WHERE tenant_id=? AND farm_id=? AND id=?`,
+			t.Scope.TenantID, t.Scope.FarmID, t.RunID).Scan(&run)
 		if res.Error != nil {
 			return fmt.Errorf("repository: get agent_run %d: %w", t.RunID, res.Error)
 		}
@@ -119,8 +122,8 @@ func (r *CheckpointRepo) Set(ctx context.Context, checkpointID string, payload [
 		}
 		upd := tx.WithContext(ctx).Exec(
 			`UPDATE agent_run SET status='INTERRUPTED', interrupt_type=?, row_ver=row_ver+1, updated_at=?
- WHERE id=? AND tenant_id=? AND farm_id=? AND status='RUNNING' AND row_ver=?`,
-			string(t.Interrupt), now, t.RunID, t.Scope.TenantID, t.Scope.FarmID, run.RowVer)
+ WHERE tenant_id=? AND farm_id=? AND id=? AND status='RUNNING' AND row_ver=?`,
+			string(t.Interrupt), now, t.Scope.TenantID, t.Scope.FarmID, t.RunID, run.RowVer)
 		if upd.Error != nil {
 			return fmt.Errorf("repository: interrupt agent_run %d: %w", t.RunID, upd.Error)
 		}
@@ -190,8 +193,8 @@ func (r *CheckpointRepo) loadRaw(ctx context.Context, scope model.Scope, rawID u
 		return nil, fmt.Errorf("repository: raw_object %d: no ObjectGetter configured", rawID)
 	}
 	var key string
-	res := r.db.WithContext(ctx).Raw(`SELECT object_key FROM raw_object WHERE id=? AND tenant_id=? AND farm_id=?`,
-		rawID, scope.TenantID, scope.FarmID).Scan(&key)
+	res := r.db.WithContext(ctx).Raw(`SELECT object_key FROM raw_object WHERE tenant_id=? AND farm_id=? AND id=?`,
+		scope.TenantID, scope.FarmID, rawID).Scan(&key)
 	if res.Error != nil {
 		return nil, fmt.Errorf("repository: get raw_object %d: %w", rawID, res.Error)
 	}

@@ -77,7 +77,7 @@ func TestFlagService_Set(t *testing.T) {
 		{name: "robot on without role checker", in: FlagSetInput{Key: robot, TenantID: 1, FarmID: 1, Value: raw(`{"on":true}`)},
 			mutate: func(d *FlagDeps) { d.FarmRoles = nil }, wantErr: ErrFlagPrecondition},
 		{name: "robot on role lookup error", in: FlagSetInput{Key: robot, TenantID: 1, FarmID: 1, Value: raw(`{"on":true}`)},
-			mutate: func(d *FlagDeps) { d.FarmRoles = memRoles{err: errors.New("db down")} }, wantErr: errAny},
+			mutate: func(d *FlagDeps) { d.FarmRoles = flagRoles{err: errors.New("db down")} }, wantErr: errAny},
 		{name: "audit failure rolls back", in: FlagSetInput{Key: advice, TenantID: 1, FarmID: 3, Value: raw(`{"on":true}`)},
 			prep: func(f *flagFixture) { f.store.auditFail = errors.New("audit down") }, wantErr: errAny},
 		{name: "concurrent first write deadlock is conflict", in: FlagSetInput{Key: advice, TenantID: 1, FarmID: 3,

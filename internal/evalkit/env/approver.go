@@ -53,7 +53,7 @@ type Ticket struct {
 	ExpiresAt time.Time
 }
 
-// Identity 是审批人身份（与 configs/auth.yaml 授权一致）。
+// Identity 是审批人身份（与种子 user_roles 绑定一致）。
 type Identity struct {
 	UserID uint64
 	Roles  []model.Role

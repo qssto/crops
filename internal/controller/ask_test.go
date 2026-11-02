@@ -9,7 +9,6 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/gin-gonic/gin"
 
@@ -33,18 +32,8 @@ func (f *fakeAsker) Ask(ctx context.Context, scope model.Scope, in service.AskIn
 }
 
 func TestAskHandler(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	now := time.Date(2026, 7, 15, 1, 0, 0, 0, time.UTC)
-	grants := map[uint64][]model.Grant{1001: {{TenantID: 1, FarmID: 1, Roles: []model.Role{model.RoleFarmManager}}}}
-	auth, err := service.NewAuthService("0123456789abcdef0123456789abcdef", grants, fixedClock{now})
-	if err != nil {
-		t.Fatal(err)
-	}
-	tok, err := auth.Issue(1001, time.Hour)
-	if err != nil {
-		t.Fatal(err)
-	}
-	bearer := "Bearer " + tok
+	e := newTestEnv(t)
+	bearer := e.bearer(t, 1001, 1)
 	const okBody = `{"field_id":3,"text":"稻飞虱要不要打药","farm_id":2}`
 
 	tests := []struct {
@@ -83,7 +72,8 @@ func TestAskHandler(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			router := NewRouter(auth, tt.asker)
+			e.den.got = nil
+			router := NewRouter(e.guard, tt.asker)
 			req := httptest.NewRequest(tt.method, tt.path, strings.NewReader(tt.body))
 			if tt.auth != "" {
 				req.Header.Set("Authorization", tt.auth)
@@ -95,6 +85,9 @@ func TestAskHandler(t *testing.T) {
 			router.ServeHTTP(rec, req)
 			if rec.Code != tt.wantStatus {
 				t.Fatalf("status = %d, want %d; body=%s", rec.Code, tt.wantStatus, rec.Body.String())
+			}
+			if tt.name == "ask field out of scope 403" {
+				assertResourceDenied(t, e, rec, "field:3")
 			}
 			if tt.wantReqID != "" && rec.Header().Get(HeaderRequestID) != tt.wantReqID {
 				t.Fatalf("X-Request-Id = %q, want %q", rec.Header().Get(HeaderRequestID), tt.wantReqID)

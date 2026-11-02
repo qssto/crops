@@ -19,6 +19,7 @@ import (
 	"agri-steward/internal/agent/harness/policy"
 	"agri-steward/internal/agent/knowledge"
 	"agri-steward/internal/agent/llm"
+	"agri-steward/internal/agent/tools/mcp/servers/device"
 	"agri-steward/internal/app"
 	"agri-steward/internal/evalkit"
 	"agri-steward/internal/evalkit/env"
@@ -67,6 +68,16 @@ func resolveField(_ context.Context, c string) (uint64, error) {
 		return 0, fmt.Errorf("bad field code %q", c)
 	}
 	return n, nil
+}
+
+// seedFields 是 evalkit.FieldLister：测试农场 (1,1) 的地块为 field-001..006（id 1..6），其余农场为空。
+type seedFields struct{}
+
+func (seedFields) FieldIDs(_ context.Context, s model.Scope) ([]uint64, error) {
+	if s.TenantID != tenantID || s.FarmID != farmID {
+		return []uint64{}, nil
+	}
+	return []uint64{1, 2, 3, 4, 5, 6}, nil
 }
 
 // deps 是一次构造主链路的可替换依赖。
@@ -196,8 +207,13 @@ func (h *harness) runExperiment(t *testing.T, ss []*sample.Sample) *evalkit.Expe
 		a := h.newAgent(t, clk, deps{tools: tools, store: newMemStore(), logger: logger})
 		return &app.App{Agent: a, Tools: tools, Logger: logger, Adapter: &env.RecordingAdapter{}}, func() error { return nil }, nil
 	}
+	devices, err := device.LoadBindings(repoRoot + "/configs/mock/device.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
 	question := func(_ context.Context, _ *app.App, s *sample.Sample) (agent.Question, error) { return questionOf(s) }
-	r, err := evalkit.NewRunner(envFn, nil, evalkit.WithGraders(h.kb, code.All(schema, tp.Actuate())...), evalkit.WithQuestion(question))
+	r, err := evalkit.NewRunner(envFn, nil, evalkit.WithGraders(h.kb, code.All(schema, tp.Actuate())...),
+		evalkit.WithQuestion(question), evalkit.WithFields(seedFields{}), evalkit.WithDevices(devices))
 	if err != nil {
 		t.Fatal(err)
 	}

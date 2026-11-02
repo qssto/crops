@@ -14,7 +14,27 @@ fields:
   - {ext_field_code: field-004, crop: 水稻, sowing_date: "2026-05-22", area_mu: 40.00}
   - {ext_field_code: field-005, crop: 水稻, sowing_date: "2026-05-25", area_mu: 30.00}
   - {ext_field_code: field-006, crop: 水稻, sowing_date: "2026-05-25", area_mu: 35.00}
-# P1-L0 feature_flag 种子（按 uk_flag_scope upsert）：示范农场 1 的 FARM 行 enable_advice 开；
+# P1-L1-A：扩展农场（同租户第二个农场，跨农场隔离测试与评测用）；ext_field_code 全局不重复。
+farms:
+  - tenant_id: 1
+    farm_id: 2
+    name: 示范农场2
+    region: 安徽
+    timezone: Asia/Shanghai
+    main_crops: [水稻]
+    fields:
+      - {ext_field_code: field-201, crop: 水稻, sowing_date: "2026-05-18", area_mu: 22.00}
+      - {ext_field_code: field-202, crop: 水稻, sowing_date: "2026-05-18", area_mu: 26.00}
+# P1-L1-A：用户 → 农场 → 角色绑定（替代 configs/auth.yaml，按 uk_user_role upsert）。
+# 平台角色只绑 (0,0)，农场角色只绑上面的农场；评测样本 u-fm-01 / u-agro-01 / u-op-01 依次对应 1001 / 1002 / 1003。
+user_roles:
+  - {tenant_id: 1, farm_id: 1, user_id: 1001, role: farm_manager, granted_by: 9001}   # u-fm-01 农场主
+  - {tenant_id: 1, farm_id: 1, user_id: 1002, role: agronomist, granted_by: 9001}     # u-agro-01 农技员
+  - {tenant_id: 1, farm_id: 1, user_id: 1003, role: operator, granted_by: 9001}       # u-op-01 机手
+  - {tenant_id: 1, farm_id: 1, user_id: 1004, role: agronomist, granted_by: 9001}     # 第二农技员：HIGH 风险二次确认人
+  - {tenant_id: 0, farm_id: 0, user_id: 9001, role: platform_admin, granted_by: 0}    # 平台管理员
+  - {tenant_id: 1, farm_id: 2, user_id: 2001, role: farm_manager, granted_by: 9001}   # 农场 2 农场主
+# P1-L0 feature_flag 种子（按 uk_flag_scope 只补缺失行，不覆盖已有值）：示范农场 1 的 FARM 行 enable_advice 开；
 # enable_robot_dispatch 不写，即默认关（只走 DRY_RUN）。value 为 JSON 字符串，形态按注册表校验。
 flags:
   - {flag_key: enable_advice, tenant_id: 1, farm_id: 1, value: '{"on":true}', comment: 种子：示范农场开启建议}

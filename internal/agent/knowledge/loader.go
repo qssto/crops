@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"slices"
 	"sort"
+	"strings"
 )
 
 // DefaultLimit 是单次注入条目上限（P0 §6.4-3：建议 ≤ 5）。
@@ -118,7 +119,7 @@ func resolveSituation(tx *Taxonomy, sit Situation) (Situation, error) {
 
 func (sit Situation) matches(e *Entry) bool {
 	return dimMatch(e.Crop, sit.Crop) &&
-		dimMatch(e.Region, sit.Region) &&
+		regionVisible(e, sit.Region) &&
 		slices.Contains(e.Category, sit.Category) &&
 		(sit.Topic == "" || slices.Contains(e.Topics, sit.Topic)) &&
 		stageMatch(e.Stage, sit.Stage) &&
@@ -126,6 +127,28 @@ func (sit Situation) matches(e *Entry) bool {
 }
 
 func dimMatch(entry, want string) bool { return entry == Wildcard || entry == want }
+
+// commonPrefix 是全国通用条目所在目录（kb_id 前缀）。
+const commonPrefix = "common/"
+
+// regionVisible 按农场区域隔离（P1 L1-B）：只取本区域条目与 common/ 下的全国条目；
+// 非 common/ 的 region="*" 条目不再对任意区域可见。
+func regionVisible(e *Entry, want string) bool {
+	return e.Region == want || (e.Region == Wildcard && strings.HasPrefix(e.KBID, commonPrefix))
+}
+
+// regionAliases 是 farm_profile.region（种子写中文省名）到知识区域 code 的映射。
+// TODO(P1 后续)：硬编码只覆盖江苏 / 安徽；新增区域须同步此表，后续改为 farm_profile 存区域 code 或配置化映射。
+var regionAliases = map[string]string{"江苏": "jiangsu", "江苏省": "jiangsu", "安徽": "anhui", "安徽省": "anhui"}
+
+// RegionCode 把农场区域归一为知识区域 code：已知中文名查表，其余去空白转小写原样返回（如 jiangsu）。
+func RegionCode(region string) string {
+	r := strings.TrimSpace(region)
+	if code, ok := regionAliases[r]; ok {
+		return code
+	}
+	return strings.ToLower(r)
+}
 
 // anchors 判断条目是否为「锚点」：作物专属，且情境带 target 时 target 一致。
 func (sit Situation) anchors(e *Entry) bool {

@@ -84,6 +84,11 @@ func Empty(format string, a ...any) error {
 	return &mcp.ToolError{Code: mcp.ErrEmpty, Msg: fmt.Sprintf(format, a...)}
 }
 
+// ScopeDenied 构造资源不属于本农场的错误（gateway 据此写 CROSS_FARM_DENIED 审计）。
+func ScopeDenied(format string, a ...any) error {
+	return &mcp.ToolError{Code: mcp.ErrScopeDenied, Msg: fmt.Sprintf(format, a...)}
+}
+
 // DecodeArgs 严格解码入参：未知字段、类型不符、多余内容均返回 REJECTED。空入参视为 {}。
 func DecodeArgs(args json.RawMessage, dst any) error {
 	if len(bytes.TrimSpace(args)) == 0 {

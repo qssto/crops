@@ -8,9 +8,6 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
-	"time"
-
-	"github.com/gin-gonic/gin"
 
 	"agri-steward/internal/model"
 	"agri-steward/internal/service"
@@ -45,17 +42,9 @@ func (f *fakeStreamer) Stream(_ context.Context, _ model.Scope, runID uint64, la
 }
 
 func TestEventsHandler(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	now := time.Date(2026, 10, 29, 1, 0, 0, 0, time.UTC)
-	grants := map[uint64][]model.Grant{1001: {{TenantID: 1, FarmID: 1, Roles: []model.Role{model.RoleFarmManager}}}}
-	auth, err := service.NewAuthService("0123456789abcdef0123456789abcdef", grants, fixedClock{now})
-	if err != nil {
-		t.Fatal(err)
-	}
-	tok, err := auth.Issue(1001, time.Hour)
-	if err != nil {
-		t.Fatal(err)
-	}
+	e := newTestEnv(t)
+	now := testNow
+	tok := e.token(t, 1001, 1)
 	step, call := "plan", uint64(11)
 	ev := service.StreamEvent{Seq: 3, EventType: model.EventStepStarted, StepID: &step, ToolCallID: &call,
 		ActorType: model.ActorAgent, Payload: json.RawMessage(`{"a":1}`), CreatedAt: now}
@@ -85,8 +74,10 @@ func TestEventsHandler(t *testing.T) {
 			wantStatus: http.StatusBadRequest},
 		{name: "bad run id", path: "/api/v1/farms/1/runs/0/events", bearer: true, streamer: &fakeStreamer{},
 			wantStatus: http.StatusBadRequest, wantError: "bad run_id"},
-		{name: "run not found before stream", path: base, bearer: true, streamer: &fakeStreamer{errEarly: model.ErrNotFound},
-			wantStatus: http.StatusNotFound},
+		{name: "run not found before stream", path: base, bearer: true, streamer: &fakeStreamer{errEarly: notInScope},
+			wantStatus: http.StatusForbidden},
+		{name: "related data missing", path: base, bearer: true, streamer: &fakeStreamer{errEarly: model.ErrNotFound},
+			wantStatus: http.StatusInternalServerError},
 		{name: "error after start only disconnects", path: base, bearer: true,
 			streamer: &fakeStreamer{errLate: errors.New("redis gone")}, wantStatus: http.StatusOK, wantBody: ": ping\n\n"},
 		{name: "access_token query on events route", path: base + "?access_token=" + tok, streamer: &fakeStreamer{},
@@ -97,7 +88,8 @@ func TestEventsHandler(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			router := NewRouter(auth, &fakeAsker{}, EventRoutes(tt.streamer))
+			e.den.got = nil
+			router := NewRouter(e.guard, &fakeAsker{}, EventRoutes(tt.streamer))
 			req := httptest.NewRequest(http.MethodGet, tt.path, nil)
 			if tt.bearer {
 				req.Header.Set("Authorization", "Bearer "+tok)
@@ -109,6 +101,12 @@ func TestEventsHandler(t *testing.T) {
 			router.ServeHTTP(rec, req)
 			if rec.Code != tt.wantStatus {
 				t.Fatalf("status = %d, want %d; body=%s", rec.Code, tt.wantStatus, rec.Body.String())
+			}
+			if tt.name == "run not found before stream" {
+				assertResourceDenied(t, e, rec, "run:5")
+			}
+			if tt.name == "related data missing" {
+				assertIntegrity500(t, e, rec)
 			}
 			if tt.wantBody != "" && rec.Body.String() != tt.wantBody {
 				t.Errorf("body = %q\nwant %q", rec.Body.String(), tt.wantBody)
@@ -128,18 +126,9 @@ func TestEventsHandler(t *testing.T) {
 
 // ?access_token= 只在 SSE 路由生效：其他路由仍须 Authorization 头；有 Authorization 头时以头为准。
 func TestFarmAuth_AccessTokenOnlyOnEvents(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	now := time.Date(2026, 10, 29, 1, 0, 0, 0, time.UTC)
-	grants := map[uint64][]model.Grant{1001: {{TenantID: 1, FarmID: 1, Roles: []model.Role{model.RoleFarmManager}}}}
-	auth, err := service.NewAuthService("0123456789abcdef0123456789abcdef", grants, fixedClock{now})
-	if err != nil {
-		t.Fatal(err)
-	}
-	tok, err := auth.Issue(1001, time.Hour)
-	if err != nil {
-		t.Fatal(err)
-	}
-	router := NewRouter(auth, &fakeAsker{}, EventRoutes(&fakeStreamer{}), RunRoutes(&fakeRunDetailer{}, &fakeMetrics{}))
+	e := newTestEnv(t)
+	tok := e.token(t, 1001, 1)
+	router := NewRouter(e.guard, &fakeAsker{}, EventRoutes(&fakeStreamer{}), RunRoutes(&fakeRunDetailer{}, &fakeMetrics{}))
 	for _, tc := range []struct {
 		path, header string
 		want         int

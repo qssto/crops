@@ -7,6 +7,7 @@ import (
 	"errors"
 	"net/http"
 	"regexp"
+	"strconv"
 
 	"github.com/gin-gonic/gin"
 
@@ -78,14 +79,14 @@ func AskHandler(svc Asker) gin.HandlerFunc {
 			return
 		}
 		if err != nil {
-			abortErr(c, err)
+			abortScoped(c, err, "field:"+strconv.FormatUint(req.FieldID, 10))
 			return
 		}
 		c.JSON(http.StatusAccepted, askResponse{RunID: runID})
 	}
 }
 
-// abortErr 把 service 错误映射为 HTTP 状态；未知错误只回 500，不泄露细节。
+// abortErr 把 service 错误映射为 HTTP 状态；未知错误记日志后只回 500，不泄露细节。
 func abortErr(c *gin.Context, err error) {
 	status := http.StatusInternalServerError
 	switch {
@@ -97,6 +98,9 @@ func abortErr(c *gin.Context, err error) {
 		status = http.StatusNotFound
 	case errors.Is(err, service.ErrRateLimited):
 		status = http.StatusTooManyRequests
+	default:
+		abortInternal(c, "request failed", err)
+		return
 	}
 	abort(c, status, http.StatusText(status))
 }

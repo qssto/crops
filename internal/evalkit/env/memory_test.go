@@ -48,7 +48,7 @@ func TestFixtureMemory_Empty(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	items, err := memory.New(src, memory.Options{Enabled: true}).Recent(context.Background(), model.Scope{}, 3, 0)
+	items, err := memory.New(src, memory.Options{Enabled: true}).Recent(context.Background(), model.Scope{TenantID: 1, FarmID: 1}, 3, 0)
 	if err != nil || len(items) != 0 {
 		t.Fatalf("items = %+v, %v", items, err)
 	}

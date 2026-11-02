@@ -21,6 +21,9 @@ var _ agent.EventSink = EventSink{}
 
 // Emit 开短事务分配 seq 并追加事件，提交后发布 SSE。
 func (s EventSink) Emit(ctx context.Context, e model.RunEvent) (int64, error) {
+	if err := requireFarm(e.TenantID, e.FarmID); err != nil {
+		return 0, err
+	}
 	var seq int64
 	err := inTx(ctx, s.DB, func(tx *gorm.DB) error {
 		var err error

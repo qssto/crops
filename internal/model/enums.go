@@ -132,6 +132,21 @@ const (
 	RoleLegal         Role = "legal"     // 预留，权限由 Phase 3/4 定义
 )
 
+// Valid 判断是否为已登记的角色。
+func (r Role) Valid() bool {
+	switch r {
+	case RoleFarmer, RoleFarmManager, RoleAgronomist, RoleOperator, RoleAdmin, RoleAuditor,
+		RolePlatformAdmin, RoleKBExpert, RoleLegal:
+		return true
+	}
+	return false
+}
+
+// Platform 判断是否为平台角色（只绑定在 (0,0)）。
+func (r Role) Platform() bool {
+	return r == RolePlatformAdmin || r == RoleKBExpert || r == RoleLegal
+}
+
 // ActorType 是 run_event.actor 与 work_order_transition.actor_type 的取值。
 type ActorType string
 

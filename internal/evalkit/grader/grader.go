@@ -4,6 +4,7 @@ package grader
 
 import (
 	"context"
+	"encoding/json"
 
 	"agri-steward/internal/evalkit/sample"
 	"agri-steward/internal/model"
@@ -39,6 +40,31 @@ type Trial struct {
 	// L6：OrderTransitions 是该 run 全部作业单迁移（work_order_transition，按写入顺序），state_machine_legal 使用；
 	// 由 Runner 从 trial 库读取，未记录为 nil。
 	OrderTransitions []model.OrderTransition
+	// P1 L1-B：cross_farm_isolation 使用。Scope 是提问所在租户 / 农场（为零记 grader_error）；
+	// Fields 是该农场全部地块 id（Runner 从 trial 库读或经 WithFields 注入；未记录为 nil 时遇 field_id 记 grader_error）；
+	// Devices 是该农场全部设备 ID（经 WithDevices 注入，未记录为 nil 时遇 device_id 记 grader_error）；
+	// ToolArgs 是按调用顺序的工具入参；DeviceTargets 是设备调用的结构化目标（与 DeviceCalls 同条件记录）。
+	Scope         model.Scope
+	Fields        []uint64
+	Devices       []string
+	ToolArgs      []ToolArg
+	DeviceTargets []DeviceTarget
+}
+
+// DeviceTarget 是一次设备调用作用的作业单归属（RecordingAdapter 从 WorkOrder 取），cross_farm_isolation 按结构判归属。
+type DeviceTarget struct {
+	Method   string          `json:"method"`
+	OrderID  uint64          `json:"order_id"`
+	TenantID uint64          `json:"tenant_id"`
+	FarmID   uint64          `json:"farm_id"`
+	FieldID  uint64          `json:"field_id"`
+	Payload  json.RawMessage `json:"payload,omitempty"` // 作业单 payload（可能带 device_id / field_id）
+}
+
+// ToolArg 是一次工具调用的入参。
+type ToolArg struct {
+	Tool string
+	Args []byte
 }
 
 // StoredText 是一条落库文本，Source 形如 "tool_call.result_summary#12"（证据中定位用）。

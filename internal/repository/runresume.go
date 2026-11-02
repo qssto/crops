@@ -22,6 +22,9 @@ const MaxSysRetry = 3
 // run 须 INTERRUPTED 且 graph_version 一致；WAIT_APPROVAL 要求该 run 有 APPROVED 票，SYSTEM_ERROR 要求 sys_retry ≤ 3，
 // WAIT_INPUT（P0 无补问入口）一律不可续。通过后同事务置 RUNNING、interrupt_type 清空、resume_epoch + 1，返回新 epoch。
 func (r *RunRepo) MarkResumed(ctx context.Context, scope model.Scope, req agent.ResumeRequest) (int, error) {
+	if err := requireScope(scope); err != nil {
+		return 0, err
+	}
 	var epoch int
 	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var row struct {
@@ -33,8 +36,8 @@ func (r *RunRepo) MarkResumed(ctx context.Context, scope model.Scope, req agent.
 			RowVer        int
 		}
 		res := tx.WithContext(ctx).Raw(
-			`SELECT status, interrupt_type, graph_version, resume_epoch, sys_retry, row_ver FROM agent_run WHERE id=? AND tenant_id=? AND farm_id=?`,
-			req.RunID, scope.TenantID, scope.FarmID).Scan(&row)
+			`SELECT status, interrupt_type, graph_version, resume_epoch, sys_retry, row_ver FROM agent_run WHERE tenant_id=? AND farm_id=? AND id=?`,
+			scope.TenantID, scope.FarmID, req.RunID).Scan(&row)
 		if res.Error != nil {
 			return fmt.Errorf("repository: get agent_run %d: %w", req.RunID, res.Error)
 		}
@@ -50,8 +53,8 @@ func (r *RunRepo) MarkResumed(ctx context.Context, scope model.Scope, req agent.
 		}
 		upd := tx.WithContext(ctx).Exec(
 			`UPDATE agent_run SET status='RUNNING', interrupt_type=NULL, resume_epoch=resume_epoch+1, row_ver=row_ver+1, updated_at=?
- WHERE id=? AND tenant_id=? AND farm_id=? AND status='INTERRUPTED' AND row_ver=?`,
-			r.clock.Now(), req.RunID, scope.TenantID, scope.FarmID, row.RowVer)
+ WHERE tenant_id=? AND farm_id=? AND id=? AND status='INTERRUPTED' AND row_ver=?`,
+			r.clock.Now(), scope.TenantID, scope.FarmID, req.RunID, row.RowVer)
 		if upd.Error != nil {
 			return fmt.Errorf("repository: resume agent_run %d: %w", req.RunID, upd.Error)
 		}
@@ -107,8 +110,11 @@ func (k RunKey) Scope() model.Scope { return model.Scope{TenantID: k.TenantID, F
 // scanLimit 是扫描任务单批上限（与文档扫描 SQL 的 LIMIT 100 一致）。
 const scanLimit = 100
 
-// ListStuck 照抄 P0 §6.7 卡住 run 扫描（idx_stuck）：RUNNING 且 updated_at 早于 before。
-func (r *RunRepo) ListStuck(ctx context.Context, before time.Time) ([]RunKey, error) {
+// ListStuck 照抄 P0 §6.7 卡住 run 扫描（SystemScope，worker 专用索引 idx_stuck）：RUNNING 且 updated_at 早于 before。
+func (r *RunRepo) ListStuck(ctx context.Context, sys SystemScope, before time.Time) ([]RunKey, error) {
+	if err := requireSystem(sys); err != nil {
+		return nil, err
+	}
 	var rows []RunKey
 	if err := r.db.WithContext(ctx).Raw(
 		`SELECT id, tenant_id, farm_id, row_ver FROM agent_run WHERE status='RUNNING' AND updated_at < ? LIMIT 100`,
@@ -120,18 +126,24 @@ func (r *RunRepo) ListStuck(ctx context.Context, before time.Time) ([]RunKey, er
 
 // MarkSystemError 照抄 P0 §6.7：RUNNING → INTERRUPTED(SYSTEM_ERROR)、sys_retry + 1；影响行数 0（已续期 / 已被改写）返回 false。
 func (r *RunRepo) MarkSystemError(ctx context.Context, k RunKey, before time.Time) (bool, error) {
+	if err := requireFarm(k.TenantID, k.FarmID); err != nil {
+		return false, err
+	}
 	res := r.db.WithContext(ctx).Exec(
 		`UPDATE agent_run SET status='INTERRUPTED', interrupt_type='SYSTEM_ERROR', sys_retry=sys_retry+1, row_ver=row_ver+1, updated_at=?
- WHERE id=? AND tenant_id=? AND farm_id=? AND status='RUNNING' AND updated_at < ? AND row_ver=?`,
-		r.clock.Now(), k.ID, k.TenantID, k.FarmID, before, k.RowVer)
+ WHERE tenant_id=? AND farm_id=? AND id=? AND status='RUNNING' AND updated_at < ? AND row_ver=?`,
+		r.clock.Now(), k.TenantID, k.FarmID, k.ID, before, k.RowVer)
 	if res.Error != nil {
 		return false, fmt.Errorf("repository: mark agent_run %d SYSTEM_ERROR: %w", k.ID, res.Error)
 	}
 	return res.RowsAffected > 0, nil
 }
 
-// ListSystemError 取 INTERRUPTED(SYSTEM_ERROR) 的 run（文档未给 SQL；走 idx_stuck 的 status 前缀）。
-func (r *RunRepo) ListSystemError(ctx context.Context) ([]RunKey, error) {
+// ListSystemError 取 INTERRUPTED(SYSTEM_ERROR) 的 run（SystemScope；文档未给 SQL，走 worker 专用索引 idx_stuck 的 status 前缀）。
+func (r *RunRepo) ListSystemError(ctx context.Context, sys SystemScope) ([]RunKey, error) {
+	if err := requireSystem(sys); err != nil {
+		return nil, err
+	}
 	var rows []RunKey
 	if err := r.db.WithContext(ctx).Raw(
 		`SELECT id, tenant_id, farm_id, row_ver, sys_retry FROM agent_run WHERE status='INTERRUPTED' AND interrupt_type='SYSTEM_ERROR' LIMIT ?`,
@@ -145,13 +157,16 @@ func (r *RunRepo) ListSystemError(ctx context.Context) ([]RunKey, error) {
 // 冲突返回 model.ErrConcurrentUpdate。
 func (r *RunRepo) FailInterruptedTx(ctx context.Context, tx *gorm.DB, k RunKey, it model.InterruptType,
 	reason model.ReasonCode) error {
+	if err := requireFarm(k.TenantID, k.FarmID); err != nil {
+		return err
+	}
 	if err := requireTx(tx); err != nil {
 		return err
 	}
 	res := tx.WithContext(ctx).Exec(
 		`UPDATE agent_run SET status='FAILED', interrupt_type=NULL, reason_code=?, row_ver=row_ver+1, updated_at=?
- WHERE id=? AND tenant_id=? AND farm_id=? AND status='INTERRUPTED' AND interrupt_type=? AND row_ver=?`,
-		string(reason), r.clock.Now(), k.ID, k.TenantID, k.FarmID, string(it), k.RowVer)
+ WHERE tenant_id=? AND farm_id=? AND id=? AND status='INTERRUPTED' AND interrupt_type=? AND row_ver=?`,
+		string(reason), r.clock.Now(), k.TenantID, k.FarmID, k.ID, string(it), k.RowVer)
 	if res.Error != nil {
 		return fmt.Errorf("repository: fail agent_run %d: %w", k.ID, res.Error)
 	}
@@ -163,6 +178,9 @@ func (r *RunRepo) FailInterruptedTx(ctx context.Context, tx *gorm.DB, k RunKey, 
 
 // DraftOrdersTx 列出 run 名下仍为 DRAFT 的作业单（失败收尾时同事务 CANCELED）。
 func (r *RunRepo) DraftOrdersTx(ctx context.Context, tx *gorm.DB, scope model.Scope, runID uint64) ([]uint64, error) {
+	if err := requireScope(scope); err != nil {
+		return nil, err
+	}
 	var ids []uint64
 	if err := tx.WithContext(ctx).Raw(
 		`SELECT id FROM work_order WHERE tenant_id=? AND farm_id=? AND run_id=? AND status='DRAFT'`,
@@ -175,18 +193,21 @@ func (r *RunRepo) DraftOrdersTx(ctx context.Context, tx *gorm.DB, scope model.Sc
 // RecheckEpoch 为下发前复检分配新 epoch（P0 §6.7 功能任务 3：复检以新 epoch 重取时效工具）：同事务 resume_epoch + 1 并读回，
 // 每次复检的 epoch 都不同，时效工具的 call_key 随之变化，去重不会回放上一次复检的结果。只动计数，不改 status / row_ver。
 func (r *RunRepo) RecheckEpoch(ctx context.Context, scope model.Scope, runID uint64) (int, error) {
+	if err := requireScope(scope); err != nil {
+		return 0, err
+	}
 	var epoch int
 	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		res := tx.Exec(`UPDATE agent_run SET resume_epoch=resume_epoch+1 WHERE id=? AND tenant_id=? AND farm_id=?`,
-			runID, scope.TenantID, scope.FarmID)
+		res := tx.Exec(`UPDATE agent_run SET resume_epoch=resume_epoch+1 WHERE tenant_id=? AND farm_id=? AND id=?`,
+			scope.TenantID, scope.FarmID, runID)
 		if res.Error != nil {
 			return fmt.Errorf("repository: bump agent_run %d resume_epoch: %w", runID, res.Error)
 		}
 		if res.RowsAffected == 0 {
 			return fmt.Errorf("repository: agent_run %d: %w", runID, model.ErrNotFound)
 		}
-		if err := tx.Raw(`SELECT resume_epoch FROM agent_run WHERE id=? AND tenant_id=? AND farm_id=?`,
-			runID, scope.TenantID, scope.FarmID).Scan(&epoch).Error; err != nil {
+		if err := tx.Raw(`SELECT resume_epoch FROM agent_run WHERE tenant_id=? AND farm_id=? AND id=?`,
+			scope.TenantID, scope.FarmID, runID).Scan(&epoch).Error; err != nil {
 			return fmt.Errorf("repository: agent_run %d resume_epoch: %w", runID, err)
 		}
 		return nil

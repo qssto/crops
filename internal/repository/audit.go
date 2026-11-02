@@ -35,6 +35,10 @@ func auditArgs(r model.AuditRecord) []any {
 }
 
 // AuditRepo 写 audit_log：AppendTx 在调用方事务内写，Append 独立短写（拒绝类审计不随业务回滚）。
+//
+// 只追加、不读回，故不走 requireFarm：tenant_id = farm_id = 0 是合法行，表示身份未解析出农场的拒绝
+// （service.DenialAuditor 对未登录 / 无 user_role 的请求按空 Scope 落 CROSS_FARM_DENIED）或平台角色
+// （user_role 平台行 tenant_id = farm_id = 0）的操作。按农场读审计的查询须自行 requireFarm。
 type AuditRepo struct{ DB *gorm.DB }
 
 var _ agent.AuditStore = AuditRepo{}

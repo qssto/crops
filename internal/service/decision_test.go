@@ -271,18 +271,27 @@ func newDecideFixture(t *testing.T, risk model.RiskLevel, expiresIn time.Duratio
 		store: &memDecisions{runStatus: model.RunInterrupted, ticket: repository.TicketRow{ID: 7, TenantID: 1, FarmID: 1,
 			RunID: 5, OrderID: 3, TicketSeq: 1, RiskLevel: string(risk), RequiredRole: `["agronomist"]`,
 			ConfirmRequired: confirm, InitiatorID: initiator, SnapshotDigest: testDigest,
-			Status: string(model.TicketOpen), ExpiresAt: &exp}},
+			Status: string(model.TicketOpen), ExpiresAt: &exp},
+			orders: map[uint64]model.WorkOrder{3: {OrderID: 3, WorkType: model.WorkSpray}}},
 		orders: &memTransitions{}, events: &fakeEvents{}, idem: &memIdem{m: map[string]string{}},
 		resumer: &countingResumer{}, keys: keys,
 	}
-	f.svc = NewDecisionService(DecisionDeps{Store: f.store, Orders: f.orders, Events: f.events, Idem: f.idem,
+	svc, err := NewDecisionService(DecisionDeps{Store: f.store, Orders: f.orders, Events: f.events, Idem: f.idem,
 		Locks: memLocks{held: lockHeld}, Keys: keys, Resumer: f.resumer, Clock: fixedClock{decideNow},
-		Logger: slog.New(slog.NewTextHandler(io.Discard, nil))})
+		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)), Perms: testPerms(t)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.svc = svc
 	return f
 }
 
 func (f *decideFixture) decide(user uint64, rid, decision string) (DecideResult, error) {
-	scope := model.Scope{TenantID: 1, FarmID: 1, UserID: user, Roles: []model.Role{model.RoleAgronomist}}
+	return f.decideAs(user, rid, decision, model.RoleAgronomist)
+}
+
+func (f *decideFixture) decideAs(user uint64, rid, decision string, roles ...model.Role) (DecideResult, error) {
+	scope := model.Scope{TenantID: 1, FarmID: 1, UserID: user, Roles: roles}
 	res, err := f.svc.Decide(context.Background(), scope, DecideInput{TicketID: 7, RequestID: rid, Decision: decision,
 		SnapshotDigest: testDigest})
 	f.svc.Wait()
@@ -390,6 +399,78 @@ func TestDecide_Refusals(t *testing.T) {
 	}
 }
 
+// 审批细分（权限矩阵 approval.decide.pesticide / other）：角色须同时在票据 required_role 与权限矩阵中；
+// 用药类（SPRAY）只有 agronomist 可批，farm_manager 即使在 required_role 中也拒绝。
+func TestDecide_PermissionSplit(t *testing.T) {
+	fm, agro, op := model.RoleFarmManager, model.RoleAgronomist, model.RoleOperator
+	tests := []struct {
+		name     string
+		work     model.WorkType
+		required string
+		roles    []model.Role
+		failOn   string
+		wantErr  error
+		wantOp   Operation // 角色拒绝时 RoleDeniedError 携带的审批类别
+		wantRole model.Role
+	}{
+		{name: "agronomist on SPRAY", work: model.WorkSpray, required: `["agronomist"]`, roles: []model.Role{agro}, wantRole: agro},
+		{name: "farm_manager on SPRAY denied by matrix", work: model.WorkSpray, required: `["agronomist","farm_manager"]`,
+			roles: []model.Role{fm}, wantErr: ErrRoleInsufficient, wantOp: OpApprovalDecidePesticide},
+		{name: "farm_manager + agronomist on SPRAY uses agronomist", work: model.WorkSpray,
+			required: `["agronomist","farm_manager"]`, roles: []model.Role{fm, agro}, wantRole: agro},
+		{name: "farm_manager on FERTILIZE", work: model.WorkFertilize, required: `["agronomist","farm_manager"]`,
+			roles: []model.Role{fm}, wantRole: fm},
+		{name: "operator not in required_role", work: model.WorkFertilize, required: `["agronomist","farm_manager"]`,
+			roles: []model.Role{op}, wantErr: ErrRoleInsufficient, wantOp: OpApprovalDecideOther},
+		{name: "required_role allows operator but matrix does not", work: model.WorkIrrigate, required: `["operator"]`,
+			roles: []model.Role{op}, wantErr: ErrRoleInsufficient, wantOp: OpApprovalDecideOther},
+		// 票据在本农场但作业单缺失是数据完整性问题：不得带 ErrNotFound / ErrForbidden（否则会被映射成 403 越界）
+		{name: "work order missing", work: "", required: `["agronomist"]`, roles: []model.Role{agro}, failOn: "integrity"},
+		{name: "orders read fails", work: model.WorkSpray, required: `["agronomist"]`, roles: []model.Role{agro}, failOn: "orders"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := newDecideFixture(t, model.RiskLow, time.Hour, false)
+			f.store.ticket.RequiredRole = tt.required
+			f.store.orders = map[uint64]model.WorkOrder{}
+			if tt.work != "" {
+				f.store.orders[3] = model.WorkOrder{OrderID: 3, WorkType: tt.work}
+			}
+			if tt.failOn != "integrity" {
+				f.store.failOn = tt.failOn
+			}
+			_, err := f.decideAs(approverA, "r1", DecisionApprove, tt.roles...)
+			switch {
+			case tt.failOn == "integrity":
+				if err == nil || errors.Is(err, model.ErrNotFound) || errors.Is(err, ErrForbidden) {
+					t.Fatalf("err = %v, want internal error", err)
+				}
+				return
+			case tt.failOn != "":
+				if err == nil {
+					t.Fatal("want error")
+				}
+				return
+			case !errors.Is(err, tt.wantErr):
+				t.Fatalf("err = %v, want %v", err, tt.wantErr)
+			case tt.wantErr != nil:
+				var rd *RoleDeniedError
+				if !errors.As(err, &rd) || rd.Op != tt.wantOp {
+					t.Fatalf("err = %v, want RoleDeniedError{%s}", err, tt.wantOp)
+				}
+				// APPROVAL/DENIED 业务审计保留（与 CROSS_FARM_DENIED 并存，见 dev-log）
+				if got := strings.Join(f.store.audits, ","); got != "ROLE_INSUFFICIENT" {
+					t.Fatalf("audits = %q", got)
+				}
+				return
+			}
+			if got := f.store.decisions[len(f.store.decisions)-1].OperatorRole; got != string(tt.wantRole) {
+				t.Fatalf("operator_role = %s, want %s", got, tt.wantRole)
+			}
+		})
+	}
+}
+
 // 到期瞬间审批：同事务票据与作业单 EXPIRED、run COMPLETED(APPROVAL_EXPIRED)，三者一致。
 func TestDecide_ExpiredClosesAll(t *testing.T) {
 	f := newDecideFixture(t, model.RiskLow, 0, false)
@@ -419,12 +500,25 @@ func TestDecide_BadInputAndBusy(t *testing.T) {
 			t.Errorf("Decide(%+v) err = %v, want ErrBadInput", in, err)
 		}
 	}
+	// 票据不在本农场：归属查询未命中，ErrNotInScope（controller 映射 403 + RESOURCE_NOT_IN_SCOPE）
+	other := model.Scope{TenantID: 1, FarmID: 2, UserID: approverA, Roles: []model.Role{model.RoleAgronomist}}
+	if _, err := f.svc.Decide(context.Background(), other, DecideInput{TicketID: 7, RequestID: "r-other",
+		Decision: DecisionApprove, SnapshotDigest: testDigest}); !errors.Is(err, ErrNotInScope) {
+		t.Errorf("other farm ticket err = %v, want ErrNotInScope", err)
+	}
 	busy := newDecideFixture(t, model.RiskLow, time.Hour, true)
 	if _, err := busy.decide(approverA, "r1", DecisionApprove); !errors.Is(err, ErrOrderBusy) {
 		t.Errorf("busy err = %v, want ErrOrderBusy", err)
 	}
 	if _, ok := busy.idem.m[busy.keys.IdemApprove("r1")]; ok {
 		t.Error("idem key kept after lock failure")
+	}
+}
+
+// 权限矩阵为必需依赖：缺失时构造失败，避免审批阶段按空矩阵全拒或 nil panic。
+func TestNewDecisionService_RequiresPerms(t *testing.T) {
+	if _, err := NewDecisionService(DecisionDeps{}); err == nil {
+		t.Fatal("nil Perms must fail")
 	}
 }
 

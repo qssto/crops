@@ -29,14 +29,17 @@ func outboxRetryDelay(attempts int) time.Duration {
 	return outboxBackoff[min(max(attempts, 0), len(outboxBackoff)-1)]
 }
 
+// outboxSystem 是 outbox 轮询的跨农场凭证（P1-L4 随轮询器迁到 cmd/worker）。
+var outboxSystem = repository.NewSystemScope("outbox_poll")
+
 // ErrUnknownTopic 表示 outbox 消息的 topic 没有处理器（按失败退避，耗尽后 DEAD）。
 var ErrUnknownTopic = errors.New("service: unknown outbox topic")
 
 // OutboxStore 是 outbox 领取 / 完成 / 退避，repository.OutboxRepo 实现。
 type OutboxStore interface {
-	Claim(ctx context.Context, now, leaseUntil time.Time) ([]repository.OutboxMessage, error)
-	MarkDone(ctx context.Context, id uint64, now time.Time) (bool, error)
-	MarkRetry(ctx context.Context, id uint64, nextRunAt time.Time, lastErr string, now time.Time) (bool, error)
+	Claim(ctx context.Context, sys repository.SystemScope, now, leaseUntil time.Time) ([]repository.OutboxMessage, error)
+	MarkDone(ctx context.Context, sys repository.SystemScope, id uint64, now time.Time) (bool, error)
+	MarkRetry(ctx context.Context, sys repository.SystemScope, id uint64, nextRunAt time.Time, lastErr string, now time.Time) (bool, error)
 }
 
 // OutboxHandler 处理一条消息；返回 nil 即置 DONE。
@@ -86,7 +89,7 @@ func (p *OutboxPoller) Run(ctx context.Context) {
 // 处理中的消息不随 ctx 取消中断，以免 ⑤-⑦ 半途退出。
 func (p *OutboxPoller) RunOnce(ctx context.Context) (int, error) {
 	now := p.d.Clock.Now()
-	msgs, err := p.d.Store.Claim(ctx, now, now.Add(p.d.Lease))
+	msgs, err := p.d.Store.Claim(ctx, outboxSystem, now, now.Add(p.d.Lease))
 	if err != nil {
 		return 0, fmt.Errorf("service: outbox claim: %w", err)
 	}
@@ -111,12 +114,12 @@ func (p *OutboxPoller) handle(ctx context.Context, m repository.OutboxMessage) e
 	herr := p.dispatch(hctx, m)
 	now := p.d.Clock.Now()
 	if herr == nil {
-		if _, err := p.d.Store.MarkDone(hctx, m.ID, now); err != nil {
+		if _, err := p.d.Store.MarkDone(hctx, outboxSystem, m.ID, now); err != nil {
 			return fmt.Errorf("service: outbox %d done: %w", m.ID, err)
 		}
 		return nil
 	}
-	ok, err := p.d.Store.MarkRetry(hctx, m.ID, now.Add(outboxRetryDelay(m.Attempts)), herr.Error(), now)
+	ok, err := p.d.Store.MarkRetry(hctx, outboxSystem, m.ID, now.Add(outboxRetryDelay(m.Attempts)), herr.Error(), now)
 	if err != nil {
 		return errors.Join(fmt.Errorf("service: outbox %d retry: %w", m.ID, err), herr)
 	}

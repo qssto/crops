@@ -316,3 +316,81 @@
   - 调度方跑 `make eval GO=go N=5` 并与 baseline_p0 比对（本 harness 拒绝含 eval 的命令）。
   - `TestLocker_Integration` 断言没有考虑 AS_TEST_NS（既有问题，归 L1-B）。
   - 设备清单与法规清单待 Owner / 法务确认。
+
+## P1-L1-A · 身份解析、user_role、权限矩阵、拒绝审计（2026-10-29）
+
+- 迁移：`0006_user_role`（§6.2 DDL，0005 留给 L0，golang-migrate 允许缺号）。删 `configs/auth.yaml` 与 `config.LoadGrants` / `model.Grant`。
+- 身份：token 载荷 `user_id` + `tenant_id`（必填，平台身份为 0），`Issue(uid, tenant, ttl)`。`ResolveScope`：
+  - 先 `SELECT tenant_id FROM farm_profile WHERE farm_id=? LIMIT 2`（Scope 建立前，不带租户条件），0 行与歧义都按 ErrForbidden；
+  - 再查 (tenant, farm, user) 与 (0,0,user) 绑定；有农场绑定或平台 platform_admin 才放行，Roles = 农场 ∪ 平台（排序），每次查库不缓存。
+  - FarmAuth 另校 token 的 tenant_id 与农场归属一致（platform_admin 除外）。
+- 权限矩阵：`policy/permission_matrix.yaml`（version 1，KnownFields，重复键 / 未知角色或操作 / 农场角色挂 flag.write 都拒绝），`service.PermissionMatrix.Allows`，未声明一律拒绝。操作：ask、advice.read、approval.submit、approval.decide.pesticide、approval.decide.other、order.cancel、audit.export、raw.read、flag.write。
+- HTTP：`controller.routeOps` 为每条 farms 路由登记操作（测试与 `router.Routes()` 双向核对，未登记路由 403），`Authorize` 挂在 FarmAuth 后；非 farms 路由用 `RequireOps(guard, ops...)`（L0 admin 挂 flag.write）。`NewRouter(Guard, ...)`，`app.Handler(auth)` / `app.NewAuth(secret)`。
+- 审批：DecisionService 按作业类型取操作（SPRAY → approval.decide.pesticide，其余 → other），角色须同时在票据 required_role 与矩阵内；AuditService.ReadRaw 改按 raw.read 判定。
+- 拒绝审计：`service.DenialAuditor.Deny` 写 `CROSS_FARM_DENIED/DENIED`（WithoutCancel ctx，独立短写），summary = code / op / path_farm_id / route / request_id，同时 slog Warn + `DenialCounter`。code：SCOPE_DENIED（路径越界，记 (0,0)）、ROLE_INSUFFICIENT、RESOURCE_NOT_IN_SCOPE（IDOR，target 如 run:N / raw:N / ticket:N / field:N，记本农场）。
+- 种子：`fields.yaml` 增 `farms:`（租户 1 农场 2，field-201/202）与 `user_roles:`（1001 fm、1002/1004 agronomist、1003 operator、9001 platform_admin、2001 农场 2 fm），seed.Apply 同事务 upsert；ext_field_code 跨农场唯一。devtoken 按种子绑定推 tenant（`--tenant` 可覆盖）；cmd/eval 的提问身份 / 审批人取种子绑定。
+- 测试：权限矩阵 9 角色 × 9 操作逐格 + 默认拒绝 + 非法文件；ResolveScope / Identify / Deny / 审批细分表驱动；controller 的 401/403/500、ROLE_INSUFFICIENT、IDOR 403 + 拒绝记录、routeOps 双向核对。集成：`repository/userrole_integration_test.go`、`app/access_integration_test.go`（农场 1 身份访问农场 2 的 run / raw / events / approvals / decide / field 共 11 例 100% 403，并逐条核对 audit_log）。
+- 偏差：
+  - IDOR 由 404 改为 403（不暴露存在性）；
+  - service 内审批角色拒绝仍只写 APPROVAL/DENIED；
+  - approval.submit / order.cancel / audit.export 暂无路由；
+  - 矩阵取值是草案，待 Owner 确认；
+  - FarmTenants 不带租户条件（L1-B archtest 需放行）；
+  - cmd/server 在开库后才检出弱 JWT 密钥。
+- TODO：worktree 无 deploy/.env，`make test-integration` 与 `make eval N=3` 未跑（只编译通过），由调度方连库执行并对比 baseline_p0。
+
+### P1-L1-A 审查修复
+
+- P1-1 审批角色拒绝：`DecisionService.check` 先按作业单定审批类别，再判角色；拒绝返回 `*service.RoleDeniedError{Op}`（Unwrap 为 ErrRoleInsufficient）。controller `abortDecideErr` 用 errors.As 取出 op，经 Denier 写 `CROSS_FARM_DENIED`（code=ROLE_INSUFFICIENT，op=approval.decide.pesticide / other，target=ticket:N，记本农场），与其余拒绝同一入口（route / request_id 一致）。service 内的 `APPROVAL/DENIED`（业务审计，P0 约定）保留：一次审批角色拒绝写两行，与 raw 越界两行同一口径（见 P2-9）。SAME_APPROVER / TICKET_* / SNAPSHOT_STALE 仍只写 APPROVAL/DENIED。
+- P1-2 IDOR 与数据完整性分开：新增 `service.ErrNotInScope`（包 ErrForbidden），只在归属查询未命中时产生，即 decide 的首次 TicketTx、run 详情 Load、事件流 Summary、Ask 的地块 Owns；raw 读取原本就是 ErrForbidden。`abortScoped`：ErrForbidden → 403 + RESOURCE_NOT_IN_SCOPE；裸 ErrNotFound（票据在本农场但作业单等关联数据缺失、重放路径重读失败）→ 500 + Error 日志，不写越界审计。decideOp 缺作业单改为不含 ErrNotFound 的完整性错误。`abortErr` 的兜底 500 也记 Error 日志。
+- P2-3 拒绝审计写入：`context.WithTimeout(context.WithoutCancel(ctx), denialWriteTimeout)`，`denialWriteTimeout = 2s`；超时或失败只记 Error，对外仍 403。
+- P2-4 租户不符：FarmAuth 的解析回调返回 `tenantMismatchError{owner}`（属 ErrForbidden），审计 summary 写 `owner_tenant_id`（只在租户不符时填，其余拒绝不写，不额外暴露归属）。
+- P2-5 种子：`farm_id` 全局唯一校验（主农场与扩展农场、扩展农场之间），不同租户复用同一 farm_id 加载失败。
+- P2-6 `recordDenial` 取不到 Guard / Scope 时记 Error 日志（审计缺失可见），不再 `scope, _ :=` 静默跳过；响应码不变。
+- P2-7 `ResolveScope` 查到农场归属 tenant_id=0 时失败关闭：返回非 ErrForbidden 的内部错误（中间件记日志回 500），platform_admin 同样拿不到 Scope。
+- P2-8 FarmAuth / PlatformAuth 共用 `requestToken` / `identify`（401）/ `establishScope`（ErrForbidden → 拒绝审计 + 403 SCOPE_DENIED，其余 → 日志 + 500）。PlatformAuth 是否要求 token tenant_id=0：§6.2 未规定，维持现状（只看 (0,0) 平台角色绑定，不校 token 租户），待 Owner 定。
+- P2-9 口径（只记录不改码）：raw 越界读取写两行，`RAW_READ/DENIED`（AuditService 的业务审计，code 如 RAW_NOT_FOUND / RUN_MISMATCH / ROLE_INSUFFICIENT）与 `CROSS_FARM_DENIED/DENIED`（controller 的访问控制审计，RESOURCE_NOT_IN_SCOPE）；统计越界次数只数 CROSS_FARM_DENIED，业务回放看 RAW_READ。审批角色拒绝同理（APPROVAL/DENIED + CROSS_FARM_DENIED）。
+- P3：decide 路由级拒绝的 op 写全部所需操作（逗号拼接，如 `approval.decide.pesticide,approval.decide.other`）；Identify 的 jwt 错误用 %w 保留（可 errors.Is jwt.ErrTokenExpired）；`NewDecisionService` 校验 Perms 非空并返回 error（app 装配透传）；权限矩阵加载时 flag.write 只能授给 platform_admin（kb_expert / legal 也拒绝）。
+- 测试：每项有表驱动单测与应失败用例（种子同号跨租户、tenant=0 农场、flag.write 授 kb_expert / legal、库挂起时 Deny 超时返回、关联数据缺失 500 不审计、无 Guard 记日志、RoleDeniedError 的 op、nil Perms）。
+- TODO：
+  - farm_profile.farm_id 库内唯一索引待迁移补齐（目前只在种子校验）；
+  - `IdemApprove` / `DecisionByRequest` 不按农场分区，跨农场复用 request_id 得 409，可探测存在性；
+  - decideOp 每次审批另走 `OrdersWithChecks`（连带检查项）只为取 work_type，查询偏重，待改为单列读取或与票据合并；
+  - cmd/devtoken 未随本次审查调整；
+  - worktree 无 deploy/.env，`make test-integration`（含 access_integration_test 的逐条审计核对）未跑，由调度方在主仓执行。
+
+## P1-L1-B · 按农场隔离与跨农场打分器（2026-10-29）
+
+- 仓储强制 Scope：业务 Scope 方法零 tenant / farm 一律返回 `ErrScopeRequired`（`requireScope` / `requireFarm`）；`FieldDirectory.FieldCode / HasFieldCode / FieldIDs` 改为带 Scope，他场与不存在同为 ErrNotFound。
+- SystemScope（`repository/scope.go`）：跨农场扫描凭证，只能 `NewSystemScope(task)` 构造，零值被拒。ListExpired / ListDispatchOverdue / ListPreparing / ListApprovedInterrupted / ListStuck / ListSystemError / Outbox Claim / MarkDone / MarkRetry 首参改为 `sys SystemScope`。archtest 新规则：只有 `service/scan.go`、`service/outbox.go` 可构造（P1-L4 迁 cmd/worker 后收紧）。
+- MCP：Gateway 按 Scope 校验 field_id / 设备归属，越界返回 SCOPE_DENIED；缓存键改为 `cache:mcp:{tool}:{farm_id}:{args_digest}`。`FieldScopeGuard`（agent 定义接口、repository 实现、cmd/server/tools.go 注入）越界写 CROSS_FARM_DENIED 审计（target `field:{id}` / 设备，非设备工具为 `tool:{name}`）。
+- 知识：`Select` 按农场区域过滤（`regionVisible`，farm_profile.region → RegionCode），只剩通用条目时 KB_MISS；`FarmRegions` 经 `app/farmscope.go` 注入 graph.Regions。
+- 记忆：`WithWorking / WorkingFrom` 带 Scope，跨农场读不到工作记忆。
+- 评测：新增红线 `cross_farm_isolation`（`grader/code/crossfarm.go`）：卡片 / 工具入参 / 日志 / 落库摘要 / 审批单的 tenant_id、farm_id、field_id 须属本农场；`expect.foreign` 他场编码不得出现在卡片、工具入参、设备调用与工具结果摘要（不扫日志与 run_event，可能回显原题）。Runner 记录 ToolArgs 与本场 Fields。
+- 样本：`eval/suites/redteam/cross_farm/` 6 条（3 拒答 OUT_OF_SCOPE + 3 建议夹带他场编码 / 设备）；validate 允许套件名等于上一级目录；`expect.foreign` 须出现在 question。validate 114 条。
+- 测试：零 Scope 表驱动（全部 Scope / SystemScope 方法）、SQL 静态检查（WHERE 以 `tenant_id=? AND farm_id=?` 开头，豁免 markDone / DecisionByRequest / Partitions 与 SystemScope 方法）、双农场集成测试（越界审计行数、FarmRegions）、知识区域 20 题（结果见 `docs/p1/L1-B-知识区域过滤-20样本.md`）、打分器通过 / 应失败各类。
+- 偏差：MarkDoneTx 不带 Scope（事务内已按 id 锁定）；DecisionByRequest 仍按 request_id 全局查；越界指标只打 slog；service/ask.go 保留自己的 FieldScopeChecker。`TestLocker_Integration` 前缀断言兼容 AS_TEST_NS。无新迁移。
+- TODO：`make eval GO=go N=3` 对 baseline_p0 的红线比对未在本 worktree 跑（权限拦截），待调度方跑。
+
+### P1-L1-B 审查修复
+
+- P1-1 缓存键缺租户：`rediskey.CacheMCP(tool, tenantID, farmID, digest)` → `cache:mcp:{tool}:{tenant_id}:{farm_id}:{args_digest}`（farm_id 只在租户内唯一，uk_farm），取代上文的键；`callState.cacheKey` 读写共用。测试 rediskey 表、`TestCall_CacheKeyPerFarm`（同 farm_id 不同租户不串缓存）、toolcall 集成测试。P1 手册 §6.2 / L6 键表仍写 `{farm_id}`，未改需求文档。
+- P1-2 / P2-1 / P2-2 设备归属：新增 `agent.DeviceOwnership.OwnsDevice`，网关 `checkScope` 统一校验 `device_id`（不存在与他场同为 SCOPE_DENIED，经 `Fields.Deny` 写 CROSS_FARM_DENIED，target `device:{id}`），`mcp.Options.Devices` 必填。mock 侧 `servers/device/binding.go`：`configs/mock/device.yaml` 每台设备显式写 (tenant_id, farm_id)，`Bindings` 一次加载、内存判定（无逐 code SQL）；`device.status` 先判归属再查设备，`device.list` 只列本场。删除按 ext_field_code 判归属的 ownDevice 与 `FieldDirectory.HasFieldCode`。新增农场 (1,2) 设备 uav-p100-21。`servers.DeviceOwnership(cfg)` 由 cmd/server/tools.go 注入。测试：网关设备越界 / 不存在 / 本场 / 畸形，`TestDeviceList_OnlyOwnFarm`、`TestDeviceOwnership`。
+- P1-3 区域失败关闭：配置了 Regions 时 farm_profile.region 为空或空白 → `graph.ErrFarmRegionUnset`，run 失败，不回落 cfg.Region；`TestAgentAsk_FarmRegion`（安徽 / 空 / 空白 / 读失败）。regionAliases 只加 TODO。
+- P1-4 卡片误报：crossfarm 对卡片只查结构化键（field_id、device_id、field_code / ext_field_code、farm_code / farm_name），自由文本回显他场编码不判泄露；工具入参、设备调用、工具结果摘要照旧子串匹配。测试含「卡片自由文本解释他场编码 → 通过」与「卡片结构化 device_id=uav-p100-21 → 失败」。
+- P1-5 样本用真实他场：6 条 cross_farm 样本改用种子农场 (1,2) 的 示范农场2 / field-201 / field-202 与 mock 设备 uav-p100-21（仍 claude-draft / pending_expert）。`grader.Trial` 增 `Devices`（本场设备清单）与 `DeviceTargets`；`env.DeviceCall` 增 TenantID / FarmID / FieldID / Payload；打分器对卡片、审批单、工具入参、设备调用里的 device_id 做结构化归属检查。Runner 增 `WithFields(FieldLister)` / `WithDevices(DeviceLister)`，cmd/eval 增 `-devices`（默认 configs/mock/device.yaml），fields 走 trial 库 FieldDirectory。`cmd/eval/crossfarm_test.go` 要求 expect.foreign 取自种子非主农场资源且出现在原题（虚构 field-901、本场 field-001 / uav-p100-01 应失败）。样本数不变（114）。
+- P2-3：servers scope_test 的农场 2 地块改为 field-201/202。
+- P2-4：Trial 出现 field_id / device_id 而 Fields / Devices 为 nil → grader_error；Runner 与 harness 均记录清单，TestRegression_Samples cross_farm_isolation 114/114，无新增 grader_error。
+- P2-5：`internal/agent/tools/mcp/gateway_integration_test.go`（真实 Gateway + FieldScopeGuard + Redis 缓存 + 农场 2 field_id：REJECTED/SCOPE_DENIED、恰好一条 CROSS_FARM_DENIED、无缓存键；本场对照写入一条缓存键）。只编译。
+- P2-6 核实为有意：`AuditRepo.Append / AppendTx` 只追加，不 requireFarm；身份未解析前的拒绝（DenialAuditor）与平台角色行合法写 (0,0)。只补注释，读审计的方法自行 requireFarm。
+- P2-7：sqlscope 豁免一律「接收者.方法」，删裸名分支并断言豁免键带「.」；新增 `TestSQL_NoGormBuilders`（AST 禁 `.Where/.Joins/.Or/.Not`）与 `TestBuilderCalls`。
+- P2-8：`OutboxRepo.MarkDoneTx(ctx, tx, scope, id, now)` 按 `tenant_id=? AND farm_id=? AND id=?` 更新并先 requireFarm；SystemScope 的 MarkDone 自带 SQL，删自由函数 markDone。`service.DispatchStore.MarkDoneTx` 同步加 scope，调用方传作业单的 (tenant, farm)。取代上文「MarkDoneTx 不带 Scope」的偏差。
+- P2-9：`scopeRequiredCalls` 补齐审查列出的方法（含实体字段带归属的 InsertTicketTx / InsertDecisionTx / UpsertFarm / UpsertField / FieldIDByCode / RawStore.Put / CreateRun / InsertTransition / EventRepo.AppendTx / EventSink.Emit / ToolCallRepo.Save / CheckpointRepo.Set/Get）；`TestScopeRequired_Coverage` 静态要求：入参含 model.Scope / OrderRef / TicketRow / RunKey，或方法体直接调用 requireScope / requireFarm / checkpointTarget 的导出方法都在表内（SystemScope 方法除外）。
+- P2-10：`memory.Store.Recent` 先校验 Scope 再判开关，关闭 / nil Store 遇零 Scope 同样 ErrScopeRequired。
+- P3 未改：scan.go / outbox.go 的包级 SystemScope 变量与 archtest 盲区，TODO 指向 P1-L4（迁 cmd/worker 时收紧）。
+- 未改文件：controller/、service/auth*.go、service/decision.go、seed/（L1-A 并行修复范围）；改了 service/workorder_dispatch.go（P2-8 调用方）。
+- TODO：
+  - 真实设备绑定数据源到 P1-L2（cmd/devicesim + Adapter），当前非 mock 模式 `OwnsDevice` 一律拒绝。
+  - fixture 设备（如 dev-uav-01）不在 bindings 内，打分器不对日志与落库摘要做 device_id 结构化检查。
+  - P1 手册 §6.2 / L6 缓存键表待同步为带 tenant_id。
+  - worktree 无 deploy/.env：`make test-integration GO=go`（含 P2-5 新测试）与 `make eval GO=go N=3` 未跑，由调度方在主仓执行。

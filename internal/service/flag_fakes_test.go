@@ -180,13 +180,13 @@ func (p *memPub) Publish(_ context.Context, channel string, msg []byte) error {
 	return p.err
 }
 
-// memRoles 是 FarmRoleChecker 的桩：has 中的 (tenant, farm, role) 视为有绑定。
-type memRoles struct {
+// flagRoles 是 FarmRoleChecker 的桩：has 中的 (tenant, farm, role) 视为有绑定。
+type flagRoles struct {
 	has map[string]bool
 	err error
 }
 
-func (r memRoles) FarmHasRole(_ context.Context, t, f uint64, role model.Role) (bool, error) {
+func (r flagRoles) FarmHasRole(_ context.Context, t, f uint64, role model.Role) (bool, error) {
 	return r.has[fmt.Sprintf("%d/%d/%s", t, f, role)], r.err
 }
 
@@ -227,7 +227,7 @@ func newFlagFixture(t *testing.T, mutate func(*FlagDeps)) *flagFixture {
 	f.store.put(model.FlagEnableAdvice, 1, 1, `{"on":true}`)
 	f.store.put(model.FlagEnableAdvice, 1, 2, `{"on":true}`)
 	d := FlagDeps{Store: f.store, Tx: f.store, Audit: f.store, Pub: f.pub, Keys: keys, Clock: f.clock,
-		FarmRoles: memRoles{has: map[string]bool{"1/1/agronomist": true}},
+		FarmRoles: flagRoles{has: map[string]bool{"1/1/agronomist": true}},
 		Logger:    slog.New(slog.NewTextHandler(io.Discard, nil))}
 	if mutate != nil {
 		mutate(&d)

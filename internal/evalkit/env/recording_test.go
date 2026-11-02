@@ -17,18 +17,24 @@ func TestRecordingAdapter(t *testing.T) {
 		t.Fatalf("fresh adapter calls = %#v, want empty non-nil", got)
 	}
 	ctx := context.Background()
-	res, err := r.DryRun(ctx, model.WorkOrder{OrderID: 3})
+	order := model.WorkOrder{OrderID: 3, TenantID: 1, FarmID: 2, FieldID: 201, Payload: []byte(`{"device_id":"uav-p100-21"}`)}
+	res, err := r.DryRun(ctx, order)
 	if err != nil || string(res.Commands) != "[]" {
 		t.Fatalf("DryRun = %+v, %v", res, err)
 	}
-	task, err := r.Dispatch(ctx, model.WorkOrder{OrderID: 3}, "k-3")
+	task, err := r.Dispatch(ctx, order, "k-3")
 	if err != nil || task != "recorded-3" {
 		t.Fatalf("Dispatch = %q, %v", task, err)
 	}
+	order.Payload[0] = 'X' // 记录须复制 payload
 	got := r.DeviceCalls()
 	want := []DeviceCall{{Method: MethodDryRun, OrderID: 3}, {Method: MethodDispatch, OrderID: 3, IdempotencyKey: "k-3"}}
-	if !slices.Equal(got, want) {
-		t.Fatalf("calls = %+v, want %+v", got, want)
+	eq := func(a, b DeviceCall) bool {
+		return a.Method == b.Method && a.OrderID == b.OrderID && a.IdempotencyKey == b.IdempotencyKey &&
+			a.TenantID == 1 && a.FarmID == 2 && a.FieldID == 201 && string(a.Payload) == `{"device_id":"uav-p100-21"}`
+	}
+	if !slices.EqualFunc(got, want, eq) {
+		t.Fatalf("calls = %+v, want %+v with order attribution", got, want)
 	}
 	if s := got[0].String() + "|" + got[1].String(); s != "DryRun order=3|Dispatch order=3 key=k-3" {
 		t.Fatalf("String = %q", s)

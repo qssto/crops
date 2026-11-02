@@ -5,11 +5,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/gin-gonic/gin"
 
@@ -38,23 +40,25 @@ func (f *fakeFlagAdmin) List(_ context.Context, actor model.Scope, key model.Fla
 	return nil, f.err
 }
 
+// kbExpertStore 在 testRoleStore 之上加一个平台 kb_expert（9002）。
+type kbExpertStore struct{ testRoleStore }
+
+func (s kbExpertStore) ListRoles(ctx context.Context, tenantID, farmID, userID uint64) ([]model.RoleBinding, error) {
+	if userID == 9002 {
+		return []model.RoleBinding{{Role: model.RoleKBExpert}}, nil
+	}
+	return s.testRoleStore.ListRoles(ctx, tenantID, farmID, userID)
+}
+
 func TestAdminFlags(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	now := time.Date(2026, 10, 29, 1, 0, 0, 0, time.UTC)
-	grants := map[uint64][]model.Grant{
-		1001: {{TenantID: 1, FarmID: 1, Roles: []model.Role{model.RoleFarmManager}}},
-		9001: {{TenantID: 0, FarmID: 0, Roles: []model.Role{model.RolePlatformAdmin}}},
-	}
-	auth, err := service.NewAuthService("0123456789abcdef0123456789abcdef", grants, fixedClock{now})
-	if err != nil {
-		t.Fatal(err)
-	}
+	// 9002 是绑在 (0,0) 的 kb_expert：过平台 Scope，但权限矩阵不给 flag.write。
+	e := newTestEnvWith(t, kbExpertStore{})
 	bearer := func(uid uint64) string {
-		tok, err := auth.Issue(uid, time.Hour)
-		if err != nil {
-			t.Fatal(err)
+		tenant := uint64(1)
+		if uid >= 9001 {
+			tenant = 0
 		}
-		return "Bearer " + tok
+		return e.bearer(t, uid, tenant)
 	}
 	const (
 		put    = "/api/v1/admin/flags/enable_advice/scopes/1/1"
@@ -70,6 +74,7 @@ func TestAdminFlags(t *testing.T) {
 		svcErr     error
 		wantStatus int
 		wantError  string
+		wantDeny   string // 非空时要求恰好一次该拒绝码的审计
 	}{
 		{name: "put ok", method: http.MethodPut, path: put, auth: bearer(9001), body: okBody, wantStatus: http.StatusOK},
 		{name: "put global ok", method: http.MethodPut, path: "/api/v1/admin/flags/enable_advice/scopes/0/0", auth: bearer(9001),
@@ -78,7 +83,9 @@ func TestAdminFlags(t *testing.T) {
 		{name: "bad token 401", method: http.MethodPut, path: put, auth: "Bearer x.y.z", body: okBody,
 			wantStatus: http.StatusUnauthorized},
 		{name: "farm user no platform grant 403", method: http.MethodPut, path: put, auth: bearer(1001), body: okBody,
-			wantStatus: http.StatusForbidden},
+			wantStatus: http.StatusForbidden, wantError: "SCOPE_DENIED", wantDeny: service.DenyScope},
+		{name: "platform kb_expert lacks flag.write 403", method: http.MethodPut, path: put, auth: bearer(9002), body: okBody,
+			wantStatus: http.StatusForbidden, wantError: "ROLE_INSUFFICIENT", wantDeny: service.DenyRole},
 		{name: "bad tenant_id 400", method: http.MethodPut, path: "/api/v1/admin/flags/enable_advice/scopes/x/1",
 			auth: bearer(9001), body: okBody, wantStatus: http.StatusBadRequest},
 		{name: "bad farm_id 400", method: http.MethodPut, path: "/api/v1/admin/flags/enable_advice/scopes/1/-1",
@@ -111,8 +118,11 @@ func TestAdminFlags(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			fa := &fakeFlagAdmin{err: tt.svcErr}
+			den := &recDenier{}
+			g := e.guard
+			g.Denials, g.Logger = den, slog.New(slog.NewTextHandler(io.Discard, nil))
 			r := gin.New()
-			MountAdmin(r, auth, fa)
+			MountAdmin(r, g, fa)
 			req := httptest.NewRequest(tt.method, tt.path, strings.NewReader(tt.body))
 			if tt.auth != "" {
 				req.Header.Set("Authorization", tt.auth)
@@ -127,6 +137,9 @@ func TestAdminFlags(t *testing.T) {
 				if err := json.Unmarshal(rec.Body.Bytes(), &eb); err != nil || eb.Error != tt.wantError {
 					t.Fatalf("body = %s, want error %q", rec.Body.String(), tt.wantError)
 				}
+			}
+			if tt.wantDeny != "" && !slices.Equal(den.codes(), []string{tt.wantDeny}) {
+				t.Fatalf("denials = %v, want [%s]", den.codes(), tt.wantDeny)
 			}
 			if rec.Code < http.StatusBadRequest && (fa.gotActor.UserID != 9001 || fa.gotActor.TenantID != 0 || fa.gotActor.FarmID != 0) {
 				t.Fatalf("actor = %+v", fa.gotActor)

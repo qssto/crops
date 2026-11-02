@@ -38,12 +38,15 @@ type profileRow struct {
 
 // Profile 实现 memory.Source：地块不在 Scope 内 Found=false。
 func (r *MemoryRepo) Profile(ctx context.Context, scope model.Scope, fieldID uint64) (memory.Profile, error) {
+	if err := requireScope(scope); err != nil {
+		return memory.Profile{}, err
+	}
 	var row profileRow
 	res := r.db.WithContext(ctx).Raw(
 		`SELECT p.name AS farm_name, p.region, p.main_crops, f.ext_field_code AS field_code, f.crop, f.sowing_date AS sowing, f.area_mu, f.prefs
  FROM field_profile f JOIN farm_profile p ON p.tenant_id=f.tenant_id AND p.farm_id=f.farm_id
- WHERE f.id=? AND f.tenant_id=? AND f.farm_id=?`,
-		fieldID, scope.TenantID, scope.FarmID).Scan(&row)
+ WHERE f.tenant_id=? AND f.farm_id=? AND f.id=?`,
+		scope.TenantID, scope.FarmID, fieldID).Scan(&row)
 	if res.Error != nil {
 		return memory.Profile{}, fmt.Errorf("repository: get profile field %d: %w", fieldID, res.Error)
 	}
@@ -82,6 +85,9 @@ func (p profileRow) summary() (string, error) {
 
 // Episodic 实现 memory.Source：该地块近 limit 条 episodic_memory，按 occurred_at 倒序（idx_field_time）。
 func (r *MemoryRepo) Episodic(ctx context.Context, scope model.Scope, fieldID uint64, limit int) ([]agent.MemoryItem, error) {
+	if err := requireScope(scope); err != nil {
+		return nil, err
+	}
 	var rows []agent.MemoryItem
 	if err := r.db.WithContext(ctx).Raw(
 		`SELECT kind, ref_id, summary, occurred_at FROM episodic_memory

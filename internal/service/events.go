@@ -82,7 +82,7 @@ func NewEventService(d EventDeps) *EventService {
 // http.Server.Shutdown 不取消长连接的请求 ctx，须经 RegisterOnShutdown 调用本方法。可重复调用。
 func (s *EventService) Shutdown() { s.once.Do(func() { close(s.stop) }) }
 
-// Stream 推送 run 的事件直到 run 结束、ctx 取消或订阅断开：先 SUBSCRIBE（缓冲）→ 读 run（不存在返回 model.ErrNotFound，
+// Stream 推送 run 的事件直到 run 结束、ctx 取消或订阅断开：先 SUBSCRIBE（缓冲）→ 读 run（不在 Scope 内返回 ErrNotInScope，
 // 此前不写 sink）→ 补读 seq > lastSeq → 推缓冲与后续消息，丢弃 seq ≤ 已推送的消息，seq 断档时再补读。
 // 推出 RUN_COMPLETED / RUN_FAILED / RUN_INTERRUPTED，或补读后 run 已终态 / 中断，发 End 并返回 nil。
 func (s *EventService) Stream(ctx context.Context, scope model.Scope, runID uint64, lastSeq int64, sink StreamSink) error {
@@ -98,9 +98,9 @@ func (s *EventService) Stream(ctx context.Context, scope model.Scope, runID uint
 			s.d.Logger.WarnContext(ctx, "sse unsubscribe", "run_id", runID, "err", err)
 		}
 	}()
-	sum, err := s.d.Runs.Summary(ctx, scope, runID)
+	sum, err := s.d.Runs.Summary(ctx, scope, runID) // 归属查询：未命中标为 ErrNotInScope
 	if err != nil {
-		return fmt.Errorf("service: stream run %d: %w", runID, err)
+		return fmt.Errorf("service: stream run %d: %w", runID, notInScope(err))
 	}
 	st := &streamState{svc: s, scope: scope, runID: runID, last: lastSeq, sink: sink}
 	ended, err := st.backfill(ctx)

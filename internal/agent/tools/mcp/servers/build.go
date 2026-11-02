@@ -58,6 +58,26 @@ func Build(cfg *config.Tools, clk clock.Clock, dir kit.FieldDirectory) ([]mcp.Se
 	return out, nil
 }
 
+// DeviceOwnership 按 device server 的 mode 构造设备归属（gateway Options.Devices）：mock 读 {mock_dir}/device.yaml 的显式绑定；
+// real 暂为空绑定，全部 SCOPE_DENIED（fail closed），真实绑定源待 P1-L2（cmd/devicesim + Adapter）。
+func DeviceOwnership(cfg *config.Tools) (*device.Bindings, error) {
+	if cfg == nil {
+		return nil, errors.New("servers: cfg is required")
+	}
+	switch cfg.Device.Mode {
+	case config.ToolModeMock:
+		b, err := device.LoadBindings(filepath.Join(cfg.MockDir, device.Name+".yaml"))
+		if err != nil {
+			return nil, fmt.Errorf("servers: device bindings: %w", err)
+		}
+		return b, nil
+	case config.ToolModeReal:
+		return device.NewBindings(nil), nil // TODO(P1-L2): 接入真实设备绑定源
+	default:
+		return nil, fmt.Errorf("servers: device: unknown mode %q", cfg.Device.Mode)
+	}
+}
+
 func build(mockDir string, s config.NamedToolServer, clk clock.Clock, dir kit.FieldDirectory) (mcp.Server, error) {
 	e, ok := registry[s.Name]
 	if !ok {

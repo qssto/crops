@@ -19,8 +19,7 @@ minio:
   use_ssl: false
   bucket_raw: agri-steward-raw
   bucket_eval: agri-steward-eval
-auth:
-  file: configs/auth.yaml
+auth:   # 用户 → 农场 → 角色绑定在 user_role 表（种子见 configs/seed/fields.yaml 的 user_roles）
   token_ttl: 24h
 log:
   level: info

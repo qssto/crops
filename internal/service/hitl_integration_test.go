@@ -41,9 +41,13 @@ func newHITLEnv(t *testing.T, e *itest.Env, resumeErr error) *hitlEnv {
 	store := repository.NewDecisionRepo(slot.DB, slot.Clock)
 	orders := service.NewWorkOrderService(slot.Clock, repository.WorkOrderRepo{}, repository.EventRepo{})
 	h := &hitlEnv{slot: slot, locker: repository.NewLocker(e.Redis), resumer: &itResumer{err: resumeErr}, gate: &itGate{}}
-	h.svc = service.NewDecisionService(service.DecisionDeps{Store: store, Orders: orders, Events: repository.EventRepo{},
+	svc, err := service.NewDecisionService(service.DecisionDeps{Store: store, Orders: orders, Events: repository.EventRepo{},
 		Idem: repository.NewRedisIdem(e.Redis), Locks: h.locker, Keys: slot.Keys, Resumer: h.resumer,
-		Clock: slot.Clock, Logger: logger})
+		Clock: slot.Clock, Logger: logger, Perms: itPerms(t)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.svc = svc
 	h.scan = service.NewScanner(service.ScanDeps{Tickets: store, Runs: repository.NewRunRepo(slot.DB, slot.Clock),
 		Expirer: h.svc, Orders: orders, Gate: h.gate, Resumer: h.resumer, Locks: h.locker, Keys: slot.Keys,
 		Clock: slot.Clock, Logger: logger})

@@ -53,7 +53,8 @@ func Reference(s *sample.Sample, tx *knowledge.Taxonomy, kb grader.KnowledgeInde
 	return &grader.Trial{Sample: s, Outcome: exp.Outcome, RefuseReason: exp.RefuseReason,
 		Card: card, KB: kb, ToolCalls: calls, ToolFailures: referenceFailures(s),
 		Approval: referenceApproval(exp), DeviceCalls: []string{}, Logs: []byte{},
-		OrderTransitions: referenceTransitions(exp.WorkOrder)}, skip, notes
+		OrderTransitions: referenceTransitions(exp.WorkOrder),
+		Scope:            model.Scope{TenantID: refID, FarmID: refID}, Fields: []uint64{refID}, Devices: []string{}}, skip, notes
 }
 
 // referenceFailures 把 fixtures.mcp 中注入的故障记为 "tool:fault"（按工具名排序；无故障为空切片）。

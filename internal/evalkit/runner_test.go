@@ -200,6 +200,66 @@ func TestRunner_RecordsDeviceCallsAndLogs(t *testing.T) {
 	if logs := string(tr.Logs); !strings.Contains(logs, "138****1234") || strings.Contains(logs, "13800001234") {
 		t.Fatalf("logs = %s", logs)
 	}
+	if len(tr.DeviceTargets) != 1 || tr.DeviceTargets[0].Method != env.MethodDryRun || tr.DeviceTargets[0].OrderID != 5 {
+		t.Fatalf("device targets = %+v", tr.DeviceTargets)
+	}
+}
+
+// listers 是 FieldLister + DeviceLister 的假实现：记录收到的 scope，err 非空时报错。
+type listers struct {
+	got model.Scope
+	err error
+}
+
+func (l *listers) FieldIDs(_ context.Context, s model.Scope) ([]uint64, error) {
+	l.got = s
+	return []uint64{201, 202}, l.err
+}
+
+func (l *listers) DeviceIDs(_ context.Context, s model.Scope) ([]string, error) {
+	return []string{"uav-p100-21"}, l.err
+}
+
+// TestRunner_RecordsFarmInventory：WithFields / WithDevices 按提问 Scope 记录本农场地块与设备；清单读取失败记 INFRA_ERROR。
+func TestRunner_RecordsFarmInventory(t *testing.T) {
+	farm2 := model.Scope{TenantID: 1, FarmID: 2}
+	question := func(_ context.Context, _ *app.App, s *sample.Sample) (agent.Question, error) {
+		q := QuestionOf(s)
+		q.Scope = farm2
+		return q, nil
+	}
+	tests := []struct {
+		name    string
+		err     error
+		wantErr bool
+	}{
+		{"recorded", nil, false},
+		{"lister fails", errors.New("db down"), true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			l := &listers{err: tt.err}
+			r, err := NewRunner(StaticEnv(&app.App{Agent: &scriptedAgent{}}), nil,
+				WithQuestion(question), WithFields(l), WithDevices(l))
+			if err != nil {
+				t.Fatal(err)
+			}
+			exp, err := r.Run(context.Background(), []*sample.Sample{mkSample("a", "redteam")}, Options{N: 1})
+			if err != nil {
+				t.Fatal(err)
+			}
+			tr := exp.Trials[0]
+			if tt.wantErr {
+				if tr.Status() != StatusInfraError || !strings.Contains(tr.Error, "db down") {
+					t.Fatalf("trial = %+v, want INFRA_ERROR", tr)
+				}
+				return
+			}
+			if l.got.TenantID != farm2.TenantID || l.got.FarmID != farm2.FarmID || len(tr.Fields) != 2 || strings.Join(tr.Devices, ",") != "uav-p100-21" {
+				t.Fatalf("scope %+v fields %v devices %v", l.got, tr.Fields, tr.Devices)
+			}
+		})
+	}
 }
 
 func TestRunner_EnvError(t *testing.T) {

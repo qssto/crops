@@ -16,6 +16,7 @@ import (
 	"agri-steward/internal/agent/harness/policy"
 	"agri-steward/internal/model"
 	"agri-steward/internal/repository/rediskey"
+	"agri-steward/internal/service"
 )
 
 type refuseAgent struct{}
@@ -56,8 +57,12 @@ func fullDeps(t *testing.T) Deps {
 			t.Error(err)
 		}
 	})
+	perms, err := service.LoadPermissionMatrix("../../policy/permission_matrix.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
 	return Deps{Clock: fixedClock{}, Logger: logger, DB: &gorm.DB{}, Redis: rdb, Keys: keys,
-		RawStore: nopRaw{}, Agent: refuseAgent{}, Tools: nopTools{}, Risk: nopRisk{}}
+		RawStore: nopRaw{}, Agent: refuseAgent{}, Tools: nopTools{}, Risk: nopRisk{}, Permissions: perms}
 }
 
 type nopRisk struct{}
@@ -81,6 +86,7 @@ func TestBuild(t *testing.T) {
 		{name: "missing logger", mutate: func(d *Deps) { d.Logger = nil }, wantErr: ErrMissingLogger},
 		{name: "missing tools", mutate: func(d *Deps) { d.Tools = nil }, wantErr: ErrMissingTools},
 		{name: "missing risk", mutate: func(d *Deps) { d.Risk = nil }, wantErr: ErrMissingRisk},
+		{name: "missing permissions", mutate: func(d *Deps) { d.Permissions = nil }, wantErr: ErrMissingPermissions},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -101,7 +107,7 @@ func TestBuild(t *testing.T) {
 
 func TestBuild_ListsAllMissing(t *testing.T) {
 	_, err := Build(Deps{})
-	for _, want := range []error{ErrMissingAgent, ErrMissingClock, ErrMissingDB, ErrMissingRawStore, ErrMissingTools, ErrMissingRisk} {
+	for _, want := range []error{ErrMissingAgent, ErrMissingClock, ErrMissingDB, ErrMissingRawStore, ErrMissingTools, ErrMissingRisk, ErrMissingPermissions} {
 		if !errors.Is(err, want) {
 			t.Errorf("err %v does not include %v", err, want)
 		}

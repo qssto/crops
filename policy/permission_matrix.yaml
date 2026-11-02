@@ -1,0 +1,19 @@
+# 权限矩阵 v1（P1 §6.2 功能任务 6）。由 service.LoadPermissionMatrix 加载，controller 路由与 service 细分判定共用。
+# 约束（加载时校验，违反即启动失败）：
+#   - 角色限 farmer / farm_manager / agronomist / operator / admin / auditor / platform_admin / kb_expert / legal；
+#     操作限 service.Operations；同一角色内操作不得重复，角色键不得重复。
+#   - flag.write 只能授给 platform_admin（kb_expert / legal 同为平台角色也不行）。
+#   - 未声明的「角色 × 操作」一律拒绝；kb_expert / legal 预留，本阶段无权限。
+# 审批还需同时满足 risk_matrix.yaml 的 required_role（用药类 SPRAY 只有 agronomist）；DecisionService 按作业类型取 decide.pesticide（SPRAY）或 decide.other 判定。
+# 取值为草拟，待 Owner 确认。
+version: 1
+roles:
+  farmer: [ask, advice.read]
+  farm_manager: [ask, advice.read, approval.submit, approval.decide.other, order.cancel, raw.read]
+  agronomist: [ask, advice.read, approval.submit, approval.decide.pesticide, approval.decide.other, order.cancel, raw.read]
+  operator: [ask, advice.read, order.cancel]
+  admin: [ask, advice.read, order.cancel, audit.export]
+  auditor: [advice.read, audit.export, raw.read]
+  platform_admin: [advice.read, order.cancel, audit.export, raw.read, flag.write]
+  kb_expert: []
+  legal: []

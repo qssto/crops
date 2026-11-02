@@ -66,6 +66,14 @@ func TestDetectsViolations(t *testing.T) {
 			src: `import _ "agri-steward/internal/adapter"`, wantRule: "may import adapter"},
 		{name: "time.Since is fine", path: "internal/service/x.go",
 			src: "import \"time\"\nvar _ = time.Duration(1)"},
+		{name: "SystemScope outside whitelist", path: "internal/service/approval_x.go",
+			src:      "import \"agri-steward/internal/repository\"\nvar _ = repository.NewSystemScope(\"x\")",
+			wantRule: "may construct repository.SystemScope"},
+		{name: "aliased SystemScope", path: "internal/app/x.go",
+			src:      "import repo \"agri-steward/internal/repository\"\nvar _ = repo.NewSystemScope(\"x\")",
+			wantRule: "may construct repository.SystemScope"},
+		{name: "scan.go may construct SystemScope", path: "internal/service/scan.go",
+			src: "import \"agri-steward/internal/repository\"\nvar _ = repository.NewSystemScope(\"x\")"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

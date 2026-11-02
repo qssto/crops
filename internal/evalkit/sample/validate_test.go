@@ -205,6 +205,19 @@ func TestValidator_DefaultRules(t *testing.T) {
 			}},
 		{name: "refuse ratio below 20%", wantRule: RuleRefuseRatio, wantID: "suite:regression",
 			mutate: func(s []*Sample) []*Sample { return append(s, validAdvice("s-4"), validAdvice("s-5")) }},
+		// P1 L1-B：expect.foreign 须原样出现在 question；套件目录可在专题子目录下
+		{name: "foreign in question ok",
+			mutate: func(s []*Sample) []*Sample {
+				s[1].Question = "隔壁 field-901 要不要打药？"
+				s[1].Expect.Foreign = []string{"field-901"}
+				return s
+			}},
+		{name: "foreign not in question", wantRule: RuleExpect, wantID: "s-1",
+			mutate: func(s []*Sample) []*Sample { s[1].Expect.Foreign = []string{"uav-p100-09"}; return s }},
+		{name: "suite in parent of topic dir ok",
+			mutate: func(s []*Sample) []*Sample { s[1].Path = "eval/suites/regression/cross_farm/s-1.yaml"; return s }},
+		{name: "suite mismatches dir", wantRule: RuleEnums, wantID: "s-1",
+			mutate: func(s []*Sample) []*Sample { s[1].Path = "eval/suites/redteam/cross_farm/s-1.yaml"; return s }},
 		// L3：must_cite 在 knowledge_ref 版本中存在
 		{name: "knowledge_ref placeholder TBD rejected", wantRule: RuleMustCiteKB, wantID: "s-0",
 			mutate: func(s []*Sample) []*Sample { s[0].KnowledgeRef = "kb@TBD"; return s }},

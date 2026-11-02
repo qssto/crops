@@ -94,7 +94,7 @@ type OrderRef struct {
 	OrderID  uint64
 }
 
-// Scope 是鉴权中间件从 token 与静态配置解析出的身份范围（母文档 §4.6.2-1）。
+// Scope 是鉴权中间件从 token 与 user_role 解析出的身份范围（母文档 §4.6.2-1，P1 §6.2）。
 type Scope struct {
 	TenantID uint64 `json:"tenant_id"`
 	FarmID   uint64 `json:"farm_id"`
@@ -102,11 +102,20 @@ type Scope struct {
 	Roles    []Role `json:"roles"`
 }
 
-// Grant 是一个用户在某农场上的授权（configs/auth.yaml 的一项；P1 起对应 user_role 行）。
-type Grant struct {
-	TenantID uint64 `json:"tenant_id"`
-	FarmID   uint64 `json:"farm_id"`
-	Roles    []Role `json:"roles"`
+// UserRole 是 user_role 的一行绑定（P1 §6.2）；平台角色的 tenant_id = farm_id = 0。
+type UserRole struct {
+	TenantID  uint64
+	FarmID    uint64
+	UserID    uint64
+	Role      Role
+	GrantedBy uint64
+}
+
+// RoleBinding 是身份解析 SQL 返回的一行：用户在 (tenant_id, farm_id) 上的一个角色。
+type RoleBinding struct {
+	TenantID uint64
+	FarmID   uint64
+	Role     Role
 }
 
 // HasRole 判断 Scope 是否含指定角色。

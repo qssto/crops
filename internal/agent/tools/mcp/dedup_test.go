@@ -197,7 +197,7 @@ func TestCall_Cache(t *testing.T) {
 				}
 				return
 			}
-			key := e.keys.CacheMCP(tt.tool, mcp.ArgsDigest(mcp.Canonical(tt.calls[0].Args)))
+			key := e.keys.CacheMCP(tt.tool, scope.TenantID, scope.FarmID, mcp.ArgsDigest(mcp.Canonical(tt.calls[0].Args)))
 			if got := e.cache.ttl[key]; got != tt.wantTTL {
 				t.Fatalf("cache ttl[%s] = %v, want %v", key, got, tt.wantTTL)
 			}
@@ -392,7 +392,7 @@ func TestNewGateway_MaskRequiresRawReader(t *testing.T) {
 	srvs := []mcp.Server{e.srv["field"]}
 	_, err := mcp.NewGateway(srvs, mcp.Options{Clock: e.clk, Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
 		Keys: e.keys, ToolPolicy: toolPolicy(t, testToolPolicy), Idem: e.idem, Cache: e.cache, Calls: e.calls,
-		Raw: e.raw, Fields: memFields{}, Mask: maskAll})
+		Raw: e.raw, Fields: &memFields{}, Devices: &memDevices{}, Mask: maskAll})
 	if err == nil || !strings.Contains(err.Error(), "RawReader is required") {
 		t.Fatalf("err = %v, want RawReader required", err)
 	}

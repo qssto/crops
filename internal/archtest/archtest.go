@@ -23,6 +23,7 @@ type File struct {
 	Pkg     string   // 相对仓库根的目录，如 internal/clock
 	Imports []string // import 路径
 	NowAt   []int    // 出现 time.Now 选择子的行号
+	SysAt   []int    // 出现 repository.NewSystemScope 选择子的行号
 }
 
 // Violation 是一条违规。
@@ -77,33 +78,41 @@ func parseFile(fset *token.FileSet, root, path string) (File, error) {
 	}
 	rel = filepath.ToSlash(rel)
 	f := File{Rel: rel, Pkg: filepath.ToSlash(filepath.Dir(rel))}
-	timeName := ""
+	names := map[string]string{} // import 路径 → 本文件内的包名
 	for _, imp := range af.Imports {
 		p, err := strconv.Unquote(imp.Path.Value)
 		if err != nil {
 			return File{}, fmt.Errorf("%s: import %s: %w", rel, imp.Path.Value, err)
 		}
 		f.Imports = append(f.Imports, p)
-		if p == "time" {
-			timeName = "time"
-			if imp.Name != nil {
-				timeName = imp.Name.Name
-			}
+		name := p[strings.LastIndex(p, "/")+1:]
+		if imp.Name != nil {
+			name = imp.Name.Name
 		}
+		names[p] = name
 	}
-	if timeName != "" {
-		ast.Inspect(af, func(n ast.Node) bool {
-			sel, ok := n.(*ast.SelectorExpr)
-			if !ok || sel.Sel.Name != "Now" {
-				return true
-			}
-			if id, ok := sel.X.(*ast.Ident); ok && id.Name == timeName {
-				f.NowAt = append(f.NowAt, fset.Position(sel.Pos()).Line)
-			}
-			return true
-		})
-	}
+	f.NowAt = selectorLines(fset, af, names["time"], "Now")
+	f.SysAt = selectorLines(fset, af, names[Module+"/internal/repository"], "NewSystemScope")
 	return f, nil
+}
+
+// selectorLines 返回 pkg.sel 选择子出现的行号；pkg 为空（未 import）返回 nil。
+func selectorLines(fset *token.FileSet, af *ast.File, pkg, sel string) []int {
+	if pkg == "" {
+		return nil
+	}
+	var lines []int
+	ast.Inspect(af, func(n ast.Node) bool {
+		s, ok := n.(*ast.SelectorExpr)
+		if !ok || s.Sel.Name != sel {
+			return true
+		}
+		if id, ok := s.X.(*ast.Ident); ok && id.Name == pkg {
+			lines = append(lines, fset.Position(s.Pos()).Line)
+		}
+		return true
+	})
+	return lines
 }
 
 // Check 对文件逐条套用 Rules，返回按文件、行号排序的违规。

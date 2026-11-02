@@ -49,9 +49,10 @@ type Deps struct {
 	// Presign 是 L7 原文读取的预签名器（生产：repository.MinIOPresigner，与 RawStore 同一 bucket）；
 	// 为空时不挂 GET /runs/:run_id/raw/:raw_id。
 	Presign repository.Presigner
-	// FarmRoles 是 P1-L0 enable_robot_dispatch 置开的 agronomist 前置检查（可选；生产为 *service.AuthService）。
-	// 为空时该开关一律不可置开（失败关闭）。
-	FarmRoles service.FarmRoleChecker
+	// Permissions 是权限矩阵（policy/permission_matrix.yaml），路由鉴权与审批 / 原文读取的细分判定共用。
+	Permissions *service.PermissionMatrix
+	// DenialCounter 是拒绝计数接缝（可选；L7 接 Prometheus as_cross_farm_denied_total）。
+	DenialCounter service.DenialCounter
 }
 
 // metaer 是能报告自身版本信息的主链路（graph.Agent）。
@@ -97,6 +98,9 @@ type App struct {
 	Partitions *service.PartitionMaintainer
 	// P1-L0：开关统一读写入口（cmd/server 启动 Flags.Run 订阅 flags:changed）。
 	Flags *service.FlagService
+	// P1-L1-A：权限矩阵与拒绝审计（CROSS_FARM_DENIED）。
+	Perms   *service.PermissionMatrix
+	Denials *service.DenialAuditor
 	// eventRepo 是唯一的 run_event 写入口（同事务 audit_log 投影 + 提交后 PUBLISH sse:run:{run_id}）。
 	eventRepo repository.EventRepo
 }
@@ -131,6 +135,7 @@ func Build(deps Deps) (*App, error) {
 	check(deps.RawStore == nil, ErrMissingRawStore)
 	check(deps.Tools == nil, ErrMissingTools)
 	check(deps.Risk == nil, ErrMissingRisk)
+	check(deps.Permissions == nil, ErrMissingPermissions)
 	if err := errors.Join(errs...); err != nil {
 		return nil, err
 	}
@@ -168,7 +173,10 @@ func Build(deps Deps) (*App, error) {
 
 		DashboardDir: deps.DashboardDir,
 	}
-	if err := a.buildFlags(deps); err != nil {
+	if err := a.buildAccess(deps); err != nil {
+		return nil, err
+	}
+	if err := a.buildFlags(); err != nil {
 		return nil, err
 	}
 	if deps.NewAgent != nil {
@@ -187,7 +195,9 @@ func Build(deps Deps) (*App, error) {
 		Limiter: repository.NewAskLimiter(deps.Redis, deps.Keys, AskPerMinute),
 		Runs:    runs, Advice: advice, Agent: a.Agent, Meta: meta, Logger: deps.Logger, Flags: a.Flags,
 	})
-	a.buildHITLServices()
+	if err := a.buildHITLServices(); err != nil {
+		return nil, err
+	}
 	if err := a.buildDispatch(); err != nil {
 		return nil, err
 	}
@@ -201,7 +211,7 @@ func Build(deps Deps) (*App, error) {
 func (a *App) buildAudit(deps Deps) error {
 	if deps.Presign != nil {
 		svc, err := service.NewAuditService(service.AuditDeps{Store: repository.RawAccessRepo{DB: a.DB},
-			Presign: deps.Presign, Clock: a.Clock, Logger: a.Logger})
+			Presign: deps.Presign, Clock: a.Clock, Logger: a.Logger, Perms: a.Perms})
 		if err != nil {
 			return fmt.Errorf("app: build audit: %w", err)
 		}
@@ -216,15 +226,16 @@ func (a *App) buildAudit(deps Deps) error {
 	return nil
 }
 
-// Handler 返回 HTTP 路由（gin），鉴权由 auth 提供；DashboardDir 非空时挂 /dashboard。
+// Handler 返回 HTTP 路由（gin），鉴权由 auth（a.NewAuth）提供、权限按 a.Perms 判定；DashboardDir 非空时挂 /dashboard。
 func (a *App) Handler(auth *service.AuthService) http.Handler {
 	mounts := []controller.Mount{controller.ApprovalRoutes(a.HITL.Decisions), controller.RunRoutes(a.RunDetail, a.Metrics),
 		controller.EventRoutes(a.EventStream)}
 	if a.Audit != nil {
 		mounts = append(mounts, controller.AuditRoutes(a.Audit))
 	}
-	r := controller.NewRouter(auth, a.Ask, mounts...)
-	controller.MountAdmin(r, auth, a.Flags) // P1-L0：/api/v1/admin/flags
+	g := a.guard(auth)
+	r := controller.NewRouter(g, a.Ask, mounts...)
+	controller.MountAdmin(r, g, a.Flags) // P1-L0：/api/v1/admin/flags（flag.write）
 	if a.DashboardDir != "" {
 		controller.MountDashboard(r, a.DashboardDir)
 	}

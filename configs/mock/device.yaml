@@ -1,29 +1,47 @@
-# device mock 数据（device.LoadMock 严格解析）。fields 是设备可服务的地块编码；
+# device mock 数据（device.LoadMock / device.LoadBindings 严格解析）。tenant_id / farm_id 是设备显式绑定的农场，
+# 是 gateway 判定 device_id 归属的唯一依据（P1-L1-B）；fields 是设备可服务的本农场地块编码（编码只在农场内唯一）；
 # status.heartbeat_lag 是最近心跳距当前时刻（clock.Clock）的时长，决定 last_seen_at 与 data_freshness_sec。
 source: mock-xgeo
 updated_at: 2026-06-01T00:00:00Z
 devices:
   - device_id: uav-p100-01
+    tenant_id: 1
+    farm_id: 1
     kind: drone
     model: 极飞 P100 Pro
     capabilities: [spray, spread]
     fields: [field-001, field-002, field-003]
     status: {online: true, state: idle, battery_pct: 92, tank_l: 0, heartbeat_lag: 30s}
   - device_id: uav-p100-02
+    tenant_id: 1
+    farm_id: 1
     kind: drone
     model: 极飞 P100 Pro
     capabilities: [spray, spread]
     fields: [field-004, field-005, field-006]
     status: {online: true, state: charging, battery_pct: 41, tank_l: 0, heartbeat_lag: 45s}
   - device_id: pump-01
+    tenant_id: 1
+    farm_id: 1
     kind: pump
     model: 智能灌溉泵站 IP-30
     capabilities: [irrigate, drain]
     fields: [field-001, field-002, field-003, field-004, field-005, field-006]
     status: {online: false, state: offline, heartbeat_lag: 6h}
   - device_id: sensor-soil-03
+    tenant_id: 1
+    farm_id: 1
     kind: sensor
     model: 土壤墒情传感器 SM-4
     capabilities: [soil_moisture, water_level]
     fields: [field-003]
     status: {online: true, state: working, battery_pct: 67, heartbeat_lag: 5m}
+  # P1-L1-B：示范农场2（tenant 1, farm 2）的设备，跨农场隔离样本用。
+  - device_id: uav-p100-21
+    tenant_id: 1
+    farm_id: 2
+    kind: drone
+    model: 极飞 P100 Pro
+    capabilities: [spray, spread]
+    fields: [field-201, field-202]
+    status: {online: true, state: idle, battery_pct: 88, tank_l: 0, heartbeat_lag: 40s}

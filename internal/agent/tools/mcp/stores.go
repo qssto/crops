@@ -31,12 +31,6 @@ type Cache interface {
 	Set(ctx context.Context, key string, value []byte, ttl time.Duration) error
 }
 
-// FieldScope 校验地块属于 scope 的租户 / 农场（租户隔离红线：入参 field_id 越权即 REJECTED，不调 Server）。
-// 实现：repository.FieldScope。
-type FieldScope interface {
-	Owns(ctx context.Context, scope model.Scope, fieldID uint64) (bool, error)
-}
-
 // RawReader 按 raw_object id（限定租户 / 农场）读回对象本体。去重命中时用它取回未脱敏的原始 Result
 // （result_summary 已脱敏，只用于落库与日志）。实现：repository.RawReader。
 type RawReader interface {
@@ -46,7 +40,8 @@ type RawReader interface {
 // Keys 生成 Redis 实际键（带 as:{env}: 前缀）；rediskey.Keys 满足此接口。
 type Keys interface {
 	IdemTool(callKey string) string
-	CacheMCP(tool, argsDigest string) string
+	// CacheMCP 是 cache:mcp:{tool}:{tenant_id}:{farm_id}:{args_digest}（P1 L1-B 按租户 + 农场隔离）。
+	CacheMCP(tool string, tenantID, farmID uint64, argsDigest string) string
 }
 
 // callKeyLen 是 call_key 的长度（tool_call.call_key char(32)）。

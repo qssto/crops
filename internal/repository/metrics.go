@@ -110,6 +110,9 @@ func NewMetricsRepo(db *gorm.DB) *MetricsRepo { return &MetricsRepo{db: db} }
 
 // Facts 读 [from, to) 内的事实行，每类一条 SQL。
 func (r *MetricsRepo) Facts(ctx context.Context, scope model.Scope, from, to time.Time) (MetricFacts, error) {
+	if err := requireScope(scope); err != nil {
+		return MetricFacts{}, err
+	}
 	var f MetricFacts
 	win := []any{scope.TenantID, scope.FarmID, from, to}
 	var events []struct {

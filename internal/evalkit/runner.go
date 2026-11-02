@@ -60,6 +60,13 @@ type Trial struct {
 	Scope      model.Scope
 	Detail     *service.RunDetail
 	Transcript string
+	// P1 L1-B：Fields 是本农场全部地块 id（WithFields 优先，否则 App.DB 非空时读 trial 库，都没有为 nil）；
+	// Devices 是本农场全部设备 ID（WithDevices 配置时记录，否则 nil）；ToolArgs 是按顺序的工具入参（同 ToolCalls 条件）；
+	// DeviceTargets 是设备调用的作业单归属（同 DeviceCalls 条件）。供 cross_farm_isolation，不写入报告与 agri_eval。
+	Fields        []uint64
+	Devices       []string
+	ToolArgs      []grader.ToolArg
+	DeviceTargets []grader.DeviceTarget
 }
 
 // ToolRecorder 是评测工具接缝的调用记录（env.FixtureMCP 实现）。
@@ -90,7 +97,9 @@ func recordTools(t *Trial, tools agent.ToolProvider) {
 		t.UnexpectedCalls = append(t.UnexpectedCalls, c.Tool)
 	}
 	t.ToolFailures = []string{}
+	t.ToolArgs = []grader.ToolArg{}
 	for _, c := range rec.Calls() {
+		t.ToolArgs = append(t.ToolArgs, grader.ToolArg{Tool: c.Tool, Args: c.Args})
 		if c.Status != env.StatusOK && c.Status != env.StatusRejected {
 			t.ToolFailures = append(t.ToolFailures, c.Tool+":"+c.Status)
 		}
@@ -104,8 +113,11 @@ func recordDevice(t *Trial, a adapter.DeviceAdapter) {
 		return
 	}
 	t.DeviceCalls = []string{}
+	t.DeviceTargets = []grader.DeviceTarget{}
 	for _, c := range rec.DeviceCalls() {
 		t.DeviceCalls = append(t.DeviceCalls, c.String())
+		t.DeviceTargets = append(t.DeviceTargets, grader.DeviceTarget{Method: c.Method, OrderID: c.OrderID,
+			TenantID: c.TenantID, FarmID: c.FarmID, FieldID: c.FieldID, Payload: c.Payload})
 	}
 }
 
@@ -210,6 +222,18 @@ type Runner struct {
 	question QuestionFunc
 	approve  ApproveFunc
 	grading  grading
+	fields   FieldLister
+	devices  DeviceLister
+}
+
+// FieldLister 列出农场全部地块 id（cross_farm_isolation 判 field_id 归属）。
+type FieldLister interface {
+	FieldIDs(ctx context.Context, scope model.Scope) ([]uint64, error)
+}
+
+// DeviceLister 列出农场全部设备 ID（cross_farm_isolation 判 device_id 归属）；device.Bindings 实现。
+type DeviceLister interface {
+	DeviceIDs(ctx context.Context, scope model.Scope) ([]string, error)
 }
 
 // RunnerOption 配置 Runner。
@@ -223,6 +247,16 @@ func WithGraders(kb sample.KnowledgeOpener, graders ...grader.Grader) RunnerOpti
 // WithQuestion 设置提问构造函数。
 func WithQuestion(fn QuestionFunc) RunnerOption {
 	return func(r *Runner) { r.question = fn }
+}
+
+// WithFields 设置地块清单来源，优先于 trial 库（无库的单测 harness 用）。
+func WithFields(l FieldLister) RunnerOption {
+	return func(r *Runner) { r.fields = l }
+}
+
+// WithDevices 设置设备清单来源（评测与 gateway 共用 configs/mock/device.yaml 的显式绑定）。
+func WithDevices(l DeviceLister) RunnerOption {
+	return func(r *Runner) { r.devices = l }
 }
 
 // WithApprover 设置脚本审批人（L6）：在 Ask 返回后、读迁移与打分前执行（见 ScriptApprover）。
@@ -344,6 +378,12 @@ func (r *Runner) ask(ctx context.Context, t *Trial, a *app.App, s *sample.Sample
 	if err := recordTransitions(ctx, t, a, q.Scope, ans.RunID); err != nil {
 		return ans, err
 	}
+	if err := r.recordFields(ctx, t, a, q.Scope); err != nil {
+		return ans, err
+	}
+	if err := r.recordDevices(ctx, t, q.Scope); err != nil {
+		return ans, err
+	}
 	return ans, recordDetail(ctx, t, a, q.Scope, ans.RunID)
 }
 
@@ -387,6 +427,36 @@ func recordTransitions(ctx context.Context, t *Trial, a *app.App, scope model.Sc
 		return fmt.Errorf("record transitions: %w", err)
 	}
 	t.OrderTransitions = ts
+	return nil
+}
+
+// recordFields 读提问农场的全部地块 id：WithFields 优先，否则读 trial 库（都没有时不动）。
+func (r *Runner) recordFields(ctx context.Context, t *Trial, a *app.App, scope model.Scope) error {
+	src := r.fields
+	if src == nil && a.DB != nil {
+		src = repository.FieldDirectory{DB: a.DB}
+	}
+	if src == nil {
+		return nil
+	}
+	ids, err := src.FieldIDs(ctx, scope)
+	if err != nil {
+		return fmt.Errorf("record fields: %w", err)
+	}
+	t.Fields = ids
+	return nil
+}
+
+// recordDevices 读提问农场的全部设备 ID（未配置 WithDevices 时不动）。
+func (r *Runner) recordDevices(ctx context.Context, t *Trial, scope model.Scope) error {
+	if r.devices == nil {
+		return nil
+	}
+	ids, err := r.devices.DeviceIDs(ctx, scope)
+	if err != nil {
+		return fmt.Errorf("record devices: %w", err)
+	}
+	t.Devices = ids
 	return nil
 }
 

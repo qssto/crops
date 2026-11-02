@@ -261,3 +261,48 @@ func TestAgentAsk_RerunIdempotent(t *testing.T) {
 		t.Errorf("runs=%d cards=%d orders=%d, want 1/1/1", store.runs, len(store.cards), store.orderCount())
 	}
 }
+
+// fakeRegions 是 agent.FarmRegionSource：固定返回 region / err。
+type fakeRegions struct {
+	region string
+	err    error
+}
+
+func (f fakeRegions) FarmRegion(context.Context, model.Scope) (string, error) { return f.region, f.err }
+
+// TestAgentAsk_FarmRegion：注入 Regions 后按农场区域选知识；区域为空或空白时 run 失败（fail closed），不回落默认 jiangsu。
+func TestAgentAsk_FarmRegion(t *testing.T) {
+	h := newHarness(t)
+	s := findSample(t, loadSamples(t), sOperation)
+	tests := []struct {
+		name    string
+		src     fakeRegions
+		wantErr error // nil 表示应正常出建议
+	}{
+		{"seed region resolves", fakeRegions{region: "江苏"}, nil},
+		{"empty region fails closed", fakeRegions{region: ""}, graph.ErrFarmRegionUnset},
+		{"blank region fails closed", fakeRegions{region: "  "}, graph.ErrFarmRegionUnset},
+		{"lookup error", fakeRegions{err: model.ErrNotFound}, model.ErrNotFound},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			clk := sampleClock(t, s)
+			a := h.newAgent(t, clk, deps{tools: fixtureTools(t, s, clk), store: newMemStore(),
+				cfg: func(c *graph.Config) { c.Regions = tt.src }})
+			q, err := questionOf(s)
+			if err != nil {
+				t.Fatal(err)
+			}
+			ans, err := a.Ask(context.Background(), q)
+			if tt.wantErr != nil {
+				if !errors.Is(err, tt.wantErr) {
+					t.Fatalf("err = %v, want %v", err, tt.wantErr)
+				}
+				return
+			}
+			if err != nil || ans.Outcome != model.OutcomeAdvice {
+				t.Fatalf("ans = %s/%q, err = %v; want ADVICE", ans.Outcome, ans.RefuseReason, err)
+			}
+		})
+	}
+}

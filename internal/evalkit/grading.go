@@ -86,7 +86,8 @@ func (g grading) openKB(ctx context.Context, s *sample.Sample) (grader.Knowledge
 func (g grading) grade(ctx context.Context, t *Trial, s *sample.Sample, ans agent.Answer, kb grader.KnowledgeIndex) {
 	gt := &grader.Trial{Sample: s, Index: t.TrialIndex, Outcome: ans.Outcome, RefuseReason: ans.RefuseReason,
 		Card: ans.Card, KB: kb, ToolCalls: t.ToolCalls, ToolFailures: t.ToolFailures,
-		Approval: t.Approval, DeviceCalls: t.DeviceCalls, Logs: t.Logs, Stored: t.Stored, OrderTransitions: t.OrderTransitions}
+		Approval: t.Approval, DeviceCalls: t.DeviceCalls, Logs: t.Logs, Stored: t.Stored, OrderTransitions: t.OrderTransitions,
+		Scope: t.Scope, Fields: t.Fields, Devices: t.Devices, ToolArgs: t.ToolArgs, DeviceTargets: t.DeviceTargets}
 	t.Scores = make([]Score, 0, len(g.graders))
 	for _, gr := range g.graders {
 		sc := Score{Name: gr.Name(), RedLine: gr.RedLine()}

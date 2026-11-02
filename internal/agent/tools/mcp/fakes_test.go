@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"agri-steward/internal/agent"
 	"agri-steward/internal/agent/tools/mcp"
 	"agri-steward/internal/model"
 )
@@ -248,17 +249,52 @@ func (r *memRaw) Get(_ context.Context, _ model.Scope, id uint64) ([]byte, error
 	return b, nil
 }
 
-// memFields 是 FieldScope 的内存实现：field_id → (tenant, farm)。
+// memFields 是 agent.FieldScopeChecker 的内存实现：field_id → (tenant, farm)，记录越界审计 target。
 type memFields struct {
 	owner map[uint64][2]uint64
 	err   error
+
+	mu     sync.Mutex
+	denied []string
 }
 
-func (f memFields) Owns(_ context.Context, s model.Scope, fieldID uint64) (bool, error) {
+func (f *memFields) CheckField(ctx context.Context, s model.Scope, runID, fieldID uint64) error {
 	if f.err != nil {
-		return false, f.err
+		return f.err
 	}
-	o, ok := f.owner[fieldID]
+	if o, ok := f.owner[fieldID]; ok && o[0] == s.TenantID && o[1] == s.FarmID {
+		return nil
+	}
+	if err := f.Deny(ctx, s, runID, fmt.Sprintf("field:%d", fieldID)); err != nil {
+		return err
+	}
+	return fmt.Errorf("%w: field %d", agent.ErrScopeDenied, fieldID)
+}
+
+func (f *memFields) Deny(_ context.Context, _ model.Scope, _ uint64, target string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.denied = append(f.denied, target)
+	return nil
+}
+
+func (f *memFields) deniedTargets() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.denied...)
+}
+
+// memDevices 是 agent.DeviceOwnership 的内存实现：device_id → (tenant, farm)。
+type memDevices struct {
+	owner map[string][2]uint64
+	err   error
+}
+
+func (d *memDevices) OwnsDevice(_ context.Context, s model.Scope, id string) (bool, error) {
+	if d.err != nil {
+		return false, d.err
+	}
+	o, ok := d.owner[id]
 	return ok && o[0] == s.TenantID && o[1] == s.FarmID, nil
 }
 

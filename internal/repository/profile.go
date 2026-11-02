@@ -18,6 +18,9 @@ const sowingDateLayout = "2006-01-02"
 
 // UpsertFarm 按 uk_farm upsert 农场主数据。
 func (ProfileRepo) UpsertFarm(ctx context.Context, tx *gorm.DB, f model.FarmProfile, now time.Time) error {
+	if err := requireFarm(f.TenantID, f.FarmID); err != nil {
+		return err
+	}
 	crops, err := json.Marshal(f.MainCrops)
 	if err != nil {
 		return fmt.Errorf("repository: encode main_crops: %w", err)
@@ -34,6 +37,9 @@ func (ProfileRepo) UpsertFarm(ctx context.Context, tx *gorm.DB, f model.FarmProf
 
 // UpsertField 按 uk_ext upsert 地块，SQL 照抄 P0 L1。
 func (ProfileRepo) UpsertField(ctx context.Context, tx *gorm.DB, f model.FieldProfile, now time.Time) error {
+	if err := requireFarm(f.TenantID, f.FarmID); err != nil {
+		return err
+	}
 	prefs := f.Prefs
 	if len(prefs) == 0 {
 		prefs = json.RawMessage(`{}`)
@@ -50,6 +56,9 @@ func (ProfileRepo) UpsertField(ctx context.Context, tx *gorm.DB, f model.FieldPr
 
 // FieldIDByCode 按外部编码查 field_id（评测样本的 field-00x → bigint）。
 func (ProfileRepo) FieldIDByCode(ctx context.Context, db *gorm.DB, tenantID, farmID uint64, code string) (uint64, error) {
+	if err := requireFarm(tenantID, farmID); err != nil {
+		return 0, err
+	}
 	var id uint64
 	res := db.WithContext(ctx).Raw(
 		`SELECT id FROM field_profile WHERE tenant_id=? AND farm_id=? AND ext_field_code=?`, tenantID, farmID, code).Scan(&id)
@@ -63,15 +72,19 @@ func (ProfileRepo) FieldIDByCode(ctx context.Context, db *gorm.DB, tenantID, far
 }
 
 // FieldDirectory 按 field_profile.id 查外部地块编码，满足 mcp servers 的 kit.FieldDirectory
-// （mock 数据按 ext_field_code 组织）。租户 / 农场越权由 gateway 的 scope 校验负责，这里只按主键查。
+// （mock 数据按 ext_field_code 组织）。一律按 Scope 过滤：他场地块与不存在同样返回 ErrNotFound。
 type FieldDirectory struct {
 	DB *gorm.DB
 }
 
-// FieldCode 返回地块编码；不存在返回 model.ErrNotFound。
-func (d FieldDirectory) FieldCode(ctx context.Context, fieldID uint64) (string, error) {
+// FieldCode 返回本农场地块编码；不存在或不属于 scope 返回 model.ErrNotFound。
+func (d FieldDirectory) FieldCode(ctx context.Context, scope model.Scope, fieldID uint64) (string, error) {
+	if err := requireScope(scope); err != nil {
+		return "", err
+	}
 	var code string
-	res := d.DB.WithContext(ctx).Raw(`SELECT ext_field_code FROM field_profile WHERE id=?`, fieldID).Scan(&code)
+	res := d.DB.WithContext(ctx).Raw(`SELECT ext_field_code FROM field_profile WHERE tenant_id=? AND farm_id=? AND id=?`,
+		scope.TenantID, scope.FarmID, fieldID).Scan(&code)
 	if res.Error != nil {
 		return "", fmt.Errorf("repository: field_profile %d: %w", fieldID, res.Error)
 	}
@@ -79,4 +92,17 @@ func (d FieldDirectory) FieldCode(ctx context.Context, fieldID uint64) (string, 
 		return "", fmt.Errorf("repository: field_profile %d: %w", fieldID, model.ErrNotFound)
 	}
 	return code, nil
+}
+
+// FieldIDs 返回本农场全部地块 id（升序；无地块为空切片），供评测 cross_farm_isolation 判 field_id 归属。
+func (d FieldDirectory) FieldIDs(ctx context.Context, scope model.Scope) ([]uint64, error) {
+	if err := requireScope(scope); err != nil {
+		return nil, err
+	}
+	ids := []uint64{}
+	if err := d.DB.WithContext(ctx).Raw(`SELECT id FROM field_profile WHERE tenant_id=? AND farm_id=? ORDER BY id`,
+		scope.TenantID, scope.FarmID).Scan(&ids).Error; err != nil {
+		return nil, fmt.Errorf("repository: field_profile ids: %w", err)
+	}
+	return ids, nil
 }

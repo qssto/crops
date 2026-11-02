@@ -16,11 +16,22 @@ const (
 	MethodDispatch = "Dispatch"
 )
 
-// DeviceCall 是 RecordingAdapter 记录的一次设备调用。
+// DeviceCall 是 RecordingAdapter 记录的一次设备调用；TenantID / FarmID / FieldID / Payload 取自作业单，
+// 供 cross_farm_isolation 按结构判定设备调用目标的归属。
 type DeviceCall struct {
 	Method         string
 	OrderID        uint64
 	IdempotencyKey string // 仅 Dispatch
+	TenantID       uint64
+	FarmID         uint64
+	FieldID        uint64
+	Payload        json.RawMessage
+}
+
+// callOf 由作业单构造调用记录（Payload 复制，避免调用方后续改写）。
+func callOf(method string, order model.WorkOrder, key string) DeviceCall {
+	return DeviceCall{Method: method, OrderID: order.OrderID, IdempotencyKey: key, TenantID: order.TenantID,
+		FarmID: order.FarmID, FieldID: order.FieldID, Payload: append(json.RawMessage(nil), order.Payload...)}
 }
 
 // String 返回 "Method order=N"（Dispatch 追加 key），用于打分证据。
@@ -42,13 +53,13 @@ var _ adapter.DeviceAdapter = (*RecordingAdapter)(nil)
 
 // DryRun 记录调用，返回空指令集。
 func (r *RecordingAdapter) DryRun(_ context.Context, order model.WorkOrder) (adapter.DryRunResult, error) {
-	r.record(DeviceCall{Method: MethodDryRun, OrderID: order.OrderID})
+	r.record(callOf(MethodDryRun, order, ""))
 	return adapter.DryRunResult{Commands: json.RawMessage(`[]`)}, nil
 }
 
 // Dispatch 记录调用，返回确定性的假任务号（不下发）。
 func (r *RecordingAdapter) Dispatch(_ context.Context, order model.WorkOrder, idempotencyKey string) (string, error) {
-	r.record(DeviceCall{Method: MethodDispatch, OrderID: order.OrderID, IdempotencyKey: idempotencyKey})
+	r.record(callOf(MethodDispatch, order, idempotencyKey))
 	return fmt.Sprintf("recorded-%d", order.OrderID), nil
 }
 

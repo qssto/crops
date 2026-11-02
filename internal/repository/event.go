@@ -27,6 +27,9 @@ var ErrRunNotFound = errors.New("repository: agent_run not found")
 // UPDATE ... LAST_INSERT_ID(event_seq + 1) 与 INSERT ... LAST_INSERT_ID() 必须同一连接，故强制事务。
 // SSE 发布登记为提交后动作：事务须由本包 inTx 开启（Transactor / DecisionRepo / EventSink），否则只告警不发布。
 func (r EventRepo) AppendTx(ctx context.Context, tx *gorm.DB, e model.RunEvent) (int64, error) {
+	if err := requireFarm(e.TenantID, e.FarmID); err != nil {
+		return 0, err
+	}
 	if !e.Type.Valid() {
 		return 0, fmt.Errorf("repository: unregistered event_type %q", e.Type)
 	}
@@ -35,8 +38,8 @@ func (r EventRepo) AppendTx(ctx context.Context, tx *gorm.DB, e model.RunEvent) 
 		return 0, err
 	}
 	res, err := execInTx(ctx, tx,
-		`UPDATE agent_run SET event_seq = LAST_INSERT_ID(event_seq + 1) WHERE id = ? AND tenant_id = ? AND farm_id = ?`,
-		e.RunID, e.TenantID, e.FarmID)
+		`UPDATE agent_run SET event_seq = LAST_INSERT_ID(event_seq + 1) WHERE tenant_id = ? AND farm_id = ? AND id = ?`,
+		e.TenantID, e.FarmID, e.RunID)
 	if err != nil {
 		return 0, fmt.Errorf("repository: alloc event seq run %d: %w", e.RunID, err)
 	}

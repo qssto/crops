@@ -34,7 +34,7 @@ type outboxRetry struct {
 	lastErr string
 }
 
-func (m *memOutbox) Claim(_ context.Context, _, leaseUntil time.Time) ([]repository.OutboxMessage, error) {
+func (m *memOutbox) Claim(_ context.Context, _ repository.SystemScope, _, leaseUntil time.Time) ([]repository.OutboxMessage, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.claims++
@@ -47,14 +47,14 @@ func (m *memOutbox) Claim(_ context.Context, _, leaseUntil time.Time) ([]reposit
 	return out, nil
 }
 
-func (m *memOutbox) MarkDone(_ context.Context, id uint64, _ time.Time) (bool, error) {
+func (m *memOutbox) MarkDone(_ context.Context, _ repository.SystemScope, id uint64, _ time.Time) (bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.done = append(m.done, id)
 	return true, nil
 }
 
-func (m *memOutbox) MarkRetry(_ context.Context, id uint64, next time.Time, lastErr string, _ time.Time) (bool, error) {
+func (m *memOutbox) MarkRetry(_ context.Context, _ repository.SystemScope, id uint64, next time.Time, lastErr string, _ time.Time) (bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.retryErr != nil {

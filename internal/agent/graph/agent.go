@@ -48,9 +48,12 @@ type Config struct {
 	KBRef    string // 知识版本，空取 knowledge.RefWorktree
 	Taxonomy *knowledge.Taxonomy
 	Crop     string // 本农场作物 code（rice）
-	Region   string // 区域 code（jiangsu）
-	Loc      *time.Location
-	Logger   *slog.Logger
+	Region   string // 区域 code（jiangsu）；仅 Regions 为空（单测 / 单农场装配）时使用
+	// Regions 取本农场 farm_profile.region（P1 L1-B 知识按区域隔离）；为空则全部 run 用 Region。
+	// 非空时农场区域缺失即 run 失败（fail closed），不回落 Region，避免他区域农场套用默认区域知识。
+	Regions agent.FarmRegionSource
+	Loc     *time.Location
+	Logger  *slog.Logger
 
 	// L5 / L6 接缝，均可空（空时退回 L4 行为）。
 	Gate        agent.ApprovalGate    // L5：to_order 写 DRAFT 后开票；空则不开票
@@ -282,6 +285,9 @@ func answerOf(runID uint64, final *state) (agent.Answer, error) {
 		Card: final.card, Order: final.order, Ticket: final.ticket}, nil
 }
 
+// ErrFarmRegionUnset 是农场 farm_profile.region 为空：知识按区域隔离，不能回落默认区域。
+var ErrFarmRegionUnset = errors.New("graph: farm region is empty")
+
 // newState 打开知识版本并构造本次 run 的状态。
 func (a *Agent) newState(ctx context.Context, q agent.Question, runID uint64) (*state, error) {
 	snap, err := a.cfg.KB.Open(ctx, a.cfg.KBRef)
@@ -293,5 +299,16 @@ func (a *Agent) newState(ctx context.Context, q agent.Question, runID uint64) (*
 		return nil, fmt.Errorf("calc: %w", err)
 	}
 	e := &env{snap: snap, tx: a.cfg.Taxonomy, calc: c, loc: a.loc, crop: a.cfg.Crop, region: a.cfg.Region}
+	if a.cfg.Regions != nil {
+		r, err := a.cfg.Regions.FarmRegion(ctx, q.Scope)
+		if err != nil {
+			return nil, fmt.Errorf("farm region: %w", err)
+		}
+		code := knowledge.RegionCode(r)
+		if code == "" {
+			return nil, fmt.Errorf("farm region (%d,%d): %w", q.Scope.TenantID, q.Scope.FarmID, ErrFarmRegionUnset)
+		}
+		e.region = code
+	}
 	return &state{q: q, runID: runID, now: a.cfg.Clock.Now(), env: e}, nil
 }

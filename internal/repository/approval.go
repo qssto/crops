@@ -80,6 +80,9 @@ func scanTicket(ctx context.Context, db *gorm.DB, query string, args ...any) (mo
 
 // TicketByOrderSeq 读某作业单第 seq 张 ORDER 票（uk_order_seq），供开票前判断是否已开过。
 func (ApprovalRepo) TicketByOrderSeq(ctx context.Context, db *gorm.DB, ref model.OrderRef, seq int) (model.ApprovalTicket, bool, error) {
+	if err := requireFarm(ref.TenantID, ref.FarmID); err != nil {
+		return model.ApprovalTicket{}, false, err
+	}
 	t, ok, err := scanTicket(ctx, db, `SELECT `+ticketColumns+` FROM approval_ticket
  WHERE tenant_id=? AND farm_id=? AND ticket_kind='ORDER' AND order_id=? AND ticket_seq=?`,
 		ref.TenantID, ref.FarmID, ref.OrderID, seq)
@@ -91,6 +94,9 @@ func (ApprovalRepo) TicketByOrderSeq(ctx context.Context, db *gorm.DB, ref model
 
 // TicketByRun 读该 run 最新一张 ORDER 票（idx_run；P0 一个 run 至多一张单一张票，取 ticket_seq 最大者）。
 func (ApprovalRepo) TicketByRun(ctx context.Context, db *gorm.DB, scope model.Scope, runID uint64) (model.ApprovalTicket, bool, error) {
+	if err := requireScope(scope); err != nil {
+		return model.ApprovalTicket{}, false, err
+	}
 	t, ok, err := scanTicket(ctx, db, `SELECT `+ticketColumns+` FROM approval_ticket
  WHERE tenant_id=? AND farm_id=? AND run_id=? AND ticket_kind='ORDER' ORDER BY ticket_seq DESC, id DESC LIMIT 1`,
 		scope.TenantID, scope.FarmID, runID)
@@ -103,6 +109,9 @@ func (ApprovalRepo) TicketByRun(ctx context.Context, db *gorm.DB, scope model.Sc
 // InsertChecksTx 写审批前约束校验（§6.6：INSERT IGNORE，uk_check 幂等）；attempt 取 ticket_seq。
 func (ApprovalRepo) InsertChecksTx(ctx context.Context, tx *gorm.DB, ref model.OrderRef, attempt int,
 	checks []model.ConstraintCheck, now time.Time) error {
+	if err := requireFarm(ref.TenantID, ref.FarmID); err != nil {
+		return err
+	}
 	if err := requireTx(tx); err != nil {
 		return err
 	}
@@ -123,6 +132,9 @@ func (ApprovalRepo) InsertChecksTx(ctx context.Context, tx *gorm.DB, ref model.O
 
 // InsertTicketTx 插入 PREPARING 票（§6.6 定版 SQL，ticket_seq 固定 1）；命中 uk_order_seq 时返回已有 id 且 created=false。
 func (ApprovalRepo) InsertTicketTx(ctx context.Context, tx *gorm.DB, t model.ApprovalTicket, now time.Time) (id uint64, created bool, err error) {
+	if err := requireFarm(t.TenantID, t.FarmID); err != nil {
+		return 0, false, err
+	}
 	roles, err := json.Marshal(t.RequiredRole)
 	if err != nil {
 		return 0, false, fmt.Errorf("repository: encode required_role: %w", err)
@@ -152,6 +164,9 @@ VALUES (?, ?, ?, ?, 'ORDER', 1, ?, ?, ?, ?, ?, ?, 'PREPARING', ?, ?) ON DUPLICAT
 // 返回影响行数（0 表示前置条件不满足）。
 func (ApprovalRepo) ActivateTx(ctx context.Context, tx *gorm.DB, scope model.Scope, runID uint64,
 	expiresAt, now time.Time) (int64, error) {
+	if err := requireScope(scope); err != nil {
+		return 0, err
+	}
 	if err := requireTx(tx); err != nil {
 		return 0, err
 	}
@@ -169,6 +184,9 @@ func (ApprovalRepo) ActivateTx(ctx context.Context, tx *gorm.DB, scope model.Sco
 
 // ListOpen 是待审批列表（§6.6 定版 SELECT，最多 50 条，按创建时间）。
 func (ApprovalRepo) ListOpen(ctx context.Context, db *gorm.DB, scope model.Scope) ([]PendingTicket, error) {
+	if err := requireScope(scope); err != nil {
+		return nil, err
+	}
 	var rows []struct {
 		ID        uint64
 		OrderID   uint64

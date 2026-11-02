@@ -48,7 +48,7 @@ func RunDetailHandler(svc RunDetailer) gin.HandlerFunc {
 		}
 		detail, err := svc.Get(c.Request.Context(), scope, runID)
 		if err != nil {
-			abortErr(c, err)
+			abortScoped(c, err, "run:"+strconv.FormatUint(runID, 10))
 			return
 		}
 		c.JSON(http.StatusOK, detail)

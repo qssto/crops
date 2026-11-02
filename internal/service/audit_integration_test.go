@@ -19,6 +19,16 @@ import (
 
 type itPresign struct{}
 
+// itPerms 加载仓库权限矩阵（集成用例与生产同一份）。
+func itPerms(t *testing.T) *service.PermissionMatrix {
+	t.Helper()
+	m, err := service.LoadPermissionMatrix("../../policy/permission_matrix.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return m
+}
+
 func (itPresign) PresignGet(_ context.Context, key string, _ time.Duration) (string, error) {
 	return "https://minio.it/" + key + "?sig=1", nil
 }
@@ -36,7 +46,7 @@ func TestAuditService_ReadRaw_Integration(t *testing.T) {
 	}
 	rawID := uint64(itest.Count(t, slot.DB, "SELECT MAX(id) FROM raw_object"))
 	svc, err := service.NewAuditService(service.AuditDeps{Store: repository.RawAccessRepo{DB: slot.DB},
-		Presign: itPresign{}, Clock: slot.Clock, Logger: slog.New(slog.NewTextHandler(io.Discard, nil))})
+		Presign: itPresign{}, Clock: slot.Clock, Logger: slog.New(slog.NewTextHandler(io.Discard, nil)), Perms: itPerms(t)})
 	if err != nil {
 		t.Fatal(err)
 	}

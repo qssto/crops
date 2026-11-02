@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -20,6 +21,7 @@ import (
 const (
 	fieldInput  = `{"type":"object","additionalProperties":false,"required":["field_id"],"properties":{"field_id":{"type":"integer","minimum":1}}}`
 	targetInput = `{"type":"object","additionalProperties":false,"properties":{"target":{"type":"string"}}}`
+	deviceInput = `{"type":"object","additionalProperties":false,"required":["device_id"],"properties":{"device_id":{}}}`
 	vOutput     = `{"type":"object","required":["v"],"properties":{"v":{"type":"integer"}}}`
 	testTimeout = 20 * time.Millisecond
 )
@@ -38,6 +40,7 @@ tools:
   - {name: field.get, level: read}
   - {name: dev.write, level: write}
   - {name: dev.once, level: read}
+  - {name: dev.status, level: read}
   - {name: dev.dispatch, level: actuate}
 `
 
@@ -68,15 +71,17 @@ func okHandler(context.Context, json.RawMessage, int) (mcp.Result, error) { retu
 // testEnv 是一套 gateway + 内存依赖。servers：weather（时效、缓存）、crop（缓存，无 field_id）、
 // field（不缓存）、dev（write / 非幂等 read）。
 type testEnv struct {
-	gw     *mcp.Gateway
-	srv    map[string]*fakeServer
-	idem   *memIdem
-	cache  *memCache
-	calls  *memCalls
-	raw    *memRaw
-	events *memEvents
-	clk    *fakeClock
-	keys   rediskey.Keys
+	gw      *mcp.Gateway
+	srv     map[string]*fakeServer
+	idem    *memIdem
+	cache   *memCache
+	calls   *memCalls
+	raw     *memRaw
+	events  *memEvents
+	fields  *memFields
+	devices *memDevices
+	clk     *fakeClock
+	keys    rediskey.Keys
 }
 
 func newEnv(t *testing.T, mod func(*mcp.Options)) *testEnv {
@@ -102,15 +107,18 @@ func newEnv(t *testing.T, mod func(*mcp.Options)) *testEnv {
 				s.Idempotent, s.Cacheable = true, true
 			})),
 			"field": mk("field", spec("field.get", fieldInput, mcp.LevelRead, idem)),
-			"dev":   mk("dev", spec("dev.write", fieldInput, mcp.LevelWrite, nil), spec("dev.once", fieldInput, mcp.LevelRead, nil)),
+			"dev": mk("dev", spec("dev.write", fieldInput, mcp.LevelWrite, nil), spec("dev.once", fieldInput, mcp.LevelRead, nil),
+				spec("dev.status", deviceInput, mcp.LevelRead, idem)),
 		},
 		idem: newMemIdem(), cache: newMemCache(), calls: &memCalls{}, raw: &memRaw{}, events: &memEvents{},
-		clk: &fakeClock{now: t0}, keys: keys,
+		fields:  &memFields{owner: map[uint64][2]uint64{1: {1, 1}, 2: {2, 1}, 3: {1, 2}}},
+		devices: &memDevices{owner: map[string][2]uint64{"uav-1": {1, 1}, "uav-2": {1, 2}}},
+		clk:     &fakeClock{now: t0}, keys: keys,
 	}
 	opt := mcp.Options{
 		Clock: e.clk, Logger: slog.New(slog.NewTextHandler(io.Discard, nil)), Keys: keys, ToolPolicy: toolPolicy(t, testToolPolicy),
 		Idem: e.idem, Cache: e.cache, Calls: e.calls, Raw: e.raw, Events: e.events,
-		Fields:      memFields{owner: map[uint64][2]uint64{1: {1, 1}, 2: {2, 1}, 3: {1, 2}}},
+		Fields: e.fields, Devices: e.devices,
 		Timeouts:    map[string]time.Duration{"weather": testTimeout, "crop": testTimeout, "field": testTimeout, "dev": testTimeout},
 		PendingPoll: time.Millisecond,
 	}
@@ -152,7 +160,7 @@ func TestNewGateway_Errors(t *testing.T) {
 		t.Fatal(err)
 	}
 	full := mcp.Options{Clock: &fakeClock{}, Logger: slog.Default(), Keys: keys, Idem: newMemIdem(), Cache: newMemCache(),
-		Calls: &memCalls{}, Raw: &memRaw{}, Fields: memFields{},
+		Calls: &memCalls{}, Raw: &memRaw{}, Fields: &memFields{}, Devices: &memDevices{},
 		ToolPolicy: toolPolicy(t, "version: 1\ntools:\n  - {name: a.x, level: read}\n  - {name: a.act, level: actuate}\n")}
 	a := &fakeServer{name: "a", specs: []mcp.ToolSpec{spec("a.x", fieldInput, mcp.LevelRead, nil)}}
 	with := func(specs ...mcp.ToolSpec) []mcp.Server { return []mcp.Server{&fakeServer{name: "a", specs: specs}} }
@@ -160,6 +168,8 @@ func TestNewGateway_Errors(t *testing.T) {
 	levels.Levels = map[string]mcp.Level{"a": mcp.LevelWrite}
 	noPolicy := full
 	noPolicy.ToolPolicy = nil
+	noDevices := full
+	noDevices.Devices = nil
 	tests := []struct {
 		name string
 		srv  []mcp.Server
@@ -171,6 +181,7 @@ func TestNewGateway_Errors(t *testing.T) {
 			full, "not JSON"},
 		{"missing deps", []mcp.Server{a}, mcp.Options{}, "Clock is required"},
 		{"missing tool policy", []mcp.Server{a}, noPolicy, "ToolPolicy is required"},
+		{"missing device ownership", []mcp.Server{a}, noDevices, "Devices is required"},
 		// 验收 1：启动期自检，任一不符即构造失败。
 		{"tool not declared in policy", with(spec("a.x", fieldInput, mcp.LevelRead, nil), spec("a.new", fieldInput, mcp.LevelRead, nil)),
 			full, "a.new is registered but not declared"},
@@ -236,24 +247,35 @@ func TestCall_LevelsOverride(t *testing.T) {
 	}
 }
 
-// TestCall_TenantIsolation 是租户隔离红线：field_id 不属于 scope 时 REJECTED 且不调 Server。
+// TestCall_TenantIsolation 是租户隔离红线：field_id / device_id 不属于 scope 时 SCOPE_DENIED（status REJECTED）、
+// 写越界审计且不调 Server；设备不存在与属于他场同为 SCOPE_DENIED（不暴露存在性）。
 func TestCall_TenantIsolation(t *testing.T) {
 	tests := []struct {
 		name, tool, args string
 		want             string
+		wantCode         mcp.ErrorCode
+		wantDenied       []string
 	}{
-		{"own field", "weather.now", `{"field_id":1}`, model.ToolStatusOK},
-		{"other tenant", "weather.now", `{"field_id":2}`, model.ToolStatusRejected},
-		{"other farm same tenant", "field.get", `{"field_id":3}`, model.ToolStatusRejected},
-		{"unknown field", "field.get", `{"field_id":99}`, model.ToolStatusRejected},
-		{"no field arg", "crop.info", `{"target":"稻飞虱"}`, model.ToolStatusOK},
+		{"own field", "weather.now", `{"field_id":1}`, model.ToolStatusOK, "", nil},
+		{"other tenant", "weather.now", `{"field_id":2}`, model.ToolStatusRejected, mcp.ErrScopeDenied, []string{"field:2"}},
+		{"other farm same tenant", "field.get", `{"field_id":3}`, model.ToolStatusRejected, mcp.ErrScopeDenied, []string{"field:3"}},
+		{"unknown field", "field.get", `{"field_id":99}`, model.ToolStatusRejected, mcp.ErrScopeDenied, []string{"field:99"}},
+		{"bad field_id", "field.get", `{"field_id":"x"}`, model.ToolStatusRejected, mcp.ErrRejected, nil},
+		{"no field arg", "crop.info", `{"target":"稻飞虱"}`, model.ToolStatusOK, "", nil},
+		{"own device", "dev.status", `{"device_id":"uav-1"}`, model.ToolStatusOK, "", nil},
+		{"other farm device", "dev.status", `{"device_id":"uav-2"}`, model.ToolStatusRejected, mcp.ErrScopeDenied, []string{"device:uav-2"}},
+		{"unknown device", "dev.status", `{"device_id":"uav-404"}`, model.ToolStatusRejected, mcp.ErrScopeDenied, []string{"device:uav-404"}},
+		{"bad device_id", "dev.status", `{"device_id":7}`, model.ToolStatusRejected, mcp.ErrRejected, nil},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			e := newEnv(t, nil)
 			res := e.call(t, agent.ToolCall{Tool: tt.tool, Args: json.RawMessage(tt.args)})
-			if res.Status != tt.want {
-				t.Fatalf("status = %s (%s), want %s", res.Status, res.ErrorCode, tt.want)
+			if res.Status != tt.want || res.ErrorCode != string(tt.wantCode) {
+				t.Fatalf("status = %s (%s), want %s (%s)", res.Status, res.ErrorCode, tt.want, tt.wantCode)
+			}
+			if got := e.fields.deniedTargets(); !slices.Equal(got, tt.wantDenied) {
+				t.Fatalf("denied = %v, want %v", got, tt.wantDenied)
 			}
 			server, _, _ := strings.Cut(tt.tool, ".")
 			wantCalls := 0
@@ -268,10 +290,67 @@ func TestCall_TenantIsolation(t *testing.T) {
 }
 
 func TestCall_TenantCheckError(t *testing.T) {
-	e := newEnv(t, func(o *mcp.Options) { o.Fields = memFields{err: errors.New("db down")} })
-	_, err := e.gw.Call(context.Background(), scope, agent.ToolCall{RunID: 1, StepID: "s", Tool: "field.get", Args: fieldArgs})
-	if err == nil || e.srv["field"].count("field.get") != 0 {
-		t.Fatalf("err = %v, server calls %d; want error and no call", err, e.srv["field"].count("field.get"))
+	tests := []struct {
+		name, server, tool, args string
+		mod                      func(*mcp.Options)
+	}{
+		{"field check fails", "field", "field.get", `{"field_id":1}`,
+			func(o *mcp.Options) { o.Fields = &memFields{err: errors.New("db down")} }},
+		{"device check fails", "dev", "dev.status", `{"device_id":"uav-1"}`,
+			func(o *mcp.Options) { o.Devices = &memDevices{err: errors.New("binding source down")} }},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e := newEnv(t, tt.mod)
+			_, err := e.gw.Call(context.Background(), scope, agent.ToolCall{RunID: 1, StepID: "s", Tool: tt.tool, Args: json.RawMessage(tt.args)})
+			if err == nil || e.srv[tt.server].count(tt.tool) != 0 {
+				t.Fatalf("err = %v, server calls %d; want error and no call", err, e.srv[tt.server].count(tt.tool))
+			}
+		})
+	}
+}
+
+// TestCall_ServerScopeDenied：Server 拿到注入的 Scope；返回 SCOPE_DENIED 时 gateway 记 REJECTED 并写越界审计。
+// （设备 device:{id} 的 target 在 servers 包用真实 device mock 覆盖。）
+func TestCall_ServerScopeDenied(t *testing.T) {
+	e := newEnv(t, nil)
+	var got model.Scope
+	e.srv["crop"].handlers["crop.info"] = func(ctx context.Context, _ json.RawMessage, _ int) (mcp.Result, error) {
+		got = mcp.ScopeFrom(ctx)
+		return mcp.Result{}, &mcp.ToolError{Code: mcp.ErrScopeDenied, Msg: "not in farm"}
+	}
+	res := e.call(t, agent.ToolCall{Tool: "crop.info", Args: json.RawMessage(`{"target":"x"}`)})
+	if got.TenantID != scope.TenantID || got.FarmID != scope.FarmID || got.UserID != scope.UserID {
+		t.Fatalf("server scope = %+v, want %+v", got, scope)
+	}
+	if res.Status != model.ToolStatusRejected || res.ErrorCode != string(mcp.ErrScopeDenied) {
+		t.Fatalf("status = %s (%s), want REJECTED (SCOPE_DENIED)", res.Status, res.ErrorCode)
+	}
+	if d := e.fields.deniedTargets(); !slices.Equal(d, []string{"tool:crop.info"}) {
+		t.Fatalf("denied = %v, want [tool:crop.info]", d)
+	}
+}
+
+// TestCall_CacheKeyPerFarm：同一入参在另一农场、或另一租户的同号农场都不命中本农场缓存
+// （cache:mcp:{tool}:{tenant_id}:{farm_id}:{args_digest}；farm_id 只在租户内唯一）。
+func TestCall_CacheKeyPerFarm(t *testing.T) {
+	e := newEnv(t, nil)
+	args := json.RawMessage(`{"target":"稻飞虱"}`)
+	otherFarm := model.Scope{TenantID: 1, FarmID: 2, UserID: 2001}
+	otherTenant := model.Scope{TenantID: 2, FarmID: 1, UserID: 3001}
+	for i, s := range []model.Scope{scope, scope, otherFarm, otherTenant} {
+		if _, err := e.gw.Call(context.Background(), s, agent.ToolCall{RunID: uint64(10 + i), StepID: "enrich", Tool: "crop.info", Args: args}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if n := e.srv["crop"].count("crop.info"); n != 3 {
+		t.Fatalf("invocations = %d, want 3 (farm (1,1) cached once, (1,2) and (2,1) miss)", n)
+	}
+	digest := mcp.ArgsDigest(mcp.Canonical(args))
+	for _, s := range []model.Scope{scope, otherFarm, otherTenant} {
+		if _, ok := e.cache.ttl[e.keys.CacheMCP("crop.info", s.TenantID, s.FarmID, digest)]; !ok {
+			t.Fatalf("cache key for (%d,%d) missing", s.TenantID, s.FarmID)
+		}
 	}
 }
 

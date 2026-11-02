@@ -1,6 +1,9 @@
 package archtest
 
-import "strings"
+import (
+	"slices"
+	"strings"
+)
 
 // Rule 是一条分层规则：Applies 判断文件是否受约束，Bad 判断某条 import 是否违规。
 type Rule struct {
@@ -9,18 +12,16 @@ type Rule struct {
 	Bad     func(imp string) bool
 	// NowOnly 非空时本规则改为检查 time.Now：只有该路径的文件可出现 time.Now。
 	NowOnly string
+	// SysOnly 非空时本规则改为检查 repository.NewSystemScope：只有白名单文件可构造。
+	SysOnly []string
 }
 
 func (r Rule) check(f File) []Violation {
+	if r.SysOnly != nil {
+		return r.lines(f, f.SysAt, slices.Contains(r.SysOnly, f.Rel))
+	}
 	if r.NowOnly != "" {
-		if f.Rel == r.NowOnly {
-			return nil
-		}
-		out := make([]Violation, 0, len(f.NowAt))
-		for _, line := range f.NowAt {
-			out = append(out, Violation{File: f.Rel, Line: line, Rule: r.Name})
-		}
-		return out
+		return r.lines(f, f.NowAt, f.Rel == r.NowOnly)
 	}
 	if !r.Applies(f) {
 		return nil
@@ -30,6 +31,18 @@ func (r Rule) check(f File) []Violation {
 		if r.Bad(imp) {
 			out = append(out, Violation{File: f.Rel, Rule: r.Name + ": imports " + imp})
 		}
+	}
+	return out
+}
+
+// lines 把选择子出现的行号转成违规；allowed 为真（白名单文件）时放行。
+func (r Rule) lines(f File, at []int, allowed bool) []Violation {
+	if allowed {
+		return nil
+	}
+	out := make([]Violation, 0, len(at))
+	for _, line := range at {
+		out = append(out, Violation{File: f.Rel, Line: line, Rule: r.Name})
 	}
 	return out
 }
@@ -123,7 +136,13 @@ var Rules = []Rule{
 			return f.Rel != adapterCaller && notIn("internal/adapter", "internal/app", "internal/evalkit", "cmd")(f)
 		},
 		Bad: importsAny("internal/adapter")},
+	// P1-L1-B：跨农场扫描凭证只许白名单文件构造（P1 手册 §6.2 流程 3）。
+	// 收紧计划：P1-L4 扫描与 outbox 轮询迁到 cmd/worker 后，白名单改为只含 cmd/worker。
+	{Name: "only scan/outbox pollers may construct repository.SystemScope", SysOnly: systemScopeCallers},
 }
+
+// systemScopeCallers 是可构造 repository.SystemScope 的文件白名单（server 内扫描与 outbox 轮询）。
+var systemScopeCallers = []string{"internal/service/scan.go", "internal/service/outbox.go"}
 
 // adapterCaller 是唯一可调用设备 Adapter 的业务文件（WorkOrderService.Dispatch）。
 const adapterCaller = "internal/service/workorder_dispatch.go"

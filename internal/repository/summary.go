@@ -27,6 +27,9 @@ type SummaryRepo struct{}
 
 // ByRun 按写入顺序返回该 run 的 tool_call.result_summary（非 NULL）与 run_event.payload；db 可为连接。
 func (SummaryRepo) ByRun(ctx context.Context, db *gorm.DB, scope model.Scope, runID uint64) ([]StoredSummary, error) {
+	if err := requireScope(scope); err != nil {
+		return nil, err
+	}
 	type row struct {
 		ID   uint64
 		Text string

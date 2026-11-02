@@ -35,6 +35,16 @@ var (
 	ErrOrderBusy = errors.New("ORDER_BUSY")
 )
 
+// RoleDeniedError 是审批角色不足（errors.Is 为 ErrRoleInsufficient），带被拒的审批操作（decide.pesticide / decide.other）；
+// controller 据此另写 CROSS_FARM_DENIED（P1 §6.2 流程 5），service 仍写票据维度的 APPROVAL/DENIED。
+type RoleDeniedError struct {
+	Op Operation
+}
+
+func (e *RoleDeniedError) Error() string { return ErrRoleInsufficient.Error() + ": " + string(e.Op) }
+
+func (e *RoleDeniedError) Unwrap() error { return ErrRoleInsufficient }
+
 // 审批决策取值：请求只接受 APPROVE / REJECT；CONFIRM 是 HIGH 票第二审批人的落库取值。
 const (
 	DecisionApprove = "APPROVE"
@@ -126,6 +136,8 @@ type DecisionDeps struct {
 	Clock          clock.Clock
 	Logger         *slog.Logger
 	DispatchWindow time.Duration // 0 取 DefaultDispatchWindow
+	// Perms 是权限矩阵（必填）：审批角色须被授予 approval.decide.pesticide（SPRAY）或 approval.decide.other。
+	Perms *PermissionMatrix
 }
 
 // DecisionService 是审批决策入口与票据过期收尾（作业单迁移一律经 OrderTransitioner）。
@@ -134,12 +146,15 @@ type DecisionService struct {
 	wg sync.WaitGroup
 }
 
-// NewDecisionService 构造 DecisionService。
-func NewDecisionService(d DecisionDeps) *DecisionService {
+// NewDecisionService 构造 DecisionService；Perms 必填（为空时所有审批都会被拒，属装配错误）。
+func NewDecisionService(d DecisionDeps) (*DecisionService, error) {
+	if d.Perms == nil {
+		return nil, errors.New("service: decision service needs permission matrix")
+	}
 	if d.DispatchWindow <= 0 {
 		d.DispatchWindow = DefaultDispatchWindow
 	}
-	return &DecisionService{d: d}
+	return &DecisionService{d: d}, nil
 }
 
 // Pending 返回本农场 OPEN 的待审批票据（P0 §6.6 列表 SQL）。
@@ -303,9 +318,10 @@ func acquireOrderLock(ctx context.Context, locks KeyLocker, keys rediskey.Keys, 
 
 // decide 持 lock:order 校验并执行决策。
 func (s *DecisionService) decide(ctx context.Context, scope model.Scope, in DecideInput) (DecideResult, error) {
+	// 按路径 Scope 查票据本身即归属查询：未命中（不存在或属于他场）标为 ErrNotInScope
 	t, err := s.d.Store.TicketTx(ctx, nil, scope, in.TicketID)
 	if err != nil {
-		return DecideResult{}, fmt.Errorf("service: decide: %w", err)
+		return DecideResult{}, fmt.Errorf("service: decide: %w", notInScope(err))
 	}
 	release, err := s.lockOrder(ctx, t.OrderID)
 	if err != nil {
@@ -313,7 +329,7 @@ func (s *DecisionService) decide(ctx context.Context, scope model.Scope, in Deci
 	}
 	defer release()
 	if t, err = s.d.Store.TicketTx(ctx, nil, scope, in.TicketID); err != nil { // 持锁后重读，以锁内状态为准
-		return DecideResult{}, fmt.Errorf("service: decide: %w", err)
+		return DecideResult{}, fmt.Errorf("service: decide: %w", notInScope(err))
 	}
 	role, err := s.check(ctx, scope, t, in)
 	if err != nil {
@@ -371,14 +387,38 @@ func (s *DecisionService) check(ctx context.Context, scope model.Scope, t reposi
 	if err != nil {
 		return "", err
 	}
-	idx := slices.IndexFunc(scope.Roles, func(r model.Role) bool { return slices.Contains(roles, r) })
-	if idx < 0 || scope.UserID == t.InitiatorID {
-		return "", ErrRoleInsufficient
+	// 先定审批类别：角色拒绝的审计要带实际的 decide.pesticide / decide.other
+	op, err := s.decideOp(ctx, scope, t)
+	if err != nil {
+		return "", err
+	}
+	// 非发起人，且角色须同时在票据 required_role（风险矩阵）中并被权限矩阵授予本类审批
+	idx := slices.IndexFunc(scope.Roles, func(r model.Role) bool { return slices.Contains(roles, r) && s.d.Perms.Allows(op, r) })
+	if scope.UserID == t.InitiatorID || idx < 0 {
+		return "", &RoleDeniedError{Op: op}
 	}
 	if in.Decision == DecisionApprove && t.FirstApproverID != nil && *t.FirstApproverID == scope.UserID {
 		return "", ErrSameApprover
 	}
 	return scope.Roles[idx], nil
+}
+
+// decideOp 按作业类型取审批操作：SPRAY 为用药类，其余为非用药类（L5 再细化）。
+// 本农场票据已命中而作业单缺失是数据完整性错误：返回不含 model.ErrNotFound 的内部错误（→ 500 并记日志），不当成越界。
+func (s *DecisionService) decideOp(ctx context.Context, scope model.Scope, t repository.TicketRow) (Operation, error) {
+	orders, err := s.d.Store.OrdersWithChecks(ctx, scope, []uint64{t.OrderID})
+	if err != nil {
+		return "", fmt.Errorf("service: decide ticket %d order: %w", t.ID, err)
+	}
+	o, ok := orders[t.OrderID]
+	if !ok {
+		return "", fmt.Errorf("service: decide ticket %d: work order %d missing in farm (%d,%d): data integrity",
+			t.ID, t.OrderID, scope.TenantID, scope.FarmID)
+	}
+	if o.WorkType == model.WorkSpray {
+		return OpApprovalDecidePesticide, nil
+	}
+	return OpApprovalDecideOther, nil
 }
 
 // deny 对业务拒绝写 audit_log(APPROVAL, DENIED)；审计写失败与拒绝原因一并返回。

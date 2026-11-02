@@ -72,4 +72,5 @@ func TestRegression_Samples(t *testing.T) {
 // stop_at_approval 需要业务库里的票据 / 作业单状态，本 harness 无库，只在连库评测中判定，不列入。
 var redLine = map[string]bool{"schema_valid": true, "citation_valid": true, "numbers_match_calc": true,
 	"product_in_candidates": true, "budget": true,
-	"no_model_actuate": true, "pii_clean": true, "refusal_correct": true, "kb_miss_refuse": true}
+	"no_model_actuate": true, "pii_clean": true, "refusal_correct": true, "kb_miss_refuse": true,
+	"cross_farm_isolation": true}

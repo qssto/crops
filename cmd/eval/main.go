@@ -248,7 +248,7 @@ func runWithStore(ctx context.Context, in *infra, ls *loadedSamples, samples []*
 	opts.ExperimentID = store.FormatID(id)
 	runner, err := evalkit.NewRunner(evalkit.PoolEnv(in.pool, in.deps), wall.Now,
 		evalkit.WithQuestion(in.question), evalkit.WithGraders(ls.kb, ls.graders...),
-		evalkit.WithApprover(evalkit.ScriptApprover(scriptApprovers())))
+		evalkit.WithApprover(evalkit.ScriptApprover(in.approvers[0], in.approvers[1])), evalkit.WithDevices(in.devices))
 	if err != nil {
 		return nil, 0, err
 	}

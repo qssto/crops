@@ -21,6 +21,9 @@ func NewToolCallRepo(db *gorm.DB) *ToolCallRepo { return &ToolCallRepo{db: db} }
 // Save 在一个事务内：取 attempt = 已有最大 + 1 → 落行（同 attempt 重复写入返回已有行 id）→
 // OK 且时效时作废同 run、同工具、更小 epoch 的结果。LAST_INSERT_ID 与 INSERT 同事务同连接。
 func (r *ToolCallRepo) Save(ctx context.Context, row model.ToolCallRow) (uint64, error) {
+	if err := requireFarm(row.TenantID, row.FarmID); err != nil {
+		return 0, err
+	}
 	var id uint64
 	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var attempt int
@@ -62,6 +65,9 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON DUPLICATE KE
 
 // FindOK 是去重回查：只认成功结果，取 attempt 最大的一行。
 func (r *ToolCallRepo) FindOK(ctx context.Context, scope model.Scope, callKey string) (model.ToolCallHit, bool, error) {
+	if err := requireScope(scope); err != nil {
+		return model.ToolCallHit{}, false, err
+	}
 	var row struct {
 		ID            uint64
 		ResultSummary []byte
@@ -87,16 +93,19 @@ func nullJSON(b json.RawMessage) any {
 	return string(b)
 }
 
-// FieldScope 校验地块归属（mcp.FieldScope 的实现）：gateway 调用 Server 前的租户隔离检查。
+// FieldScope 校验地块归属（service.FieldScopeChecker 的实现；gateway 侧经 FieldScopeGuard 带审计）。
 type FieldScope struct {
 	DB *gorm.DB
 }
 
 // Owns 判断 field_id 属于 scope 的 tenant_id / farm_id。
 func (s FieldScope) Owns(ctx context.Context, scope model.Scope, fieldID uint64) (bool, error) {
+	if err := requireScope(scope); err != nil {
+		return false, err
+	}
 	var one int
-	res := s.DB.WithContext(ctx).Raw(`SELECT 1 FROM field_profile WHERE id=? AND tenant_id=? AND farm_id=?`,
-		fieldID, scope.TenantID, scope.FarmID).Scan(&one)
+	res := s.DB.WithContext(ctx).Raw(`SELECT 1 FROM field_profile WHERE tenant_id=? AND farm_id=? AND id=?`,
+		scope.TenantID, scope.FarmID, fieldID).Scan(&one)
 	if res.Error != nil {
 		return false, fmt.Errorf("repository: field scope %d: %w", fieldID, res.Error)
 	}

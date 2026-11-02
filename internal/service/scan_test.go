@@ -35,15 +35,15 @@ type memScan struct {
 
 func (m *memScan) InTx(_ context.Context, fn func(tx *repository.DB) error) error { return fn(nil) }
 
-func (m *memScan) ListExpired(context.Context, time.Time) ([]repository.TicketRow, error) {
+func (m *memScan) ListExpired(context.Context, repository.SystemScope, time.Time) ([]repository.TicketRow, error) {
 	return m.expired, nil
 }
 
-func (m *memScan) ListDispatchOverdue(context.Context, time.Time) ([]repository.OrderKey, error) {
+func (m *memScan) ListDispatchOverdue(context.Context, repository.SystemScope, time.Time) ([]repository.OrderKey, error) {
 	return m.overdue, nil
 }
 
-func (m *memScan) ListPreparing(_ context.Context, before time.Time) ([]repository.StaleTicket, error) {
+func (m *memScan) ListPreparing(_ context.Context, _ repository.SystemScope, before time.Time) ([]repository.StaleTicket, error) {
 	m.lastFrom["preparing"] = before
 	return m.preparing, nil
 }
@@ -53,12 +53,12 @@ func (m *memScan) VoidPreparingTx(_ context.Context, _ *repository.DB, t reposit
 	return true, nil
 }
 
-func (m *memScan) ListApprovedInterrupted(_ context.Context, before time.Time) ([]repository.RunKey, error) {
+func (m *memScan) ListApprovedInterrupted(_ context.Context, _ repository.SystemScope, before time.Time) ([]repository.RunKey, error) {
 	m.lastFrom["finalize"] = before
 	return m.approved, nil
 }
 
-func (m *memScan) ListStuck(_ context.Context, before time.Time) ([]repository.RunKey, error) {
+func (m *memScan) ListStuck(_ context.Context, _ repository.SystemScope, before time.Time) ([]repository.RunKey, error) {
 	m.lastFrom["stuck"] = before
 	return m.stuck, nil
 }
@@ -68,7 +68,9 @@ func (m *memScan) MarkSystemError(_ context.Context, k repository.RunKey, _ time
 	return true, nil
 }
 
-func (m *memScan) ListSystemError(context.Context) ([]repository.RunKey, error) { return m.sysErr, nil }
+func (m *memScan) ListSystemError(context.Context, repository.SystemScope) ([]repository.RunKey, error) {
+	return m.sysErr, nil
+}
 
 func (m *memScan) FailInterruptedTx(_ context.Context, _ *repository.DB, k repository.RunKey, _ model.InterruptType, _ model.ReasonCode) error {
 	m.mu.Lock()

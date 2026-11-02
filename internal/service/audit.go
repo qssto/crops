@@ -24,9 +24,6 @@ const (
 	RawDenyRunMismatch = "RUN_MISMATCH"
 )
 
-// rawReadRoles 是可读原文的角色；operator 不可读。
-var rawReadRoles = []model.Role{model.RoleFarmManager, model.RoleAgronomist, model.RolePlatformAdmin}
-
 // RawAccessStore 是读原文需要的仓储能力，repository.RawAccessRepo 实现。
 type RawAccessStore interface {
 	InTx(ctx context.Context, fn func(tx *repository.DB) error) error
@@ -35,12 +32,13 @@ type RawAccessStore interface {
 	Audit(ctx context.Context, rec model.AuditRecord) error
 }
 
-// AuditDeps 是 AuditService 的依赖，均必填（Logger 可空）。
+// AuditDeps 是 AuditService 的依赖，均必填（Logger 可空）；Perms 判定 raw.read（P1 起替代静态角色表）。
 type AuditDeps struct {
 	Store   RawAccessStore
 	Presign repository.Presigner
 	Clock   clock.Clock
 	Logger  *slog.Logger
+	Perms   *PermissionMatrix
 }
 
 // AuditService 提供带授权审计的原文读取。
@@ -48,8 +46,8 @@ type AuditService struct{ d AuditDeps }
 
 // NewAuditService 校验依赖。
 func NewAuditService(d AuditDeps) (*AuditService, error) {
-	if d.Store == nil || d.Presign == nil || d.Clock == nil {
-		return nil, errors.New("service: audit service needs Store, Presign and Clock")
+	if d.Store == nil || d.Presign == nil || d.Clock == nil || d.Perms == nil {
+		return nil, errors.New("service: audit service needs Store, Presign, Clock and Perms")
 	}
 	if d.Logger == nil {
 		d.Logger = slog.Default()
@@ -89,7 +87,7 @@ func (s *AuditService) ReadRaw(ctx context.Context, scope model.Scope, runID, ra
 	if runID == 0 || rawID == 0 {
 		return RawLink{}, fmt.Errorf("%w: run_id / raw_id required", ErrBadInput)
 	}
-	if !hasAnyRole(scope, rawReadRoles) {
+	if !s.d.Perms.Allows(OpRawRead, scope.Roles...) {
 		return RawLink{}, s.deny(ctx, scope, runID, rawID, &rawDenied{code: RawDenyRole})
 	}
 	now := s.d.Clock.Now()
@@ -162,13 +160,4 @@ func (s *AuditService) rawRecord(scope model.Scope, runID, rawID uint64, row *re
 		rec.RawObjectID = &id
 	}
 	return rec, nil
-}
-
-func hasAnyRole(scope model.Scope, roles []model.Role) bool {
-	for _, r := range roles {
-		if scope.HasRole(r) {
-			return true
-		}
-	}
-	return false
 }

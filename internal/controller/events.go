@@ -56,7 +56,7 @@ func EventsHandler(s EventStreamer) gin.HandlerFunc {
 		switch {
 		case err == nil:
 		case !sink.started:
-			abortErr(c, err)
+			abortScoped(c, err, "run:"+strconv.FormatUint(runID, 10))
 		case !errors.Is(err, context.Canceled):
 			// 已开始推流，只能断开；错误挂到 gin 错误链供日志中间件读取
 			c.Error(err) //nolint:errcheck // 返回值即入参包装，无新错误

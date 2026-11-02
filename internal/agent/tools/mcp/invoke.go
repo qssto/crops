@@ -94,7 +94,7 @@ func statusOf(code ErrorCode) string {
 		return model.ToolStatusTimeout
 	case ErrEmpty:
 		return model.ToolStatusEmpty
-	case ErrRejected:
+	case ErrRejected, ErrScopeDenied:
 		return model.ToolStatusRejected
 	default:
 		return model.ToolStatusError

@@ -38,8 +38,11 @@ var _ agent.AdviceStore = (*AdviceRepo)(nil)
 // NewAdviceRepo 构造 AdviceRepo。
 func NewAdviceRepo(db *gorm.DB, c clock.Clock) *AdviceRepo { return &AdviceRepo{db: db, clock: c} }
 
-// checkScope 校验对象自带的 tenant/farm（0 视为未填）与 Scope 一致。
+// checkScope 先拒零值 Scope，再校验对象自带的 tenant/farm（0 视为未填）与 Scope 一致。
 func checkScope(scope model.Scope, tenantID, farmID uint64) error {
+	if err := requireScope(scope); err != nil {
+		return err
+	}
 	if (tenantID != 0 && tenantID != scope.TenantID) || (farmID != 0 && farmID != scope.FarmID) {
 		return fmt.Errorf("%w: (%d,%d) vs scope (%d,%d)", ErrScopeMismatch, tenantID, farmID, scope.TenantID, scope.FarmID)
 	}
@@ -170,6 +173,9 @@ type citationRow struct {
 // GetByRun 按 run_id 读回建议卡；无卡返回 model.ErrNotFound。
 // confidence / suggested_window 不落库（P0 DDL 无此列），读回为零值。
 func (r *AdviceRepo) GetByRun(ctx context.Context, scope model.Scope, runID uint64) (model.AdviceCard, error) {
+	if err := requireScope(scope); err != nil {
+		return model.AdviceCard{}, err
+	}
 	var row adviceRow
 	res := r.db.WithContext(ctx).Raw(
 		`SELECT id, field_id, run_id, crop, phenology_stage, category, advice_type, outcome, conclusion, reasons, numbers, product_candidates, selected_product, next_action, refuse_reason, degraded FROM advice_card WHERE tenant_id=? AND farm_id=? AND run_id=?`,

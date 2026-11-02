@@ -60,6 +60,7 @@ func GraphAgent(ctx context.Context, gc GraphConfig) func(*App) (agent.Agent, er
 			KB: gc.KB, Taxonomy: gc.Taxonomy, Crop: m.Crop, Region: m.Region, Logger: a.Logger,
 			Gate: a.Approvals, Events: a.Events, Trace: rec.Handler(), DispatchMode: a.Flags}
 		a.HITL.withHITL(&cfg, a.Runs)
+		a.withFarmScope(&cfg)
 		return graph.New(ctx, cfg)
 	}
 }

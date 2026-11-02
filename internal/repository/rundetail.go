@@ -148,6 +148,9 @@ func NewRunDetailRepo(db *gorm.DB, runs *RunRepo, advice *AdviceRepo) *RunDetail
 
 // Load 读该 run 的全部原始行；run 不存在（或不属于 scope）返回 model.ErrNotFound。
 func (r *RunDetailRepo) Load(ctx context.Context, scope model.Scope, runID uint64) (RunDetailRows, error) {
+	if err := requireScope(scope); err != nil {
+		return RunDetailRows{}, err
+	}
 	sum, err := r.runs.Summary(ctx, scope, runID)
 	if err != nil {
 		return RunDetailRows{}, err

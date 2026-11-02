@@ -36,7 +36,7 @@ type DispatchStore interface {
 	SupersedeRun(ctx context.Context, scope model.Scope, oldRunID, newRunID uint64, now time.Time) (bool, error)
 	InsertPreDispatchChecks(ctx context.Context, ref model.OrderRef, attempt int, checks []model.ConstraintCheck, now time.Time) error
 	SetDispatchResultTx(ctx context.Context, tx *repository.DB, ref model.OrderRef, result []byte, rowVer int, now time.Time) error
-	MarkDoneTx(ctx context.Context, tx *repository.DB, id uint64, now time.Time) (bool, error)
+	MarkDoneTx(ctx context.Context, tx *repository.DB, scope model.Scope, id uint64, now time.Time) (bool, error)
 }
 
 // Prechecker 是下发前复检，RecheckService 实现。
@@ -200,7 +200,7 @@ func (s *WorkOrderService) holdReal(ctx context.Context, msg repository.OutboxMe
 		if err := d.Audit.AppendTx(ctx, tx, rec); err != nil {
 			return err
 		}
-		return s.markDoneTx(ctx, tx, msg.ID, o.ID)
+		return s.markDoneTx(ctx, tx, o.Ref(), msg.ID)
 	})
 	if err != nil {
 		return fmt.Errorf("service: dispatch hold order %d: %w", o.ID, err)
@@ -222,7 +222,7 @@ func (s *WorkOrderService) expire(ctx context.Context, msg repository.OutboxMess
 			model.Actor{Type: model.ActorSystem}, model.ReasonApprovalExpired); err != nil {
 			return err
 		}
-		return s.markDoneTx(ctx, tx, msg.ID, ref.OrderID)
+		return s.markDoneTx(ctx, tx, ref, msg.ID)
 	})
 	if err != nil {
 		return fmt.Errorf("service: dispatch expire order %d: %w", ref.OrderID, err)
@@ -326,7 +326,7 @@ func (s *WorkOrderService) recordIntent(ctx context.Context, msg repository.Outb
 				model.Actor{Type: model.ActorSystem}, model.ReasonApprovalExpired); err != nil {
 				return fmt.Errorf("service: dispatch expire order %d: %w", o.ID, err)
 			}
-			return s.markDoneTx(ctx, tx, msg.ID, o.ID)
+			return s.markDoneTx(ctx, tx, o.Ref(), msg.ID)
 		})
 	}
 	err := d.Tx.InTx(ctx, func(tx *repository.DB) error {
@@ -368,7 +368,7 @@ func (s *WorkOrderService) recordResult(ctx context.Context, msg repository.Outb
 		if err := s.Transition(ctx, tx, ref, model.OrderDone, model.Actor{Type: model.ActorSystem}, ""); err != nil {
 			return err
 		}
-		if err := s.markDoneTx(ctx, tx, msg.ID, o.ID); err != nil {
+		if err := s.markDoneTx(ctx, tx, ref, msg.ID); err != nil {
 			return err
 		}
 		return s.appendDispatched(ctx, tx, o, m, model.DispatchPhaseResult)
@@ -395,14 +395,14 @@ func (s *WorkOrderService) appendDispatched(ctx context.Context, tx *repository.
 	return nil
 }
 
-// markDoneTx 同事务置 outbox DONE；已非 PENDING（并发处理已置过）只告警。
-func (s *WorkOrderService) markDoneTx(ctx context.Context, tx *repository.DB, outboxID, orderID uint64) error {
-	ok, err := s.dispatch.Store.MarkDoneTx(ctx, tx, outboxID, s.clock.Now())
+// markDoneTx 同事务按工单农场置 outbox DONE；已非 PENDING（并发处理已置过）只告警。
+func (s *WorkOrderService) markDoneTx(ctx context.Context, tx *repository.DB, ref model.OrderRef, outboxID uint64) error {
+	ok, err := s.dispatch.Store.MarkDoneTx(ctx, tx, model.Scope{TenantID: ref.TenantID, FarmID: ref.FarmID}, outboxID, s.clock.Now())
 	if err != nil {
 		return err
 	}
 	if !ok {
-		s.dispatch.Logger.WarnContext(ctx, "dispatch: outbox not PENDING", "outbox_id", outboxID, "order_id", orderID)
+		s.dispatch.Logger.WarnContext(ctx, "dispatch: outbox not PENDING", "outbox_id", outboxID, "order_id", ref.OrderID)
 	}
 	return nil
 }

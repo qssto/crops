@@ -90,23 +90,33 @@ func TestSeedIdempotent_Integration(t *testing.T) {
 	if n := itest.Count(t, slot.DB, "SELECT COUNT(*) FROM field_profile WHERE tenant_id = 1 AND farm_id = 1"); n != 6 {
 		t.Fatalf("field_profile rows = %d, want 6", n)
 	}
-	if n := itest.Count(t, slot.DB, "SELECT COUNT(*) FROM field_profile WHERE row_ver = 1"); n != 6 {
-		t.Fatalf("rows with row_ver=1 = %d, want 6 (second upsert bumps row_ver)", n)
+	if n := itest.Count(t, slot.DB, "SELECT COUNT(*) FROM field_profile WHERE row_ver = 1"); n != 8 {
+		t.Fatalf("rows with row_ver=1 = %d, want 8 (second upsert bumps row_ver)", n)
 	}
-	if n := itest.Count(t, slot.DB, "SELECT COUNT(*) FROM farm_profile"); n != 1 {
-		t.Fatalf("farm_profile rows = %d, want 1", n)
+	if n := itest.Count(t, slot.DB, "SELECT COUNT(*) FROM farm_profile"); n != 2 {
+		t.Fatalf("farm_profile rows = %d, want 2", n)
+	}
+	if n := itest.Count(t, slot.DB, "SELECT COUNT(*) FROM user_role"); n != int64(len(data.UserRoles)) || n != 6 {
+		t.Fatalf("user_role rows = %d, want 6 (upsert idempotent)", n)
 	}
 	id, err := repository.ProfileRepo{}.FieldIDByCode(t.Context(), slot.DB, 1, 1, "field-003")
 	if err != nil || id == 0 {
 		t.Fatalf("FieldIDByCode = %d, %v", id, err)
 	}
-	// FieldDirectory 是反查：id → field-003；不存在的 id 返回 ErrNotFound。
+	// FieldDirectory 是反查：id → field-003；不存在的 id、他场 scope 一律 ErrNotFound，零 scope 返回 ErrScopeRequired。
 	dir := repository.FieldDirectory{DB: slot.DB}
-	if code, err := dir.FieldCode(t.Context(), id); err != nil || code != "field-003" {
+	own := model.Scope{TenantID: 1, FarmID: 1}
+	if code, err := dir.FieldCode(t.Context(), own, id); err != nil || code != "field-003" {
 		t.Fatalf("FieldCode(%d) = %q, %v", id, code, err)
 	}
-	if _, err := dir.FieldCode(t.Context(), 1<<40); !errors.Is(err, model.ErrNotFound) {
+	if _, err := dir.FieldCode(t.Context(), own, 1<<40); !errors.Is(err, model.ErrNotFound) {
 		t.Fatalf("FieldCode(missing) err = %v, want ErrNotFound", err)
+	}
+	if _, err := dir.FieldCode(t.Context(), model.Scope{TenantID: 1, FarmID: 2}, id); !errors.Is(err, model.ErrNotFound) {
+		t.Fatalf("FieldCode(other farm) err = %v, want ErrNotFound", err)
+	}
+	if _, err := dir.FieldCode(t.Context(), model.Scope{}, id); !errors.Is(err, repository.ErrScopeRequired) {
+		t.Fatalf("FieldCode(zero scope) err = %v, want ErrScopeRequired", err)
 	}
 }
 

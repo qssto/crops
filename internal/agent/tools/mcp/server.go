@@ -53,6 +53,8 @@ const (
 	ErrMalformed ErrorCode = "MALFORMED"
 	ErrUpstream  ErrorCode = "UPSTREAM"
 	ErrRejected  ErrorCode = "REJECTED"
+	// ErrScopeDenied：field_id / 设备不属于本农场，与 agent.ErrScopeDenied 归一；tool_call.status 记 REJECTED。
+	ErrScopeDenied ErrorCode = "SCOPE_DENIED"
 )
 
 // ToolError 是带归一错误码的工具失败。

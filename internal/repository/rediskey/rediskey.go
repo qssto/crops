@@ -48,9 +48,11 @@ func (k Keys) IdemTool(callKey string) string { return k.prefix + "idem:tool:" +
 // IdemApprove 是 idem:approve:{request_id}（P0 L6，PENDING:{token} 10s / DONE:{decision_id} 24h）。
 func (k Keys) IdemApprove(requestID string) string { return k.prefix + "idem:approve:" + requestID }
 
-// CacheMCP 是 cache:mcp:{tool}:{args_digest}（P0 L2，weather 10min / crop 24h）。
-func (k Keys) CacheMCP(tool, argsDigest string) string {
-	return k.prefix + "cache:mcp:" + tool + ":" + argsDigest
+// CacheMCP 是 cache:mcp:{tool}:{tenant_id}:{farm_id}:{args_digest}（P0 L2 TTL：weather 10min / crop 24h）。
+// P1 L1-B 按农场隔离；farm_id 只在租户内唯一（uk_farm(tenant_id, farm_id)），故带 tenant_id（偏离 P1 §6.2 键表，见 dev-log）。
+func (k Keys) CacheMCP(tool string, tenantID, farmID uint64, argsDigest string) string {
+	return k.prefix + "cache:mcp:" + tool + ":" + strconv.FormatUint(tenantID, 10) + ":" +
+		strconv.FormatUint(farmID, 10) + ":" + argsDigest
 }
 
 // LockRun 是 lock:run:{run_id}（P0 L4，TTL 30s，执行期间按 ttl/3 续期）。

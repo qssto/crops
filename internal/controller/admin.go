@@ -6,7 +6,6 @@ import (
 	"errors"
 	"net/http"
 	"strconv"
-	"strings"
 
 	"github.com/gin-gonic/gin"
 
@@ -30,38 +29,25 @@ type flagSetRequest struct {
 	ExpectRowVer *int            `json:"expect_row_ver"`
 }
 
-// MountAdmin 在 r 上挂 /api/v1/admin 路由组：RequestID + PlatformAuth（P1 §6.1 功能任务 3）。
-// 合并 L1-A 后由调度方在组上追加 flag.write 操作检查。
-func MountAdmin(r *gin.Engine, a Authenticator, f FlagAdmin) {
-	admin := r.Group(AdminPrefix, RequestID(), PlatformAuth(a))
+// MountAdmin 在 r 上挂 /api/v1/admin 路由组：RequestID + PlatformAuth + 权限矩阵 flag.write（P1 §6.1 功能任务 3）。
+// service 层再查 platform_admin，两层校验。
+func MountAdmin(r *gin.Engine, g Guard, f FlagAdmin) {
+	admin := r.Group(AdminPrefix, RequestID(), PlatformAuth(g), RequireOps(g, service.OpFlagWrite))
 	admin.PUT("/flags/:flag_key/scopes/:tenant_id/:farm_id", FlagSetHandler(f))
 	admin.GET("/flags/:flag_key", FlagListHandler(f))
 }
 
-// PlatformAuth 校验 Bearer token 并解析平台 Scope：无 token / 验签失败 → 401，无 (0,0) 绑定 → 403。
-func PlatformAuth(a Authenticator) gin.HandlerFunc {
+// PlatformAuth 校验 Bearer token 并解析平台 Scope：无 token / 验签失败 → 401，无 (0,0) 绑定 → 403 SCOPE_DENIED 并审计。
+// 不要求 token 的 tenant_id 为 0（§6.2 未规定）：平台权限只认 (0,0) 上的 user_role 绑定。
+func PlatformAuth(g Guard) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		token, ok := strings.CutPrefix(c.GetHeader("Authorization"), bearerPrefix)
+		id, ok := identify(c, g, requestToken(c, false))
 		if !ok {
-			abort(c, http.StatusUnauthorized, "unauthenticated")
 			return
 		}
-		uid, err := a.Authenticate(strings.TrimSpace(token))
-		if err != nil {
-			abort(c, http.StatusUnauthorized, "unauthenticated")
-			return
-		}
-		scope, err := a.ResolvePlatformScope(c.Request.Context(), uid)
-		if err != nil {
-			status := http.StatusInternalServerError
-			if errors.Is(err, service.ErrForbidden) {
-				status = http.StatusForbidden
-			}
-			abort(c, status, http.StatusText(status))
-			return
-		}
-		c.Request = c.Request.WithContext(service.WithScope(c.Request.Context(), scope))
-		c.Next()
+		establishScope(c, g, id, "platform", func(ctx context.Context) (model.Scope, error) {
+			return g.Auth.ResolvePlatformScope(ctx, id.UserID)
+		})
 	}
 }
 

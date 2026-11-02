@@ -39,7 +39,10 @@ type Options struct {
 	Cache      Cache
 	Calls      agent.ToolCallStore
 	Raw        agent.RawStore
-	Fields     FieldScope
+	// Fields 校验 field_id 归属并写 CROSS_FARM_DENIED 审计（repository.FieldScopeGuard）。
+	Fields agent.FieldScopeChecker
+	// Devices 判定入参 device_id 归属（device.Bindings）；越界经 Fields.Deny 写审计，不依赖各 Server 自行校验。
+	Devices agent.DeviceOwnership
 	// Events 非 nil 时每次调用发 TOOL_CALL_END（L7 接 EventRepo）。
 	Events agent.EventSink
 	// Mask 对 result_summary 脱敏；nil 时原样（生产注入 pii.MaskJSON）。
@@ -72,6 +75,7 @@ func (o Options) validate() error {
 	req(o.Calls == nil, "Calls")
 	req(o.Raw == nil, "Raw")
 	req(o.Fields == nil, "Fields")
+	req(o.Devices == nil, "Devices")
 	if o.Mask != nil && o.RawReader == nil {
 		errs = append(errs, errors.New("mcp gateway: RawReader is required when Mask is set (dedup replay must return unmasked results)"))
 	}

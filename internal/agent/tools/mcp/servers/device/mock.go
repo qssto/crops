@@ -23,10 +23,12 @@ type Data struct {
 // Device 是一台设备及其模拟状态。
 type Device struct {
 	DeviceID     string   `yaml:"device_id" json:"device_id"`
+	TenantID     uint64   `yaml:"tenant_id" json:"-"` // 显式绑定的租户 / 农场（设备归属唯一依据）
+	FarmID       uint64   `yaml:"farm_id" json:"-"`
 	Kind         string   `yaml:"kind" json:"kind"`
 	Model        string   `yaml:"model" json:"model"`
 	Capabilities []string `yaml:"capabilities" json:"capabilities"`
-	Fields       []string `yaml:"fields" json:"-"` // 可服务的地块编码
+	Fields       []string `yaml:"fields" json:"-"` // 可服务的地块编码（农场内编码，不用于判定归属）
 	Status       Status   `yaml:"status" json:"-"`
 }
 
@@ -51,6 +53,9 @@ func (d Data) validate() error {
 			errs = append(errs, fmt.Errorf("devices[%d]: device_id empty or duplicate", i))
 		}
 		seen[dv.DeviceID] = true
+		if dv.TenantID == 0 || dv.FarmID == 0 {
+			errs = append(errs, fmt.Errorf("devices[%d]: tenant_id and farm_id are required", i))
+		}
 		if dv.Status.HeartbeatLag < 0 {
 			errs = append(errs, fmt.Errorf("devices[%d]: heartbeat_lag must be >= 0", i))
 		}
@@ -60,6 +65,7 @@ func (d Data) validate() error {
 
 type mock struct {
 	data Data
+	bind *Bindings
 	clk  clock.Clock
 	dir  kit.FieldDirectory
 }
@@ -78,7 +84,7 @@ func NewMock(d Data, clk clock.Clock, dir kit.FieldDirectory) (mcp.Server, error
 	if err := d.validate(); err != nil {
 		return nil, fmt.Errorf("device mock data: %w", err)
 	}
-	m := &mock{data: d, clk: clk, dir: dir}
+	m := &mock{data: d, bind: NewBindings(d.Devices), clk: clk, dir: dir}
 	return kit.NewServer(Name, Specs(), map[string]kit.Handler{ToolList: m.list, ToolStatus: m.status})
 }
 
@@ -93,9 +99,11 @@ func (m *mock) list(ctx context.Context, args json.RawMessage) (mcp.Result, erro
 	if err != nil {
 		return mcp.Result{}, err
 	}
+	scope := mcp.ScopeFrom(ctx)
 	devices := make([]Device, 0, len(m.data.Devices))
 	for _, dv := range m.data.Devices {
-		if slices.Contains(dv.Fields, code) && (a.Kind == "" || dv.Kind == a.Kind) {
+		// 地块编码只在农场内唯一：先按显式绑定限定本农场设备，再按编码匹配。
+		if m.bind.owns(scope, dv.DeviceID) && slices.Contains(dv.Fields, code) && (a.Kind == "" || dv.Kind == a.Kind) {
 			devices = append(devices, dv)
 		}
 	}
@@ -117,7 +125,7 @@ type statusOut struct {
 	LastSeenAt string   `json:"last_seen_at"`
 }
 
-func (m *mock) status(_ context.Context, args json.RawMessage) (mcp.Result, error) {
+func (m *mock) status(ctx context.Context, args json.RawMessage) (mcp.Result, error) {
 	var a statusArgs
 	if err := kit.DecodeArgs(args, &a); err != nil {
 		return mcp.Result{}, err
@@ -125,10 +133,11 @@ func (m *mock) status(_ context.Context, args json.RawMessage) (mcp.Result, erro
 	if a.DeviceID == "" {
 		return mcp.Result{}, kit.Rejected("device_id is required")
 	}
-	i := slices.IndexFunc(m.data.Devices, func(d Device) bool { return d.DeviceID == a.DeviceID })
-	if i < 0 {
-		return mcp.Result{}, kit.Empty("device %q not found", a.DeviceID)
+	// 先判归属再查设备：不存在与属于他场同为 SCOPE_DENIED，不暴露存在性（gateway 已统一校验，此处兜底）。
+	if !m.bind.owns(mcp.ScopeFrom(ctx), a.DeviceID) {
+		return mcp.Result{}, kit.ScopeDenied("device %q not in farm", a.DeviceID)
 	}
+	i := slices.IndexFunc(m.data.Devices, func(d Device) bool { return d.DeviceID == a.DeviceID })
 	st := m.data.Devices[i].Status
 	now := m.clk.Now()
 	seen := now.Add(-st.HeartbeatLag)

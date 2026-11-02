@@ -78,6 +78,9 @@ func stepIDs(d RunDetail) []string {
 	return out
 }
 
+// errDetailDown 模拟库故障：不得被当成越界（ErrForbidden）。
+var errDetailDown = errors.New("db down")
+
 func TestRunDetailService_Get(t *testing.T) {
 	scope := model.Scope{TenantID: 1, FarmID: 1, UserID: 1001}
 	tests := []struct {
@@ -88,7 +91,8 @@ func TestRunDetailService_Get(t *testing.T) {
 		check   func(t *testing.T, d RunDetail)
 	}{
 		{name: "run 0 rejected", runID: 0, wantErr: ErrBadInput},
-		{name: "run not found", runID: 7, loader: fakeDetailLoader{err: model.ErrNotFound}, wantErr: model.ErrNotFound},
+		{name: "run not found", runID: 7, loader: fakeDetailLoader{err: model.ErrNotFound}, wantErr: ErrNotInScope},
+		{name: "loader error is not out of scope", runID: 7, loader: fakeDetailLoader{err: errDetailDown}, wantErr: errDetailDown},
 		{name: "only agent_run: every section empty, no error", runID: 7,
 			loader: fakeDetailLoader{rows: repository.RunDetailRows{Run: model.RunSummary{RunID: 7, Status: model.RunRunning}}},
 			check: func(t *testing.T, d RunDetail) {
@@ -197,7 +201,7 @@ func TestRunDetailService_Get(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			d, err := NewRunDetailService(tt.loader).Get(context.Background(), scope, tt.runID)
 			if tt.wantErr != nil {
-				if !errors.Is(err, tt.wantErr) {
+				if !errors.Is(err, tt.wantErr) || tt.wantErr == errDetailDown && errors.Is(err, ErrForbidden) {
 					t.Fatalf("err = %v, want %v", err, tt.wantErr)
 				}
 				return

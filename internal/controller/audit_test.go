@@ -7,9 +7,6 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
-	"time"
-
-	"github.com/gin-gonic/gin"
 
 	"agri-steward/internal/model"
 	"agri-steward/internal/service"
@@ -29,17 +26,7 @@ func (f *fakeRawReader) ReadRaw(_ context.Context, _ model.Scope, runID, rawID u
 }
 
 func TestRawHandler(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	now := time.Date(2026, 10, 29, 1, 0, 0, 0, time.UTC)
-	grants := map[uint64][]model.Grant{1001: {{TenantID: 1, FarmID: 1, Roles: []model.Role{model.RoleAgronomist}}}}
-	auth, err := service.NewAuthService("0123456789abcdef0123456789abcdef", grants, fixedClock{now})
-	if err != nil {
-		t.Fatal(err)
-	}
-	tok, err := auth.Issue(1001, time.Hour)
-	if err != nil {
-		t.Fatal(err)
-	}
+	e := newTestEnv(t)
 	tests := []struct {
 		name       string
 		path       string
@@ -54,14 +41,18 @@ func TestRawHandler(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			e.den.got = nil
 			r := &fakeRawReader{err: tt.err}
-			router := NewRouter(auth, &fakeAsker{}, AuditRoutes(r))
+			router := NewRouter(e.guard, &fakeAsker{}, AuditRoutes(r))
 			req := httptest.NewRequest(http.MethodGet, tt.path, nil)
-			req.Header.Set("Authorization", "Bearer "+tok)
+			req.Header.Set("Authorization", e.bearer(t, 1002, 1))
 			rec := httptest.NewRecorder()
 			router.ServeHTTP(rec, req)
 			if rec.Code != tt.wantStatus {
 				t.Fatalf("status = %d, want %d; body=%s", rec.Code, tt.wantStatus, rec.Body.String())
+			}
+			if tt.err != nil {
+				assertResourceDenied(t, e, rec, "raw:101")
 			}
 			if tt.wantStatus == http.StatusOK && (r.gotRun != 9 || r.gotRaw != 101 ||
 				!strings.Contains(rec.Body.String(), `"url"`) || rec.Header().Get("Cache-Control") != "no-store") {

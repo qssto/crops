@@ -85,7 +85,7 @@ func TestAuditService_ReadRaw(t *testing.T) {
 			store := &memRawAccess{rows: map[uint64]repository.RawObjectRow{
 				101: {ID: 101, RunID: 9, Kind: model.RawLLMIO, ObjectKey: "raw/1/2/2026/10/29/9/LLM_IO/x"}}}
 			pre := &fakePresign{}
-			svc, err := NewAuditService(AuditDeps{Store: store, Presign: pre, Clock: fixedClock{rawNow}})
+			svc, err := NewAuditService(AuditDeps{Store: store, Presign: pre, Clock: fixedClock{rawNow}, Perms: testPerms(t)})
 			if err != nil {
 				t.Fatal(err)
 			}

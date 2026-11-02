@@ -25,6 +25,9 @@ func NewRunRepo(db *gorm.DB, c clock.Clock) *RunRepo { return &RunRepo{db: db, c
 
 // CreateRun 插入 agent_run(RUNNING)，返回 run_id。s 只取 TenantID / FarmID。
 func (r *RunRepo) CreateRun(ctx context.Context, s model.RunState, userID, fieldID uint64, meta agent.RunMeta) (uint64, error) {
+	if err := requireFarm(s.TenantID, s.FarmID); err != nil {
+		return 0, err
+	}
 	now := r.clock.Now()
 	var id uint64
 	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
@@ -64,10 +67,13 @@ type runRow struct {
 }
 
 func (r *RunRepo) getRun(ctx context.Context, db *gorm.DB, scope model.Scope, runID uint64) (runRow, error) {
+	if err := requireScope(scope); err != nil {
+		return runRow{}, err
+	}
 	var row runRow
 	res := db.WithContext(ctx).Raw(
-		`SELECT id, tenant_id, farm_id, field_id, user_id, status, interrupt_type, reason_code, row_ver, created_at, updated_at FROM agent_run WHERE id=? AND tenant_id=? AND farm_id=?`,
-		runID, scope.TenantID, scope.FarmID).Scan(&row)
+		`SELECT id, tenant_id, farm_id, field_id, user_id, status, interrupt_type, reason_code, row_ver, created_at, updated_at FROM agent_run WHERE tenant_id=? AND farm_id=? AND id=?`,
+		scope.TenantID, scope.FarmID, runID).Scan(&row)
 	if res.Error != nil {
 		return runRow{}, fmt.Errorf("repository: get agent_run %d: %w", runID, res.Error)
 	}
@@ -131,6 +137,9 @@ func (r *RunRepo) LoadRun(ctx context.Context, scope model.Scope, runID uint64) 
 
 // SaveStep 照抄 P0 L4 run_step 行别名 upsert：开始传 STARTED，结束传终态与原 started_at。
 func (r *RunRepo) SaveStep(ctx context.Context, scope model.Scope, runID uint64, step model.RunStep) error {
+	if err := requireScope(scope); err != nil {
+		return err
+	}
 	err := r.db.WithContext(ctx).Exec(
 		`INSERT INTO run_step (tenant_id, farm_id, run_id, step_id, node, status, started_at, ended_at, error_code)
 VALUES (?,?,?,?,?,?,?,?,?) AS new
@@ -146,6 +155,9 @@ ON DUPLICATE KEY UPDATE status=new.status, ended_at=new.ended_at, error_code=new
 // FinishRun 用 row_ver 乐观锁把 RUNNING 置为终态：非终态目标或当前非 RUNNING → model.ErrIllegalTransition，
 // 并发改写 → model.ErrConcurrentUpdate。
 func (r *RunRepo) FinishRun(ctx context.Context, scope model.Scope, runID uint64, status model.RunStatus, reasonCode string) error {
+	if err := requireScope(scope); err != nil {
+		return err
+	}
 	if !status.IsTerminal() {
 		return fmt.Errorf("repository: finish run %d to %s: %w", runID, status, model.ErrIllegalTransition)
 	}
@@ -158,8 +170,8 @@ func (r *RunRepo) FinishRun(ctx context.Context, scope model.Scope, runID uint64
 			return fmt.Errorf("repository: finish run %d %s -> %s: %w", runID, row.Status, status, model.ErrIllegalTransition)
 		}
 		res := tx.WithContext(ctx).Exec(
-			`UPDATE agent_run SET status=?, reason_code=?, row_ver=row_ver+1, updated_at=? WHERE id=? AND tenant_id=? AND farm_id=? AND status='RUNNING' AND row_ver=?`,
-			string(status), nullIfEmpty(reasonCode), r.clock.Now(), runID, scope.TenantID, scope.FarmID, row.RowVer)
+			`UPDATE agent_run SET status=?, reason_code=?, row_ver=row_ver+1, updated_at=? WHERE tenant_id=? AND farm_id=? AND id=? AND status='RUNNING' AND row_ver=?`,
+			string(status), nullIfEmpty(reasonCode), r.clock.Now(), scope.TenantID, scope.FarmID, runID, row.RowVer)
 		if res.Error != nil {
 			return fmt.Errorf("repository: finish agent_run %d: %w", runID, res.Error)
 		}
@@ -173,9 +185,12 @@ func (r *RunRepo) FinishRun(ctx context.Context, scope model.Scope, runID uint64
 // Heartbeat 照抄 P0 L6 心跳 SQL（不改状态、不升 row_ver）。
 // 影响行数 0 不报错：FrozenClock 下 updated_at 不变时 MySQL 也返回 0 行。
 func (r *RunRepo) Heartbeat(ctx context.Context, scope model.Scope, runID uint64) error {
+	if err := requireScope(scope); err != nil {
+		return err
+	}
 	err := r.db.WithContext(ctx).Exec(
-		`UPDATE agent_run SET updated_at=? WHERE id=? AND tenant_id=? AND farm_id=? AND status='RUNNING'`,
-		r.clock.Now(), runID, scope.TenantID, scope.FarmID).Error
+		`UPDATE agent_run SET updated_at=? WHERE tenant_id=? AND farm_id=? AND id=? AND status='RUNNING'`,
+		r.clock.Now(), scope.TenantID, scope.FarmID, runID).Error
 	if err != nil {
 		return fmt.Errorf("repository: heartbeat agent_run %d: %w", runID, err)
 	}

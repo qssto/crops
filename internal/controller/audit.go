@@ -44,7 +44,7 @@ func RawHandler(r RawReader) gin.HandlerFunc {
 		}
 		link, err := r.ReadRaw(c.Request.Context(), scope, runID, rawID)
 		if err != nil {
-			abortErr(c, err)
+			abortScoped(c, err, "raw:"+strconv.FormatUint(rawID, 10))
 			return
 		}
 		c.Header("Cache-Control", "no-store")

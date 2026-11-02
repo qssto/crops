@@ -35,21 +35,24 @@ const (
 	stuckAfter = 90 * time.Second
 )
 
+// scanSystem 是 server 内扫描任务的跨农场凭证（P1-L4 随扫描迁到 cmd/worker）。
+var scanSystem = repository.NewSystemScope("server_scan")
+
 // TicketScanStore 是票据 / 作业单扫描的仓储能力，repository.DecisionRepo 实现。
 type TicketScanStore interface {
 	InTx(ctx context.Context, fn func(tx *repository.DB) error) error
-	ListExpired(ctx context.Context, now time.Time) ([]repository.TicketRow, error)
-	ListDispatchOverdue(ctx context.Context, now time.Time) ([]repository.OrderKey, error)
-	ListPreparing(ctx context.Context, before time.Time) ([]repository.StaleTicket, error)
+	ListExpired(ctx context.Context, sys repository.SystemScope, now time.Time) ([]repository.TicketRow, error)
+	ListDispatchOverdue(ctx context.Context, sys repository.SystemScope, now time.Time) ([]repository.OrderKey, error)
+	ListPreparing(ctx context.Context, sys repository.SystemScope, before time.Time) ([]repository.StaleTicket, error)
 	VoidPreparingTx(ctx context.Context, tx *repository.DB, t repository.TicketRow, now time.Time) (bool, error)
-	ListApprovedInterrupted(ctx context.Context, before time.Time) ([]repository.RunKey, error)
+	ListApprovedInterrupted(ctx context.Context, sys repository.SystemScope, before time.Time) ([]repository.RunKey, error)
 }
 
 // RunScanStore 是卡住 run 扫描的仓储能力，repository.RunRepo 实现。
 type RunScanStore interface {
-	ListStuck(ctx context.Context, before time.Time) ([]repository.RunKey, error)
+	ListStuck(ctx context.Context, sys repository.SystemScope, before time.Time) ([]repository.RunKey, error)
 	MarkSystemError(ctx context.Context, k repository.RunKey, before time.Time) (bool, error)
-	ListSystemError(ctx context.Context) ([]repository.RunKey, error)
+	ListSystemError(ctx context.Context, sys repository.SystemScope) ([]repository.RunKey, error)
 	FailInterruptedTx(ctx context.Context, tx *repository.DB, k repository.RunKey, it model.InterruptType, reason model.ReasonCode) error
 	DraftOrdersTx(ctx context.Context, tx *repository.DB, scope model.Scope, runID uint64) ([]uint64, error)
 }
@@ -166,7 +169,7 @@ func skippable(err error) bool {
 
 // approvalExpire：过期 OPEN 票逐张收尾（票据 UPDATE 0 行即已被决策、跳过）；APPROVED 且过 dispatch_deadline_at 的作业单转 EXPIRED。
 func (s *Scanner) approvalExpire(ctx context.Context, now time.Time) error {
-	tickets, err := s.d.Tickets.ListExpired(ctx, now)
+	tickets, err := s.d.Tickets.ListExpired(ctx, scanSystem, now)
 	if err != nil {
 		return err
 	}
@@ -176,7 +179,7 @@ func (s *Scanner) approvalExpire(ctx context.Context, now time.Time) error {
 			errs = append(errs, err)
 		}
 	}
-	orders, err := s.d.Tickets.ListDispatchOverdue(ctx, now)
+	orders, err := s.d.Tickets.ListDispatchOverdue(ctx, scanSystem, now)
 	if err != nil {
 		return errors.Join(append(errs, err)...)
 	}
@@ -204,7 +207,7 @@ func (s *Scanner) expireOrder(ctx context.Context, ref model.OrderRef) error {
 // ticketActivate：PREPARING 超过 30s 的票，run 已 INTERRUPTED(WAIT_APPROVAL) 则 Activate；run 已终态（失败 / 重试耗尽）
 // 则作废票据并把作业单 PENDING_APPROVAL → EXPIRED，避免悬挂；run 仍 RUNNING / SYSTEM_ERROR 交给 stuck_run。
 func (s *Scanner) ticketActivate(ctx context.Context, now time.Time) error {
-	rows, err := s.d.Tickets.ListPreparing(ctx, now.Add(-preparingGrace))
+	rows, err := s.d.Tickets.ListPreparing(ctx, scanSystem, now.Add(-preparingGrace))
 	if err != nil {
 		return err
 	}
@@ -252,7 +255,7 @@ func (s *Scanner) voidTicket(ctx context.Context, t repository.TicketRow, now ti
 // runFinalize：票据已 APPROVED 超过 60s 而 run 仍 INTERRUPTED(WAIT_APPROVAL)（决策后的异步 Resume 失败），重新触发 Resume；
 // 不可续（如 graph_version 已变、无检查点）时 run 置 FAILED(RETRY_EXHAUSTED)，不再每轮重试（作业单保持 APPROVED，下发不受影响）。
 func (s *Scanner) runFinalize(ctx context.Context, now time.Time) error {
-	runs, err := s.d.Tickets.ListApprovedInterrupted(ctx, now.Add(-finalizeGrace))
+	runs, err := s.d.Tickets.ListApprovedInterrupted(ctx, scanSystem, now.Add(-finalizeGrace))
 	if err != nil {
 		return err
 	}
@@ -266,7 +269,7 @@ func (s *Scanner) runFinalize(ctx context.Context, now time.Time) error {
 // SYSTEM_ERROR 且 sys_retry ≤ 3 → Resume 重入（不可续，如无检查点或图版本已变，按重试耗尽收尾）；超过 3 次 → FAILED(RETRY_EXHAUSTED)。
 func (s *Scanner) stuckRun(ctx context.Context, now time.Time) error {
 	before := now.Add(-stuckAfter)
-	stuck, err := s.d.Runs.ListStuck(ctx, before)
+	stuck, err := s.d.Runs.ListStuck(ctx, scanSystem, before)
 	if err != nil {
 		return err
 	}
@@ -284,7 +287,7 @@ func (s *Scanner) stuckRun(ctx context.Context, now time.Time) error {
 			errs = append(errs, err)
 		}
 	}
-	failed, err := s.d.Runs.ListSystemError(ctx)
+	failed, err := s.d.Runs.ListSystemError(ctx, scanSystem)
 	if err != nil {
 		return errors.Join(append(errs, err)...)
 	}

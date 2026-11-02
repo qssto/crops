@@ -18,7 +18,7 @@ type Decider interface {
 	Decide(ctx context.Context, scope model.Scope, in service.DecideInput) (service.DecideResult, error)
 }
 
-// Mount 在 /api/v1/farms/:farm_id 分组上追加路由（分组已带 RequestID + FarmAuth）。
+// Mount 在 /api/v1/farms/:farm_id 分组上追加路由（分组已带 RequestID + FarmAuth + Authorize，新路由须登记 routeOps）。
 type Mount func(farms *gin.RouterGroup)
 
 // ApprovalRoutes 挂载待审批列表与审批决策（P0 §6.6 / §6.7）。
@@ -54,7 +54,7 @@ func PendingHandler(d Decider) gin.HandlerFunc {
 		}
 		rows, err := d.Pending(c.Request.Context(), scope)
 		if err != nil {
-			abortDecideErr(c, err)
+			abortDecideErr(c, err, "")
 			return
 		}
 		c.JSON(http.StatusOK, gin.H{"tickets": rows})
@@ -88,7 +88,7 @@ func DecideHandler(d Decider) gin.HandlerFunc {
 			RequestID: service.RequestIDFrom(c.Request.Context()), Decision: req.Decision,
 			SnapshotDigest: req.SnapshotDigest, Comment: req.Comment})
 		if err != nil {
-			abortDecideErr(c, err)
+			abortDecideErr(c, err, "ticket:"+strconv.FormatUint(ticketID, 10))
 			return
 		}
 		c.JSON(http.StatusOK, res)
@@ -110,13 +110,22 @@ var decideCodes = []struct {
 	{service.ErrSameApprover, http.StatusForbidden},
 }
 
-// abortDecideErr 先映射审批错误码，其余交给 abortErr。
-func abortDecideErr(c *gin.Context, err error) {
+// abortDecideErr 先映射审批错误码；审批角色不足（service.RoleDeniedError）另写 CROSS_FARM_DENIED（ROLE_INSUFFICIENT，
+// op 为实际的 decide.pesticide / decide.other，P1 §6.2 流程 5）。target 非空时资源越界按 abortScoped（403 + 审计），其余交给 abortErr。
+func abortDecideErr(c *gin.Context, err error, target string) {
+	var rd *service.RoleDeniedError
+	if errors.As(err, &rd) {
+		recordDenial(c, service.DenyRole, rd.Op, target)
+	}
 	for _, dc := range decideCodes {
 		if errors.Is(err, dc.err) {
 			abort(c, dc.status, dc.err.Error())
 			return
 		}
+	}
+	if target != "" {
+		abortScoped(c, err, target)
+		return
 	}
 	abortErr(c, err)
 }

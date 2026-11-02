@@ -110,7 +110,7 @@ func (m *memDispatch) SetDispatchResultTx(_ context.Context, _ *repository.DB, _
 	return nil
 }
 
-func (m *memDispatch) MarkDoneTx(context.Context, *repository.DB, uint64, time.Time) (bool, error) {
+func (m *memDispatch) MarkDoneTx(context.Context, *repository.DB, model.Scope, uint64, time.Time) (bool, error) {
 	if err := m.fail("outbox"); err != nil {
 		return false, err
 	}

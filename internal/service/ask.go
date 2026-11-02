@@ -106,7 +106,7 @@ func (s *AskService) Ask(ctx context.Context, scope model.Scope, in AskInput) (u
 		return 0, fmt.Errorf("service: ask: %w", err)
 	}
 	if !ok {
-		return 0, fmt.Errorf("service: field %d: %w", in.FieldID, ErrForbidden)
+		return 0, fmt.Errorf("service: field %d: %w", in.FieldID, ErrNotInScope)
 	}
 	if err := s.adviceEnabled(ctx, scope); err != nil {
 		return 0, err

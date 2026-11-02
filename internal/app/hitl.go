@@ -1,6 +1,8 @@
 package app
 
 import (
+	"fmt"
+
 	"agri-steward/internal/agent"
 	"agri-steward/internal/agent/graph"
 	"agri-steward/internal/agent/harness/memory"
@@ -46,12 +48,16 @@ func buildHITLStores(deps Deps) *HITL {
 
 // buildHITLServices 在主链路就绪后装配审批决策与扫描任务；主链路实现 agent.Resumer 时作为续跑入口。
 // 扫描的 Activate（ticket_activate）走 L5 的 ApprovalService。
-func (a *App) buildHITLServices() {
+func (a *App) buildHITLServices() error {
 	resumer, _ := a.Agent.(agent.Resumer)
 	idem := repository.NewRedisIdem(a.Redis)
-	a.HITL.Decisions = service.NewDecisionService(service.DecisionDeps{Store: a.HITL.decisions, Orders: a.WorkOrders,
+	decisions, err := service.NewDecisionService(service.DecisionDeps{Store: a.HITL.decisions, Orders: a.WorkOrders,
 		Events: a.eventRepo, Idem: idem, Locks: a.Locker, Keys: a.Keys, Resumer: resumer,
-		Clock: a.Clock, Logger: a.Logger})
+		Clock: a.Clock, Logger: a.Logger, Perms: a.Perms})
+	if err != nil {
+		return fmt.Errorf("app: build decision service: %w", err)
+	}
+	a.HITL.Decisions = decisions
 	a.HITL.Scanner = service.NewScanner(service.ScanDeps{Tickets: a.HITL.decisions, Runs: a.Runs,
 		Expirer: a.HITL.Decisions, Orders: a.WorkOrders, Resumer: resumer, Gate: a.Approvals, Locks: a.Locker,
 		Keys: a.Keys, Clock: a.Clock, Logger: a.Logger})
@@ -59,6 +65,7 @@ func (a *App) buildHITLServices() {
 		a.HITL.Recheck = service.NewRecheckService(service.RecheckDeps{Rechecker: rc, Tx: a.HITL.decisions,
 			Orders: a.WorkOrders, Starter: a.Ask, Locks: a.Locker, Keys: a.Keys, Logger: a.Logger})
 	}
+	return nil
 }
 
 // withHITL 把 L6 存储注入主链路配置；未启用检查点时保持 Checkpoints / Resumes 为空（避免带类型的 nil 接口）。

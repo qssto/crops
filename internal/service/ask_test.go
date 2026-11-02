@@ -133,7 +133,7 @@ func TestAskService_Ask(t *testing.T) {
 			wantErr: ErrBadInput, agent: &fakeAgent{}},
 		{name: "zero field", in: AskInput{Text: "x"}, wantErr: ErrBadInput, agent: &fakeAgent{}},
 		{name: "field out of scope", in: AskInput{FieldID: 99, Text: "x"},
-			fields: fakeFields{ok: false}, wantErr: ErrForbidden, agent: &fakeAgent{}},
+			fields: fakeFields{ok: false}, wantErr: ErrNotInScope, agent: &fakeAgent{}},
 		{name: "field lookup error", in: AskInput{FieldID: 3, Text: "x"},
 			fields: fakeFields{err: errors.New("db down")}, agent: &fakeAgent{}},
 		{name: "rate limited", in: AskInput{FieldID: 3, Text: "x"},

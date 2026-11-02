@@ -178,10 +178,11 @@ func checkEnums(s *Sample) []string {
 			enum(f.Error, knownToolErrors, fmt.Sprintf("fixtures.mcp.%s[%d].error", tool, i))
 		}
 	}
-	// 套件名须与所在目录一致：eval/suites/{suite}/xxx.yaml
+	// 套件名须与所在目录或其上一级一致：eval/suites/{suite}/xxx.yaml，或 eval/suites/{suite}/{专题}/xxx.yaml（redteam/cross_farm）
 	if s.Path != "" && s.Suite != "" {
-		if dir := filepath.Base(filepath.Dir(s.Path)); dir != s.Suite {
-			msgs = append(msgs, fmt.Sprintf("suite %q does not match directory %q", s.Suite, dir))
+		dir := filepath.Dir(s.Path)
+		if filepath.Base(dir) != s.Suite && filepath.Base(filepath.Dir(dir)) != s.Suite {
+			msgs = append(msgs, fmt.Sprintf("suite %q does not match directory %q", s.Suite, filepath.Base(dir)))
 		}
 	}
 	return msgs
@@ -252,7 +253,13 @@ func checkExpectShape(s *Sample) []string {
 			msgs = append(msgs, "expect.work_order is required when stop_at_approval=true")
 		}
 	}
-	return append(msgs, checkPIIShape(s)...)
+	msgs = append(msgs, checkPIIShape(s)...)
+	for i, f := range e.Foreign {
+		if f == "" || !strings.Contains(s.Question, f) {
+			msgs = append(msgs, fmt.Sprintf("expect.foreign[%d] %q does not appear in question", i, f))
+		}
+	}
+	return msgs
 }
 
 // checkPIIShape：每条 pii 须有 kind 与 value，且 value 原样出现在 question 中（否则断言无从谈起）。

@@ -106,55 +106,6 @@ func TestDSN(t *testing.T) {
 	}
 }
 
-func TestLoadGrants(t *testing.T) {
-	dir := t.TempDir()
-	tests := []struct {
-		name    string
-		body    string
-		wantErr bool
-	}{
-		{name: "ok", body: "users:\n  \"1001\": [{tenant_id: 1, farm_id: 1, roles: [farm_manager]}]\n"},
-		{name: "bad user id", body: "users:\n  u1: [{tenant_id: 1, farm_id: 1, roles: [farm_manager]}]\n", wantErr: true},
-		{name: "unknown role", body: "users:\n  \"1\": [{tenant_id: 1, farm_id: 1, roles: [boss]}]\n", wantErr: true},
-		{name: "empty roles", body: "users:\n  \"1\": [{tenant_id: 1, farm_id: 1, roles: []}]\n", wantErr: true},
-	}
-	for i, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			p := writeFile(t, dir, "auth"+string(rune('a'+i))+".yaml", tt.body)
-			g, err := LoadGrants(p)
-			if (err != nil) != tt.wantErr {
-				t.Fatalf("err = %v, wantErr %v", err, tt.wantErr)
-			}
-			if !tt.wantErr && len(g[1001]) != 1 {
-				t.Fatalf("grants = %+v", g)
-			}
-		})
-	}
-}
-
-// TestLoadGrants_RepoFile 校验仓库内 configs/auth.yaml 满足 L1 要求的角色覆盖。
-func TestLoadGrants_RepoFile(t *testing.T) {
-	g, err := LoadGrants("../../configs/auth.yaml")
-	if err != nil {
-		t.Fatal(err)
-	}
-	count := map[string]int{}
-	for _, grants := range g {
-		for _, gr := range grants {
-			for _, r := range gr.Roles {
-				key := string(r)
-				if r == "platform_admin" && (gr.TenantID != 0 || gr.FarmID != 0) {
-					t.Errorf("platform_admin must be (0,0), got (%d,%d)", gr.TenantID, gr.FarmID)
-				}
-				count[key]++
-			}
-		}
-	}
-	if count["farm_manager"] < 1 || count["agronomist"] < 2 || count["operator"] < 1 || count["platform_admin"] < 1 {
-		t.Fatalf("role coverage = %v", count)
-	}
-}
-
 func TestLoad_RepoFile(t *testing.T) {
 	c, err := Load("../../configs/app.yaml", "")
 	if err != nil {

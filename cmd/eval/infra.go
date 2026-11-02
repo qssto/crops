@@ -12,6 +12,7 @@ import (
 
 	"agri-steward/internal/agent/harness/memory"
 	"agri-steward/internal/agent/harness/policy"
+	"agri-steward/internal/agent/tools/mcp/servers/device"
 	"agri-steward/internal/app"
 	"agri-steward/internal/clock"
 	"agri-steward/internal/config"
@@ -20,6 +21,7 @@ import (
 	"agri-steward/internal/evalkit/sample"
 	"agri-steward/internal/repository"
 	"agri-steward/internal/seed"
+	"agri-steward/internal/service"
 )
 
 // infraFlags 是 run 连接真实 MySQL / Redis / MinIO 的参数。
@@ -31,6 +33,8 @@ type infraFlags struct {
 	modelFile  string
 	promptsDir string
 	riskFile   string
+	permFile   string
+	deviceFile string
 	poolSize   int
 }
 
@@ -42,6 +46,8 @@ func (f *infraFlags) register(fs *flag.FlagSet) {
 	fs.StringVar(&f.modelFile, "model", "configs/model.yaml", "模型配置（提示词与档位；评测固定用桩模型）")
 	fs.StringVar(&f.promptsDir, "prompts", "", "提示词根目录（空则取模型配置的 prompts_dir）")
 	fs.StringVar(&f.riskFile, "risk", "policy/risk_matrix.yaml", "审批风险矩阵（与生产同一份）")
+	fs.StringVar(&f.permFile, "permissions", "policy/permission_matrix.yaml", "权限矩阵（与生产同一份）")
+	fs.StringVar(&f.deviceFile, "devices", "configs/mock/device.yaml", "设备 → 农场显式绑定（cross_farm_isolation 判 device_id 归属）")
 	fs.IntVar(&f.poolSize, "pool", 1, "trial schema 槽位数（agri_eval_t_1..n）")
 }
 
@@ -53,11 +59,15 @@ type infra struct {
 	deps   evalkit.DepsFunc
 	// question 把样本情境解析为种子农场下的 Scope / FieldID。
 	question evalkit.QuestionFunc
+	// approvers 是脚本审批人（种子主农场的两位农技员）。
+	approvers [2]env.Identity
 	// objects / evalBucket 供 L7 transcript 上传（cfg.MinIO.BucketEval）。
 	objects    repository.ObjectPutter
 	evalBucket string
 	// model 是实际装配用的模型配置（provider 已强制为桩），L8 写入配置快照。
 	model *config.Model
+	// devices 是设备显式绑定，Runner 据此记录提问农场的设备清单（地块清单读 trial 库）。
+	devices *device.Bindings
 }
 
 // open 依次连 agri_eval、Redis、trial 池；任一不可用都返回错误（不静默跳过）。
@@ -90,11 +100,24 @@ func (f *infraFlags) open(ctx context.Context, logW io.Writer, ls *loadedSamples
 	if err != nil {
 		return nil, err
 	}
+	perms, err := service.LoadPermissionMatrix(f.permFile)
+	if err != nil {
+		return nil, err
+	}
+	devices, err := device.LoadBindings(f.deviceFile)
+	if err != nil {
+		return nil, err
+	}
+	users := newSeedUsers(data)
+	first, second, err := scriptApprovers(users)
+	if err != nil {
+		return nil, err
+	}
 	logger, err := app.NewLogger(logW, cfg.Log.Level)
 	if err != nil {
 		return nil, err
 	}
-	in := &infra{model: mcfg}
+	in := &infra{model: mcfg, approvers: [2]env.Identity{first, second}, devices: devices}
 	defer func() {
 		if err != nil {
 			err = errors.Join(err, in.close())
@@ -118,7 +141,7 @@ func (f *infraFlags) open(ctx context.Context, logW io.Writer, ls *loadedSamples
 	putter := repository.MinIOPutter{Client: mc}
 	in.objects, in.evalBucket = putter, cfg.MinIO.BucketEval
 	tenantID, farmID := data.Farm.TenantID, data.Farm.FarmID
-	in.question = seedQuestion(tenantID, farmID)
+	in.question = seedQuestion(tenantID, farmID, users)
 	in.deps = func(ctx context.Context, s *env.Slot, smp *sample.Sample) (app.Deps, error) {
 		// 样本 match.field 的 field-00x 按种子农场在本 trial schema 中解析为 field_profile.id。
 		resolve := func(ctx context.Context, code string) (uint64, error) {
@@ -141,7 +164,7 @@ func (f *infraFlags) open(ctx context.Context, logW io.Writer, ls *loadedSamples
 			RawStore: repository.NewRawStore(s.DB, putter, cfg.MinIO.BucketRaw),
 			// 主链路（桩模型）在 Build 内用本 trial 的 Runs / Advice / Drafts / RunLocker 装配；Tools 为每 trial 一个 FixtureMCP。
 			NewAgent: app.GraphAgent(ctx, app.GraphConfig{Model: mcfg, Chat: chat, KB: ls.kb, Taxonomy: ls.tx}),
-			Tools:    tools, Risk: risk, Adapter: &env.RecordingAdapter{},
+			Tools:    tools, Risk: risk, Permissions: perms, Adapter: &env.RecordingAdapter{},
 			// L6：检查点读回走 MinIO；记忆按配置开关注入样本 fixtures.memory（不读 trial 库 episodic_memory）。
 			HITL: app.HITLDeps{Objects: repository.MinIOGetter{Client: mc}, RawBucket: cfg.MinIO.BucketRaw,
 				Memory: memory.Options{Enabled: cfg.Memory.Enabled, EpisodicLimit: cfg.Memory.EpisodicLimit,

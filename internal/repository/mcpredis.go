@@ -65,7 +65,7 @@ func (r *RedisIdem) DeleteIf(ctx context.Context, key, expect string) (bool, err
 	return n == 1, nil
 }
 
-// RedisCache 是 mcp.Cache 的 Redis 实现（cache:mcp:{tool}:{args_digest}）。
+// RedisCache 是 mcp.Cache 的 Redis 实现（cache:mcp:{tool}:{tenant_id}:{farm_id}:{args_digest}）。
 type RedisCache struct {
 	rdb redis.UniversalClient
 }

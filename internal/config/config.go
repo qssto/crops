@@ -60,9 +60,8 @@ type MinIO struct {
 	BucketEval string `mapstructure:"bucket_eval"`
 }
 
-// Auth 是鉴权配置。
+// Auth 是鉴权配置；角色绑定在 user_role 表（P1 起 configs/auth.yaml 下线）。
 type Auth struct {
-	File      string        `mapstructure:"file"`
 	TokenTTL  time.Duration `mapstructure:"token_ttl"`
 	JWTSecret string        `mapstructure:"jwt_secret"` // secret
 }

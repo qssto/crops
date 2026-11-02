@@ -9,9 +9,6 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
-	"time"
-
-	"github.com/gin-gonic/gin"
 
 	"agri-steward/internal/model"
 	"agri-steward/internal/service"
@@ -36,17 +33,8 @@ func (f *fakeDecider) Decide(_ context.Context, _ model.Scope, in service.Decide
 }
 
 func TestDecideHandler(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	now := time.Date(2026, 7, 15, 1, 0, 0, 0, time.UTC)
-	grants := map[uint64][]model.Grant{1001: {{TenantID: 1, FarmID: 1, Roles: []model.Role{model.RoleAgronomist}}}}
-	auth, err := service.NewAuthService("0123456789abcdef0123456789abcdef", grants, fixedClock{now})
-	if err != nil {
-		t.Fatal(err)
-	}
-	tok, err := auth.Issue(1001, time.Hour)
-	if err != nil {
-		t.Fatal(err)
-	}
+	e := newTestEnv(t)
+	bearer := e.bearer(t, 1002, 1)
 	const path = "/api/v1/farms/1/approvals/7/decide"
 	body := `{"decision":"APPROVE","snapshot_digest":"` + strings.Repeat("a", 64) + `"}`
 	tests := []struct {
@@ -68,18 +56,23 @@ func TestDecideHandler(t *testing.T) {
 		{name: "request id reused", path: path, reqID: "r-1", err: service.ErrRequestConflict, wantStatus: http.StatusConflict, wantError: "REQUEST_ID_CONFLICT"},
 		{name: "busy", path: path, reqID: "r-1", err: service.ErrOrderBusy, wantStatus: http.StatusConflict, wantError: "ORDER_BUSY"},
 		{name: "role", path: path, reqID: "r-1", err: service.ErrRoleInsufficient, wantStatus: http.StatusForbidden, wantError: "ROLE_INSUFFICIENT"},
+		{name: "role denied by matrix", path: path, reqID: "r-1", err: fmt.Errorf("service: decide: %w",
+			&service.RoleDeniedError{Op: service.OpApprovalDecidePesticide}), wantStatus: http.StatusForbidden, wantError: "ROLE_INSUFFICIENT"},
 		{name: "same approver", path: path, reqID: "r-1", err: service.ErrSameApprover, wantStatus: http.StatusForbidden, wantError: "SAME_APPROVER"},
 		{name: "bad input", path: path, reqID: "r-1", err: service.ErrBadInput, wantStatus: http.StatusBadRequest},
-		{name: "not found", path: path, reqID: "r-1", err: model.ErrNotFound, wantStatus: http.StatusNotFound},
+		{name: "not found", path: path, reqID: "r-1", err: notInScope, wantStatus: http.StatusForbidden},
+		{name: "related data missing", path: path, reqID: "r-1", err: fmt.Errorf("replay: %w", model.ErrNotFound),
+			wantStatus: http.StatusInternalServerError},
 		{name: "internal", path: path, reqID: "r-1", err: errors.New("db down"), wantStatus: http.StatusInternalServerError,
 			wantError: http.StatusText(http.StatusInternalServerError)},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			e.den.got = nil
 			d := &fakeDecider{err: tt.err}
-			router := NewRouter(auth, &fakeAsker{}, ApprovalRoutes(d))
+			router := NewRouter(e.guard, &fakeAsker{}, ApprovalRoutes(d))
 			req := httptest.NewRequest(http.MethodPost, tt.path, strings.NewReader(body))
-			req.Header.Set("Authorization", "Bearer "+tok)
+			req.Header.Set("Authorization", bearer)
 			if tt.reqID != "" {
 				req.Header.Set(HeaderRequestID, tt.reqID)
 			}
@@ -87,6 +80,22 @@ func TestDecideHandler(t *testing.T) {
 			router.ServeHTTP(rec, req)
 			if rec.Code != tt.wantStatus {
 				t.Fatalf("status = %d, want %d; body=%s", rec.Code, tt.wantStatus, rec.Body.String())
+			}
+			switch tt.name {
+			case "not found":
+				assertResourceDenied(t, e, rec, "ticket:7")
+			case "related data missing":
+				assertIntegrity500(t, e, rec)
+			case "role denied by matrix": // §6.2 流程 5：审批角色拒绝也写 CROSS_FARM_DENIED，op 为实际审批类别
+				if len(e.den.got) != 1 || e.den.got[0].Code != service.DenyRole ||
+					e.den.got[0].Op != service.OpApprovalDecidePesticide || e.den.got[0].Target != "ticket:7" ||
+					e.den.got[0].Scope.FarmID != 1 {
+					t.Fatalf("denials = %+v", e.den.got)
+				}
+			case "same approver", "stale":
+				if len(e.den.got) != 0 {
+					t.Fatalf("business denial must not write CROSS_FARM_DENIED: %+v", e.den.got)
+				}
 			}
 			if tt.wantError != "" {
 				var got errorBody
@@ -101,13 +110,13 @@ func TestDecideHandler(t *testing.T) {
 	}
 
 	// 待审批列表：status 缺省或 OPEN 返回列表，其他取值 400
-	router := NewRouter(auth, &fakeAsker{}, ApprovalRoutes(&fakeDecider{}))
+	router := NewRouter(e.guard, &fakeAsker{}, ApprovalRoutes(&fakeDecider{}))
 	for _, tc := range []struct {
 		query string
 		want  int
 	}{{"", http.StatusOK}, {"?status=OPEN", http.StatusOK}, {"?status=APPROVED", http.StatusBadRequest}} {
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/farms/1/approvals"+tc.query, nil)
-		req.Header.Set("Authorization", "Bearer "+tok)
+		req.Header.Set("Authorization", bearer)
 		rec := httptest.NewRecorder()
 		router.ServeHTTP(rec, req)
 		if rec.Code != tc.want || (tc.want == http.StatusOK && !strings.Contains(rec.Body.String(), `"ticket_id":7`)) {

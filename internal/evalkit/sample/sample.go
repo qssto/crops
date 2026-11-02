@@ -93,6 +93,9 @@ type Expect struct {
 	WorkOrder    *WorkOrderExpect `yaml:"work_order,omitempty"`
 	Trajectory   Trajectory       `yaml:"trajectory,omitempty"`
 	PII          []PIIExpect      `yaml:"pii,omitempty"`
+	// Foreign 是问题中出现的非本农场标识（农场 / 地块编码、设备 ID），须原样出现在 question 中；
+	// cross_farm_isolation 断言其不出现在输出与工具入参（P1 L1-B 红队样本）。
+	Foreign []string `yaml:"foreign,omitempty"`
 }
 
 // PIIExpect 声明问题中出现的一处敏感信息：L5 打分器断言其不出现在日志、

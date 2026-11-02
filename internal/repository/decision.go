@@ -86,13 +86,16 @@ const decisionTicketColumns = `id, tenant_id, farm_id, run_id, order_id, ticket_
 
 // TicketTx 读一张 ORDER 票（限定租户 / 农场）；db 可为事务或连接。
 func (r *DecisionRepo) TicketTx(ctx context.Context, db *gorm.DB, scope model.Scope, ticketID uint64) (TicketRow, error) {
+	if err := requireScope(scope); err != nil {
+		return TicketRow{}, err
+	}
 	if db == nil {
 		db = r.db
 	}
 	var row TicketRow
 	res := db.WithContext(ctx).Raw(
-		`SELECT `+decisionTicketColumns+` FROM approval_ticket WHERE id=? AND tenant_id=? AND farm_id=? AND ticket_kind='ORDER'`,
-		ticketID, scope.TenantID, scope.FarmID).Scan(&row)
+		`SELECT `+decisionTicketColumns+` FROM approval_ticket WHERE tenant_id=? AND farm_id=? AND id=? AND ticket_kind='ORDER'`,
+		scope.TenantID, scope.FarmID, ticketID).Scan(&row)
 	if res.Error != nil {
 		return TicketRow{}, fmt.Errorf("repository: get approval_ticket %d: %w", ticketID, res.Error)
 	}
@@ -132,6 +135,9 @@ func (r *DecisionRepo) DecisionByRequest(ctx context.Context, requestID string) 
 
 // InsertDecisionTx 追加一条 approval_decision，返回 id；request_id 重复由 uk_request 拒绝。
 func (r *DecisionRepo) InsertDecisionTx(ctx context.Context, tx *gorm.DB, d DecisionRow) (uint64, error) {
+	if err := requireFarm(d.TenantID, d.FarmID); err != nil {
+		return 0, err
+	}
 	res, err := execInTx(ctx, tx,
 		`INSERT INTO approval_decision (tenant_id, farm_id, ticket_id, request_id, decision, operator_id, operator_role, snapshot_digest, comment, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		d.TenantID, d.FarmID, d.TicketID, d.RequestID, d.Decision, d.OperatorID, d.OperatorRole, d.SnapshotDigest, d.Comment, d.CreatedAt)
@@ -160,37 +166,46 @@ func affected(res *gorm.DB, what string) error {
 // 调用方重读票据按 TICKET_CLOSED / TICKET_EXPIRED 返回。
 func (r *DecisionRepo) DecideTicketTx(ctx context.Context, tx *gorm.DB, t TicketRow, to model.TicketStatus,
 	operatorID uint64, now time.Time) error {
+	if err := requireFarm(t.TenantID, t.FarmID); err != nil {
+		return err
+	}
 	if err := requireTx(tx); err != nil {
 		return err
 	}
 	res := tx.WithContext(ctx).Exec(
 		`UPDATE approval_ticket SET status=?, operator_id=?, decided_at=?, row_ver=row_ver+1, updated_at=?
- WHERE id=? AND tenant_id=? AND farm_id=? AND ticket_kind='ORDER' AND status='OPEN' AND expires_at > ? AND snapshot_digest=? AND row_ver=?`,
-		string(to), operatorID, now, now, t.ID, t.TenantID, t.FarmID, now, t.SnapshotDigest, t.RowVer)
+ WHERE tenant_id=? AND farm_id=? AND id=? AND ticket_kind='ORDER' AND status='OPEN' AND expires_at > ? AND snapshot_digest=? AND row_ver=?`,
+		string(to), operatorID, now, now, t.TenantID, t.FarmID, t.ID, now, t.SnapshotDigest, t.RowVer)
 	return affected(res, "decide approval_ticket "+strconv.FormatUint(t.ID, 10))
 }
 
 // SetFirstApproverTx 照抄 P0 §6.7 HIGH 第一审批人 UPDATE。
 func (r *DecisionRepo) SetFirstApproverTx(ctx context.Context, tx *gorm.DB, t TicketRow, userID uint64, now time.Time) error {
+	if err := requireFarm(t.TenantID, t.FarmID); err != nil {
+		return err
+	}
 	if err := requireTx(tx); err != nil {
 		return err
 	}
 	res := tx.WithContext(ctx).Exec(
 		`UPDATE approval_ticket SET first_approver_id=?, row_ver=row_ver+1, updated_at=?
- WHERE id=? AND tenant_id=? AND farm_id=? AND status='OPEN' AND first_approver_id IS NULL AND expires_at > ? AND row_ver=?`,
-		userID, now, t.ID, t.TenantID, t.FarmID, now, t.RowVer)
+ WHERE tenant_id=? AND farm_id=? AND id=? AND status='OPEN' AND first_approver_id IS NULL AND expires_at > ? AND row_ver=?`,
+		userID, now, t.TenantID, t.FarmID, t.ID, now, t.RowVer)
 	return affected(res, "first approver approval_ticket "+strconv.FormatUint(t.ID, 10))
 }
 
 // ExpireTicketTx 照抄 P0 §6.7 过期 UPDATE；影响行数 0（已被决策 / 已改写）返回 false，调用方跳过。
 func (r *DecisionRepo) ExpireTicketTx(ctx context.Context, tx *gorm.DB, t TicketRow, now time.Time) (bool, error) {
+	if err := requireFarm(t.TenantID, t.FarmID); err != nil {
+		return false, err
+	}
 	if err := requireTx(tx); err != nil {
 		return false, err
 	}
 	res := tx.WithContext(ctx).Exec(
 		`UPDATE approval_ticket SET status='EXPIRED', row_ver=row_ver+1, updated_at=?
- WHERE id=? AND tenant_id=? AND farm_id=? AND status='OPEN' AND row_ver=?`,
-		now, t.ID, t.TenantID, t.FarmID, t.RowVer)
+ WHERE tenant_id=? AND farm_id=? AND id=? AND status='OPEN' AND row_ver=?`,
+		now, t.TenantID, t.FarmID, t.ID, t.RowVer)
 	if res.Error != nil {
 		return false, fmt.Errorf("repository: expire approval_ticket %d: %w", t.ID, res.Error)
 	}
@@ -199,13 +214,16 @@ func (r *DecisionRepo) ExpireTicketTx(ctx context.Context, tx *gorm.DB, t Ticket
 
 // VoidPreparingTx 作废停在 PREPARING 的票（run 已失败、永不会中断；文档未给 SQL，按过期 UPDATE 的守卫写法）。
 func (r *DecisionRepo) VoidPreparingTx(ctx context.Context, tx *gorm.DB, t TicketRow, now time.Time) (bool, error) {
+	if err := requireFarm(t.TenantID, t.FarmID); err != nil {
+		return false, err
+	}
 	if err := requireTx(tx); err != nil {
 		return false, err
 	}
 	res := tx.WithContext(ctx).Exec(
 		`UPDATE approval_ticket SET status='EXPIRED', row_ver=row_ver+1, updated_at=?
- WHERE id=? AND tenant_id=? AND farm_id=? AND status='PREPARING' AND row_ver=?`,
-		now, t.ID, t.TenantID, t.FarmID, t.RowVer)
+ WHERE tenant_id=? AND farm_id=? AND id=? AND status='PREPARING' AND row_ver=?`,
+		now, t.TenantID, t.FarmID, t.ID, t.RowVer)
 	if res.Error != nil {
 		return false, fmt.Errorf("repository: void approval_ticket %d: %w", t.ID, res.Error)
 	}
@@ -214,17 +232,23 @@ func (r *DecisionRepo) VoidPreparingTx(ctx context.Context, tx *gorm.DB, t Ticke
 
 // SetDispatchDeadlineTx 在 Transition(→ APPROVED) 之后写 dispatch_deadline_at（Transition 不写业务列；文档未给 SQL）。
 func (r *DecisionRepo) SetDispatchDeadlineTx(ctx context.Context, tx *gorm.DB, ref model.OrderRef, deadline, now time.Time) error {
+	if err := requireFarm(ref.TenantID, ref.FarmID); err != nil {
+		return err
+	}
 	if err := requireTx(tx); err != nil {
 		return err
 	}
 	res := tx.WithContext(ctx).Exec(
-		`UPDATE work_order SET dispatch_deadline_at=?, updated_at=? WHERE id=? AND tenant_id=? AND farm_id=? AND status='APPROVED'`,
-		deadline, now, ref.OrderID, ref.TenantID, ref.FarmID)
+		`UPDATE work_order SET dispatch_deadline_at=?, updated_at=? WHERE tenant_id=? AND farm_id=? AND id=? AND status='APPROVED'`,
+		deadline, now, ref.TenantID, ref.FarmID, ref.OrderID)
 	return affected(res, "dispatch deadline work_order "+strconv.FormatUint(ref.OrderID, 10))
 }
 
 // InsertDispatchOutboxTx 照抄 P0 §6.7 outbox(order.dispatch)，dedup_key=order.dispatch:{order_id}:{ticket_id}:1。
 func (r *DecisionRepo) InsertDispatchOutboxTx(ctx context.Context, tx *gorm.DB, t TicketRow, payload []byte, now time.Time) error {
+	if err := requireFarm(t.TenantID, t.FarmID); err != nil {
+		return err
+	}
 	if err := requireTx(tx); err != nil {
 		return err
 	}
@@ -242,25 +266,31 @@ VALUES (?, ?, 'order.dispatch', ?, CONCAT('order.dispatch:', ?, ':', ?, ':1'), ?
 // 影响行数 0 → model.ErrConcurrentUpdate（票据 OPEN 时 run 必为 INTERRUPTED(WAIT_APPROVAL)，不一致即回滚）。
 func (r *DecisionRepo) CloseRunTx(ctx context.Context, tx *gorm.DB, scope model.Scope, runID uint64,
 	reason model.ReasonCode, now time.Time) error {
+	if err := requireScope(scope); err != nil {
+		return err
+	}
 	if err := requireTx(tx); err != nil {
 		return err
 	}
 	res := tx.WithContext(ctx).Exec(
 		`UPDATE agent_run SET status='COMPLETED', interrupt_type=NULL, reason_code=?, row_ver=row_ver+1, updated_at=?
- WHERE id=? AND tenant_id=? AND farm_id=? AND status='INTERRUPTED' AND interrupt_type='WAIT_APPROVAL'`,
-		string(reason), now, runID, scope.TenantID, scope.FarmID)
+ WHERE tenant_id=? AND farm_id=? AND id=? AND status='INTERRUPTED' AND interrupt_type='WAIT_APPROVAL'`,
+		string(reason), now, scope.TenantID, scope.FarmID, runID)
 	return affected(res, "close agent_run "+strconv.FormatUint(runID, 10))
 }
 
 // InsertRejectedMemoryTx 驳回同事务写 episodic_memory(REJECTED)，ref_id 取 order_id，INSERT IGNORE 幂等（P0 §6.7 流程 5）。
 func (r *DecisionRepo) InsertRejectedMemoryTx(ctx context.Context, tx *gorm.DB, t TicketRow, summary string, now time.Time) error {
+	if err := requireFarm(t.TenantID, t.FarmID); err != nil {
+		return err
+	}
 	if err := requireTx(tx); err != nil {
 		return err
 	}
 	err := tx.WithContext(ctx).Exec(
 		`INSERT IGNORE INTO episodic_memory (tenant_id, farm_id, field_id, kind, ref_id, summary, occurred_at)
-SELECT tenant_id, farm_id, field_id, 'REJECTED', ?, ?, ? FROM agent_run WHERE id=? AND tenant_id=? AND farm_id=?`,
-		t.OrderID, summary, now, t.RunID, t.TenantID, t.FarmID).Error
+SELECT tenant_id, farm_id, field_id, 'REJECTED', ?, ?, ? FROM agent_run WHERE tenant_id=? AND farm_id=? AND id=?`,
+		t.OrderID, summary, now, t.TenantID, t.FarmID, t.RunID).Error
 	if err != nil {
 		return fmt.Errorf("repository: insert episodic_memory REJECTED order %d: %w", t.OrderID, err)
 	}
@@ -270,6 +300,9 @@ SELECT tenant_id, farm_id, field_id, 'REJECTED', ?, ?, ? FROM agent_run WHERE id
 // AuditDenied 写 audit_log(action=APPROVAL, result=DENIED)：拒绝本身不改状态，独立短写（P0 §6.7 流程 2）。
 // L7 收编到 AuditRepo：target 与事件投影一致为 ticket:{id}。
 func (r *DecisionRepo) AuditDenied(ctx context.Context, scope model.Scope, t TicketRow, code string) error {
+	if err := requireScope(scope); err != nil {
+		return err
+	}
 	summary, err := json.Marshal(map[string]any{"ticket_id": t.ID, "order_id": t.OrderID, "code": code})
 	if err != nil {
 		return fmt.Errorf("repository: encode audit summary: %w", err)
@@ -300,6 +333,9 @@ type PendingRow struct {
 // ListPending 照抄 P0 §6.6 待审批列表 SQL；L8 在 SELECT 列上补 snapshot_digest / first_approver_id / confirm_required
 // （WHERE / ORDER / LIMIT 不变）。
 func (r *DecisionRepo) ListPending(ctx context.Context, scope model.Scope) ([]PendingRow, error) {
+	if err := requireScope(scope); err != nil {
+		return nil, err
+	}
 	rows := []PendingRow{}
 	if err := r.db.WithContext(ctx).Raw(
 		`SELECT id, order_id, risk_level, expires_at, snapshot_digest, first_approver_id, confirm_required FROM approval_ticket WHERE tenant_id=? AND farm_id=? AND ticket_kind='ORDER' AND status='OPEN' ORDER BY created_at LIMIT 50`,
@@ -312,6 +348,9 @@ func (r *DecisionRepo) ListPending(ctx context.Context, scope model.Scope) ([]Pe
 // OrdersWithChecks 批量读作业单快照及其全部约束校验（待审批列表用，两条 IN 查询、无 N+1；文档未给 SQL）。
 // 返回按 order_id 索引；ids 为空返回空表。
 func (r *DecisionRepo) OrdersWithChecks(ctx context.Context, scope model.Scope, ids []uint64) (map[uint64]model.WorkOrder, error) {
+	if err := requireScope(scope); err != nil {
+		return nil, err
+	}
 	out := make(map[uint64]model.WorkOrder, len(ids))
 	if len(ids) == 0 {
 		return out, nil
@@ -362,8 +401,11 @@ func (r *DecisionRepo) OrdersWithChecks(ctx context.Context, scope model.Scope, 
 	return out, nil
 }
 
-// ListExpired 照抄 P0 §6.7 过期扫描（idx_expire）：OPEN 且 expires_at 早于 now。
-func (r *DecisionRepo) ListExpired(ctx context.Context, now time.Time) ([]TicketRow, error) {
+// ListExpired 照抄 P0 §6.7 过期扫描（SystemScope，worker 专用索引 idx_expire）：OPEN 且 expires_at 早于 now。
+func (r *DecisionRepo) ListExpired(ctx context.Context, sys SystemScope, now time.Time) ([]TicketRow, error) {
+	if err := requireSystem(sys); err != nil {
+		return nil, err
+	}
 	var rows []TicketRow
 	if err := r.db.WithContext(ctx).Raw(
 		`SELECT id, tenant_id, farm_id, order_id, run_id, row_ver FROM approval_ticket
@@ -386,8 +428,11 @@ func (k OrderKey) Ref() model.OrderRef {
 	return model.OrderRef{TenantID: k.TenantID, FarmID: k.FarmID, OrderID: k.ID}
 }
 
-// ListDispatchOverdue 照抄 P0 §6.7：APPROVED 且过 dispatch_deadline_at 的作业单（idx_dispatch_deadline）。
-func (r *DecisionRepo) ListDispatchOverdue(ctx context.Context, now time.Time) ([]OrderKey, error) {
+// ListDispatchOverdue 照抄 P0 §6.7：APPROVED 且过 dispatch_deadline_at 的作业单（SystemScope，worker 专用索引 idx_dispatch_deadline）。
+func (r *DecisionRepo) ListDispatchOverdue(ctx context.Context, sys SystemScope, now time.Time) ([]OrderKey, error) {
+	if err := requireSystem(sys); err != nil {
+		return nil, err
+	}
 	var rows []OrderKey
 	if err := r.db.WithContext(ctx).Raw(
 		`SELECT id, tenant_id, farm_id, row_ver FROM work_order WHERE status='APPROVED' AND dispatch_deadline_at < ? LIMIT 100`,
@@ -404,8 +449,11 @@ type StaleTicket struct {
 	InterruptType *string
 }
 
-// ListPreparing 取创建早于 before 仍 PREPARING 的票及其 run 状态（ticket_activate；文档未给 SQL）。
-func (r *DecisionRepo) ListPreparing(ctx context.Context, before time.Time) ([]StaleTicket, error) {
+// ListPreparing 取创建早于 before 仍 PREPARING 的票及其 run 状态（ticket_activate；SystemScope，worker 专用索引 idx_expire 前缀；文档未给 SQL）。
+func (r *DecisionRepo) ListPreparing(ctx context.Context, sys SystemScope, before time.Time) ([]StaleTicket, error) {
+	if err := requireSystem(sys); err != nil {
+		return nil, err
+	}
 	var rows []StaleTicket
 	if err := r.db.WithContext(ctx).Raw(
 		`SELECT t.id, t.tenant_id, t.farm_id, t.order_id, t.run_id, t.row_ver, r.status AS run_status, r.interrupt_type
@@ -417,8 +465,11 @@ func (r *DecisionRepo) ListPreparing(ctx context.Context, before time.Time) ([]S
 	return rows, nil
 }
 
-// ListApprovedInterrupted 取 run 仍 INTERRUPTED(WAIT_APPROVAL) 而票据 APPROVED 早于 before 的 run（run_finalize；文档未给 SQL）。
-func (r *DecisionRepo) ListApprovedInterrupted(ctx context.Context, before time.Time) ([]RunKey, error) {
+// ListApprovedInterrupted 取 run 仍 INTERRUPTED(WAIT_APPROVAL) 而票据 APPROVED 早于 before 的 run（run_finalize；SystemScope，worker 专用索引 idx_stuck 前缀；文档未给 SQL）。
+func (r *DecisionRepo) ListApprovedInterrupted(ctx context.Context, sys SystemScope, before time.Time) ([]RunKey, error) {
+	if err := requireSystem(sys); err != nil {
+		return nil, err
+	}
 	var rows []RunKey
 	if err := r.db.WithContext(ctx).Raw(
 		`SELECT r.id, r.tenant_id, r.farm_id, r.row_ver

@@ -263,7 +263,7 @@ func TestStream_EndsAfterBackfill(t *testing.T) {
 func TestStream_Errors(t *testing.T) {
 	notFound := newStreamFixture(t, "", nil, 0)
 	notFound.svc.d.Runs = memRuns{err: model.ErrNotFound}
-	if err := notFound.svc.Stream(context.Background(), notFound.scope, 5, 0, notFound.sink); !errors.Is(err, model.ErrNotFound) ||
+	if err := notFound.svc.Stream(context.Background(), notFound.scope, 5, 0, notFound.sink); !errors.Is(err, ErrNotInScope) ||
 		notFound.sink.got() != "" {
 		t.Errorf("not found: err = %v frames = %q", err, notFound.sink.got())
 	}

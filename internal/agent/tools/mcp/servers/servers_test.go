@@ -15,6 +15,7 @@ import (
 	"agri-steward/internal/agent/tools/mcp"
 	"agri-steward/internal/agent/tools/mcp/servers/kit"
 	"agri-steward/internal/config"
+	"agri-steward/internal/model"
 )
 
 // repoRoot 是本包到仓库根的相对路径。
@@ -26,6 +27,9 @@ func (c fixedClock) Now() time.Time { return c.t }
 
 // testNow 落在 8 月中旬（抽穗前后），各地块都有已发生的农事与调查。
 var testNow = time.Date(2026, 8, 20, 2, 0, 0, 0, time.UTC)
+
+// farm1Scope 是示范农场1（mock 设备 uav-p100-01 等显式绑定于此）。
+var farm1Scope = model.Scope{TenantID: 1, FarmID: 1}
 
 var testFields = kit.StaticFields{1: "field-001", 2: "field-002", 3: "field-003", 4: "field-004", 5: "field-005", 6: "field-006"}
 
@@ -58,7 +62,7 @@ func invoke(t *testing.T, tool string, args string) (mcp.Result, error) {
 	name, _, _ := strings.Cut(tool, ".")
 	for _, s := range srvs {
 		if s.Name() == name {
-			return s.Invoke(context.Background(), tool, json.RawMessage(args))
+			return s.Invoke(mcp.WithScope(context.Background(), farm1Scope), tool, json.RawMessage(args))
 		}
 	}
 	t.Fatalf("no server for %s", tool)
@@ -312,7 +316,7 @@ func TestInvoke_Errors(t *testing.T) {
 		{"no survey", "field.pest_survey", `{"field_id":5}`, mcp.ErrEmpty},
 		{"no threshold", "crop.threshold", `{"target":"bakanae","stage":"成熟期"}`, mcp.ErrEmpty},
 		{"no soil test", "field.soil", `{"field_id":6}`, mcp.ErrEmpty},
-		{"unknown device", "device.status", `{"device_id":"uav-x"}`, mcp.ErrEmpty},
+		{"unknown device", "device.status", `{"device_id":"uav-x"}`, mcp.ErrScopeDenied}, // 不暴露存在性
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
