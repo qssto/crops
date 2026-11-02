@@ -39,7 +39,15 @@ type PoolConfig struct {
 	Size          int    // 槽位数，默认 1
 	SchemaPrefix  string // 默认 agri_eval_t_
 	EnvPrefix     string // 默认 eval-t
+	// Namespace 非空时插在前缀前（库名 {ns}_ 、Redis {ns}-），供并行 worktree 各用各的库：
+	// 各 worktree 迁移版本不同，共用库名会互相弄脏 schema_migrations。取值见 NamespaceEnv。
+	Namespace string
 }
+
+// NamespaceEnv 是 PoolConfig.Namespace 的环境变量来源（itest 与 cmd/eval 读取）。
+const NamespaceEnv = "AS_TEST_NS"
+
+var namespacePattern = regexp.MustCompile(`^[a-z0-9]{1,16}$`)
 
 // Slot 是一个隔离环境：独立库 + 独立 Redis 前缀 + 独立 FrozenClock（GORM NowFunc 也指向它）。
 type Slot struct {
@@ -70,6 +78,13 @@ func NewPool(ctx context.Context, cfg PoolConfig) (*Pool, error) {
 	}
 	if cfg.EnvPrefix == "" {
 		cfg.EnvPrefix = DefaultEnvPrefix
+	}
+	if cfg.Namespace != "" {
+		if !namespacePattern.MatchString(cfg.Namespace) {
+			return nil, fmt.Errorf("env: namespace %q must match %s", cfg.Namespace, namespacePattern)
+		}
+		cfg.SchemaPrefix = cfg.Namespace + "_" + cfg.SchemaPrefix
+		cfg.EnvPrefix = cfg.Namespace + "-" + cfg.EnvPrefix
 	}
 	p := &Pool{cfg: cfg, slots: make(chan *Slot, cfg.Size)}
 	for n := 1; n <= cfg.Size; n++ {

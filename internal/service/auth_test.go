@@ -94,7 +94,7 @@ func TestResolveScope(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			s, err := a.ResolveScope(tt.uid, tt.farm)
+			s, err := a.ResolveScope(context.Background(), tt.uid, tt.farm)
 			if !errors.Is(err, tt.wantErr) {
 				t.Fatalf("err = %v, want %v", err, tt.wantErr)
 			}
@@ -118,5 +118,51 @@ func TestScopeContext(t *testing.T) {
 	ctx := WithScope(context.Background(), model.Scope{FarmID: 1})
 	if s, ok := ScopeFrom(ctx); !ok || s.FarmID != 1 {
 		t.Fatalf("scope = %+v %v", s, ok)
+	}
+}
+
+func TestResolvePlatformScope(t *testing.T) {
+	a := newTestAuth(t, time.Now().UTC())
+	tests := []struct {
+		name    string
+		uid     uint64
+		wantErr error
+	}{
+		{name: "platform admin", uid: 9001},
+		{name: "farm user", uid: 1001, wantErr: ErrForbidden},
+		{name: "unknown user", uid: 42, wantErr: ErrForbidden},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s, err := a.ResolvePlatformScope(context.Background(), tt.uid)
+			if !errors.Is(err, tt.wantErr) {
+				t.Fatalf("err = %v, want %v", err, tt.wantErr)
+			}
+			if tt.wantErr == nil && (s.TenantID != 0 || s.FarmID != 0 || !s.HasRole(model.RolePlatformAdmin)) {
+				t.Fatalf("scope = %+v", s)
+			}
+		})
+	}
+}
+
+func TestFarmHasRole(t *testing.T) {
+	a := newTestAuth(t, time.Now().UTC())
+	tests := []struct {
+		name         string
+		tenant, farm uint64
+		role         model.Role
+		want         bool
+	}{
+		{name: "bound", tenant: 1, farm: 1, role: model.RoleFarmManager, want: true},
+		{name: "role not bound", tenant: 1, farm: 1, role: model.RoleAuditor},
+		{name: "other farm", tenant: 1, farm: 2, role: model.RoleFarmManager},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := a.FarmHasRole(context.Background(), tt.tenant, tt.farm, tt.role)
+			if err != nil || got != tt.want {
+				t.Fatalf("got %v err %v, want %v", got, err, tt.want)
+			}
+		})
 	}
 }

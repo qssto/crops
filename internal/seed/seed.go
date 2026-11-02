@@ -31,12 +31,14 @@ type File struct {
 		SowingDate   string  `yaml:"sowing_date"`
 		AreaMu       float64 `yaml:"area_mu"`
 	} `yaml:"fields"`
+	Flags []flagEntry `yaml:"flags"` // P1-L0
 }
 
 // Data 是校验后的种子数据。
 type Data struct {
 	Farm   model.FarmProfile
 	Fields []model.FieldProfile
+	Flags  []model.FlagWrite // P1-L0：feature_flag 行（At / UpdatedBy 在 Apply 时填）
 }
 
 // Load 读取并校验种子文件。
@@ -72,6 +74,11 @@ func Load(path string) (*Data, error) {
 		d.Fields = append(d.Fields, model.FieldProfile{TenantID: d.Farm.TenantID, FarmID: d.Farm.FarmID,
 			ExtFieldCode: fl.ExtFieldCode, Crop: fl.Crop, SowingDate: sow, AreaMu: fl.AreaMu})
 	}
+	flags, err := loadFlags(f.Flags)
+	if err != nil {
+		errs = append(errs, err)
+	}
+	d.Flags = flags
 	if err := errors.Join(errs...); err != nil {
 		return nil, fmt.Errorf("seed: %s: %w", path, err)
 	}
@@ -90,6 +97,6 @@ func Apply(ctx context.Context, db *repository.DB, d *Data, now time.Time) error
 				return err
 			}
 		}
-		return nil
+		return applyFlags(ctx, tx, d.Flags, now)
 	})
 }

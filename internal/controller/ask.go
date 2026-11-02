@@ -73,6 +73,10 @@ func AskHandler(svc Asker) gin.HandlerFunc {
 			return
 		}
 		runID, err := svc.Ask(c.Request.Context(), scope, service.AskInput{FieldID: req.FieldID, Text: req.Text})
+		if errors.Is(err, service.ErrAdviceDisabled) {
+			abort(c, http.StatusForbidden, service.ErrAdviceDisabled.Error()) // P1 L0：本农场 enable_advice 关
+			return
+		}
 		if err != nil {
 			abortErr(c, err)
 			return

@@ -14,3 +14,7 @@ fields:
   - {ext_field_code: field-004, crop: 水稻, sowing_date: "2026-05-22", area_mu: 40.00}
   - {ext_field_code: field-005, crop: 水稻, sowing_date: "2026-05-25", area_mu: 30.00}
   - {ext_field_code: field-006, crop: 水稻, sowing_date: "2026-05-25", area_mu: 35.00}
+# P1-L0 feature_flag 种子（按 uk_flag_scope upsert）：示范农场 1 的 FARM 行 enable_advice 开；
+# enable_robot_dispatch 不写，即默认关（只走 DRY_RUN）。value 为 JSON 字符串，形态按注册表校验。
+flags:
+  - {flag_key: enable_advice, tenant_id: 1, farm_id: 1, value: '{"on":true}', comment: 种子：示范农场开启建议}

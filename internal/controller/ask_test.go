@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -56,6 +57,7 @@ func TestAskHandler(t *testing.T) {
 		asker      *fakeAsker
 		wantStatus int
 		wantReqID  string
+		wantBody   string
 	}{
 		{name: "ask 202", method: http.MethodPost, path: "/api/v1/farms/1/ask", auth: bearer, reqID: "req-1",
 			body: okBody, asker: &fakeAsker{}, wantStatus: http.StatusAccepted, wantReqID: "req-1"},
@@ -73,6 +75,9 @@ func TestAskHandler(t *testing.T) {
 			asker: &fakeAsker{askErr: service.ErrForbidden}, wantStatus: http.StatusForbidden},
 		{name: "ask rate limited 429", method: http.MethodPost, path: "/api/v1/farms/1/ask", auth: bearer, body: okBody,
 			asker: &fakeAsker{askErr: service.ErrRateLimited}, wantStatus: http.StatusTooManyRequests},
+		{name: "ask advice disabled 403", method: http.MethodPost, path: "/api/v1/farms/1/ask", auth: bearer, body: okBody,
+			asker: &fakeAsker{askErr: fmt.Errorf("wrap: %w", service.ErrAdviceDisabled)}, wantStatus: http.StatusForbidden,
+			wantBody: `{"error":"ADVICE_DISABLED"}`},
 		{name: "ask internal 500", method: http.MethodPost, path: "/api/v1/farms/1/ask", auth: bearer, body: okBody,
 			asker: &fakeAsker{askErr: errors.New("db down")}, wantStatus: http.StatusInternalServerError},
 	}
@@ -93,6 +98,9 @@ func TestAskHandler(t *testing.T) {
 			}
 			if tt.wantReqID != "" && rec.Header().Get(HeaderRequestID) != tt.wantReqID {
 				t.Fatalf("X-Request-Id = %q, want %q", rec.Header().Get(HeaderRequestID), tt.wantReqID)
+			}
+			if tt.wantBody != "" && rec.Body.String() != tt.wantBody {
+				t.Fatalf("body = %s, want %s", rec.Body.String(), tt.wantBody)
 			}
 			if tt.wantStatus == http.StatusAccepted {
 				var got askResponse

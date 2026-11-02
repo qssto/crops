@@ -31,7 +31,14 @@ var (
 	ErrBadInput = errors.New("bad input")
 	// ErrRateLimited 表示农场提问超过限流（→ 429）。
 	ErrRateLimited = errors.New("rate limited")
+	// ErrAdviceDisabled 表示本农场 enable_advice 未生效，不生成新建议（→ 403 ADVICE_DISABLED）；已有作业单流程不受影响。
+	ErrAdviceDisabled = errors.New("ADVICE_DISABLED")
 )
+
+// FlagReader 是业务侧读开关的统一接口（30s 缓存），FlagService 实现。
+type FlagReader interface {
+	Bool(ctx context.Context, key model.FlagKey, scope model.Scope) (bool, error)
+}
 
 // FieldScopeChecker 校验 field_id 属于 Scope，repository.FieldScope 实现。
 type FieldScopeChecker interface {
@@ -67,18 +74,19 @@ type RunView struct {
 	Card *model.AdviceCard `json:"card,omitempty"`
 }
 
-// AskDeps 是 AskService 的依赖。
+// AskDeps 是 AskService 的依赖；Flags 必填（enable_advice 判定，P1 L0）。
 type AskDeps struct {
 	Fields  FieldScopeChecker
 	Limiter RateLimiter
 	Runs    RunStore
 	Advice  AdviceReader
 	Agent   agent.Agent
+	Flags   FlagReader
 	Meta    agent.RunMeta
 	Logger  *slog.Logger
 }
 
-// AskService 是 ask 入口：校验 → 限流 → 建 run(RUNNING) → 异步跑主链路，立即返回 run_id。
+// AskService 是 ask 入口：校验 → enable_advice → 限流 → 建 run(RUNNING) → 异步跑主链路，立即返回 run_id。
 type AskService struct {
 	d  AskDeps
 	wg sync.WaitGroup
@@ -99,6 +107,9 @@ func (s *AskService) Ask(ctx context.Context, scope model.Scope, in AskInput) (u
 	}
 	if !ok {
 		return 0, fmt.Errorf("service: field %d: %w", in.FieldID, ErrForbidden)
+	}
+	if err := s.adviceEnabled(ctx, scope); err != nil {
+		return 0, err
 	}
 	allowed, err := s.d.Limiter.Allow(ctx, scope.FarmID)
 	if err != nil {
@@ -122,6 +133,21 @@ func (s *AskService) Ask(ctx context.Context, scope model.Scope, in AskInput) (u
 		s.run(runCtx, q)
 	}()
 	return runID, nil
+}
+
+// adviceEnabled 判定本农场 enable_advice；未装配开关或读取失败都不放行（失败关闭）。
+func (s *AskService) adviceEnabled(ctx context.Context, scope model.Scope) error {
+	if s.d.Flags == nil {
+		return errors.New("service: ask: flag reader not configured")
+	}
+	on, err := s.d.Flags.Bool(ctx, model.FlagEnableAdvice, scope)
+	if err != nil {
+		return fmt.Errorf("service: ask: %w", err)
+	}
+	if !on {
+		return fmt.Errorf("service: farm %d: %w", scope.FarmID, ErrAdviceDisabled)
+	}
+	return nil
 }
 
 // run 执行主链路；panic 与错误都落 FAILED（执行权丢失除外）。主链路已自行收尾（run 非 RUNNING）时 FinishRun 的非法迁移只记日志。

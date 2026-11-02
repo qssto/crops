@@ -18,9 +18,10 @@ import (
 	"agri-steward/internal/service"
 )
 
-// newDispatchPoller 装配真实 MySQL / Redis 上的下发链路：OutboxPoller → WorkOrderService.Dispatch → MockAdapter，
-// 与 app.buildDispatch 同构；Recheck 置空（④ 跳过只告警），复检分支由单测覆盖。
-func newDispatchPoller(t *testing.T, e *itest.Env, slot *env.Slot) (*service.OutboxPoller, *service.WorkOrderService) {
+// newDispatchPoller 装配真实 MySQL / Redis 上的下发链路：OutboxPoller → WorkOrderService.Dispatch → dev，
+// 与 app.buildDispatch 同构（P1-L0 起带真实 FlagService 与 AuditRepo）；Recheck 置空（④ 跳过只告警），复检分支由单测覆盖。
+func newDispatchPoller(t *testing.T, e *itest.Env, slot *env.Slot, dev adapter.DeviceAdapter) (*service.OutboxPoller,
+	*service.WorkOrderService) {
 	t.Helper()
 	logger, err := app.NewLogger(os.Stderr, "warn")
 	if err != nil {
@@ -29,9 +30,9 @@ func newDispatchPoller(t *testing.T, e *itest.Env, slot *env.Slot) (*service.Out
 	events := repository.EventRepo{Pub: repository.RedisPublisher{Client: e.Redis}, Keys: slot.Keys, Log: logger}
 	svc := service.NewWorkOrderService(slot.Clock, repository.WorkOrderRepo{}, events)
 	store := repository.NewDispatchRepo(slot.DB)
-	if err := svc.SetDispatch(service.DispatchDeps{Adapter: adapter.MockAdapter{}, Store: store,
+	if err := svc.SetDispatch(service.DispatchDeps{Adapter: dev, Store: store,
 		Tx: repository.NewDecisionRepo(slot.DB, slot.Clock), Locks: repository.NewLocker(e.Redis), Keys: slot.Keys,
-		Logger: logger}); err != nil {
+		Logger: logger, Flags: newFlags(t, e, slot, nil), Audit: repository.AuditRepo{DB: slot.DB}}); err != nil {
 		t.Fatal(err)
 	}
 	p := service.NewOutboxPoller(service.OutboxDeps{Store: store.OutboxRepo,
@@ -57,7 +58,7 @@ func TestOutboxDispatch_Integration(t *testing.T) {
 	e := itest.Setup(t, "dispatch")
 	slot := e.Fresh(t, t0)
 	ctx := t.Context()
-	poller, svc := newDispatchPoller(t, e, slot)
+	poller, svc := newDispatchPoller(t, e, slot, adapter.MockAdapter{})
 	runID := itest.InsertRun(t, slot.DB, t0)
 	orderID := itest.InsertOrder(t, slot.DB, runID, "APPROVED", t0)
 	if err := slot.DB.WithContext(ctx).Exec(`UPDATE work_order SET dispatch_deadline_at = ? WHERE id = ?`,

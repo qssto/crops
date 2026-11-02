@@ -279,7 +279,7 @@ func (a *Agent) toOrder(ctx context.Context, s *state) (*state, error) {
 	o := model.WorkOrder{AdviceID: c.AdviceID, RunID: s.runID, TenantID: c.TenantID, FarmID: c.FarmID,
 		FieldID: c.FieldID, WorkType: s.dec.WorkType, DeviceType: deviceOf(s.dec), Payload: payload,
 		TimeWindow: *c.SuggestedWindow, ConstraintChecks: a.constraintChecks(s),
-		Status: model.OrderDraft, DispatchMode: model.DispatchDryRun}
+		Status: model.OrderDraft, DispatchMode: a.dispatchMode(ctx, s.q.Scope)}
 	id, err := a.cfg.Drafts.CreateDraft(ctx, s.q.Scope, o)
 	if err != nil {
 		return s, fmt.Errorf("to_order: create draft: %w", err)
@@ -290,6 +290,19 @@ func (a *Agent) toOrder(ctx context.Context, s *state) (*state, error) {
 		return s, fmt.Errorf("to_order: %w", err)
 	}
 	return s, nil
+}
+
+// dispatchMode 在 to_order 读一次开关写定 dispatch_mode；未装配或读取失败按 DRY_RUN（失败关闭）。
+func (a *Agent) dispatchMode(ctx context.Context, scope model.Scope) model.DispatchMode {
+	if a.cfg.DispatchMode == nil {
+		return model.DispatchDryRun
+	}
+	m, err := a.cfg.DispatchMode.DispatchMode(ctx, scope)
+	if err != nil {
+		a.log.ErrorContext(ctx, "to_order: read dispatch mode, fall back to DRY_RUN", "farm_id", scope.FarmID, "err", err)
+		return model.DispatchDryRun
+	}
+	return m
 }
 
 // deviceOf：施药与叶面喷施按施药方式，灌溉为阀门，其余人工。

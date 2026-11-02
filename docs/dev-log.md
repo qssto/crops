@@ -288,3 +288,31 @@
 - TODO：
   - 连库跑集成测试，核对 SKIP LOCKED、MarkRetry 的 IF 赋值顺序、`dispatch_result IS NOT NULL AS has_result` 扫描、GORM IN 切片展开、PUBLISH→SUBSCRIBE 端到端。
   - 真实模型未验证（ONEAPI_* 未设置）。
+
+## P1-L0 · 基线指针与按农场开关（2026-10-29）
+
+- 迁移：`migrations/0005_feature_flag.{up,down}.sql`，照抄 P1 手册 §6.1 建表（uk_flag_scope），不入库。
+- model：`model/flag.go` 是注册表（enable_advice / enable_robot_dispatch，FARM 行 `{"on":bool}`，默认关），三种值形态校验，`FlagScopeOf` 由 (tenant, farm) 推导 GLOBAL / TENANT / FARM。
+- repository：`repository/flag.go` 照抄三层读取、upsert（`AS new`）和乐观锁 UPDATE 的 SQL；另有 LockTx（FOR UPDATE）、ScopeExists、List。
+- service：
+  - `FlagService.Set` 只允许 platform_admin。先校验形态与作用域，再校验 robot 置开的前置条件（同农场 enable_advice 生效且有 agronomist）。行写入和 FLAG_CHANGE 审计（old / new / scope）在同一事务；提交后 PUBLISH `flags:changed {"flag_key":...}`。
+  - 读取：生效值 = `!force_off(G) && !force_off(T) && FARM`；进程内缓存 30s，带 generation 计数，收到 `flags:changed` 时清空。`BoolLive` 直读，读失败一律按关处理。
+- agent：`to_order` 通过 `DispatchModeSource` 写定 `dispatch_mode`（robot 关 → DRY_RUN）；orderdraft 允许 REAL。
+- 下发器 ②：REAL 单在 robot 关时写 DISPATCH_HELD 审计（DENIED），outbox 置 DONE，单子保持 APPROVED，之后到时效由 ① 转 EXPIRED。robot 开时（L2 前无真实 Adapter）告警并返回错误，outbox 退避重试。
+- ask：enable_advice 关时返回 `ErrAdviceDisabled`，对应 403 ADVICE_DISABLED。
+- controller：`controller/admin.go` 提供 `PUT /api/v1/admin/flags/:flag_key/scopes/:tenant_id/:farm_id` 和 `GET /api/v1/admin/flags/:flag_key`，走 PlatformAuth，在 `app.Handler` 里调 `MountAdmin` 挂载。
+- 装配：`app/flag.go` 的 buildFlags 在 NewAgent 之前执行，`Deps.FarmRoles` 可选（为 nil 时 robot 无法置开）。serve 启动 `Flags.Run` 订阅，退出时等它返回。
+- 种子：`fields.yaml` 增加 `flags:` 段（示范农场 1/1 enable_advice on）。`seed` 校验注册表、作用域、形态、comment 和重复项，在同一事务内 upsert，updated_by=0。
+- 文档：`eval/baselines/README.md`（P1 对照一律用 baseline_p0）；`docs/p1/` 下有《设备开放清单》（D4 未提供，四类设备全部不开放，另列 devicesim）、《法规清单初稿》、《Phase 1 启动包》。
+- 测试：
+  - Set 有 29 个表驱动用例。
+  - 合并真值表、GLOBAL force_off 恢复、缓存、读失败按关、admin 接口 19 个用例、ask 403、dispatch ② 和种子校验。
+  - 集成：`TestFlag_Integration` 和 `TestDispatchHeld_Integration`（Adapter 调用数为 0）。
+- 偏差：
+  - `flags:changed` 走 `Keys.Raw`。
+  - 复检时 advice 已关会导致复检失败，outbox 进入终态。
+  - 未改 router.go。
+- TODO：
+  - 调度方跑 `make eval GO=go N=5` 并与 baseline_p0 比对（本 harness 拒绝含 eval 的命令）。
+  - `TestLocker_Integration` 断言没有考虑 AS_TEST_NS（既有问题，归 L1-B）。
+  - 设备清单与法规清单待 Owner / 法务确认。

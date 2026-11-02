@@ -169,7 +169,38 @@ type dispatchFixture struct {
 	events *fakeEvents
 	pre    *fakePrecheck
 	dev    *countingAdapter
+	flags  *fakeLiveFlags
+	audit  *memAudit
 	svc    *WorkOrderService
+}
+
+// fakeLiveFlags 是 LiveFlagReader 的桩：robot 为 enable_robot_dispatch 的生效值。
+type fakeLiveFlags struct {
+	robot bool
+	err   error
+	calls int
+}
+
+func (f *fakeLiveFlags) BoolLive(_ context.Context, key model.FlagKey, _ model.Scope) (bool, error) {
+	f.calls++
+	if key != model.FlagEnableRobotDispatch {
+		return false, fmt.Errorf("unexpected flag %s", key)
+	}
+	return f.robot, f.err
+}
+
+// memAudit 记录 AppendTx 写入的审计行；fail 非空时写入失败。
+type memAudit struct {
+	recs []model.AuditRecord
+	fail error
+}
+
+func (m *memAudit) AppendTx(_ context.Context, _ *repository.DB, r model.AuditRecord) error {
+	if m.fail != nil {
+		return m.fail
+	}
+	m.recs = append(m.recs, r)
+	return nil
 }
 
 func newDispatchFixture(t *testing.T, status model.WorkOrderStatus, lockHeld bool) *dispatchFixture {
@@ -184,12 +215,13 @@ func newDispatchFixture(t *testing.T, status model.WorkOrderStatus, lockHeld boo
 		Payload:        json.RawMessage(`{"product":"P1","dose_per_mu":{"value":30,"unit":"ml"},"area_mu":12}`),
 		TimeWindowFrom: dispatchNow, TimeWindowTo: dispatchNow.Add(4 * time.Hour), Status: string(status),
 		DispatchMode: string(model.DispatchDryRun), DispatchDeadlineAt: &deadline, RowVer: 2}}
-	f := &dispatchFixture{store: store, events: &fakeEvents{}, dev: &countingAdapter{}}
+	f := &dispatchFixture{store: store, events: &fakeEvents{}, dev: &countingAdapter{}, flags: &fakeLiveFlags{},
+		audit: &memAudit{}}
 	f.pre = &fakePrecheck{store: store, res: PreDispatchResult{Checks: []model.ConstraintCheck{
 		{Phase: model.PhasePreDispatch, RuleID: "wind", Passed: true}}}}
 	f.svc = NewWorkOrderService(fixedClock{dispatchNow}, store, f.events)
 	if err := f.svc.SetDispatch(DispatchDeps{Adapter: f.dev, Recheck: f.pre, Store: store, Tx: store, Cards: fakeCards{},
-		Epochs: fakeEpochs{}, Locks: memLocks{held: lockHeld}, Keys: keys,
+		Epochs: fakeEpochs{}, Locks: memLocks{held: lockHeld}, Keys: keys, Flags: f.flags, Audit: f.audit,
 		Logger: slog.New(slog.NewTextHandler(io.Discard, nil))}); err != nil {
 		t.Fatal(err)
 	}
@@ -293,9 +325,33 @@ func TestDispatch(t *testing.T) {
 			want: dispatchWant{err: ErrBadOutboxPayload, status: "APPROVED", outbox: "PENDING", phases: "[]"}},
 		{name: "draft not dispatchable", status: model.OrderDraft, want: dispatchWant{err: ErrDispatchState,
 			status: "DRAFT", outbox: "PENDING", phases: "[]"}},
-		{name: "real mode refused", status: model.OrderApproved,
+		{name: "real held when flag off", status: model.OrderApproved,
 			mutate: func(f *dispatchFixture) { f.store.order.DispatchMode = string(model.DispatchReal) },
+			want:   dispatchWant{status: "APPROVED", outbox: "DONE", phases: "[]"}},
+		{name: "real with flag on refused (no real adapter)", status: model.OrderApproved,
+			mutate: func(f *dispatchFixture) { f.store.order.DispatchMode, f.flags.robot = string(model.DispatchReal), true },
 			want:   dispatchWant{err: ErrDispatchState, status: "APPROVED", outbox: "PENDING", phases: "[]"}},
+		{name: "real flag read error retries", status: model.OrderApproved,
+			mutate: func(f *dispatchFixture) {
+				f.store.order.DispatchMode, f.flags.err = string(model.DispatchReal), errors.New("mysql down")
+			},
+			want: dispatchWant{err: errAny, status: "APPROVED", outbox: "PENDING", phases: "[]"}},
+		{name: "real held audit fails rolls back", status: model.OrderApproved,
+			mutate: func(f *dispatchFixture) {
+				f.store.order.DispatchMode, f.audit.fail = string(model.DispatchReal), errors.New("audit down")
+			},
+			want: dispatchWant{err: errAny, status: "APPROVED", outbox: "PENDING", phases: "[]"}},
+		{name: "real overdue expires first", status: model.OrderApproved,
+			mutate: func(f *dispatchFixture) {
+				f.store.order.DispatchMode, f.store.order.DispatchDeadlineAt = string(model.DispatchReal), &past
+			},
+			want: dispatchWant{status: "EXPIRED", outbox: "DONE", phases: "[]"}},
+		{name: "unknown dispatch mode refused", status: model.OrderApproved,
+			mutate: func(f *dispatchFixture) { f.store.order.DispatchMode = "SHADOW" },
+			want:   dispatchWant{err: ErrDispatchState, status: "APPROVED", outbox: "PENDING", phases: "[]"}},
+		{name: "real dispatched without result not resumed", status: model.OrderDispatched,
+			mutate: func(f *dispatchFixture) { f.store.order.DispatchMode = string(model.DispatchReal) },
+			want:   dispatchWant{err: ErrDispatchState, status: "DISPATCHED", outbox: "PENDING", phases: "[]"}},
 		{name: "lock busy", status: model.OrderApproved, lock: true, want: dispatchWant{err: ErrOrderBusy,
 			status: "APPROVED", outbox: "PENDING", phases: "[]", prechecks: 1}},
 		{name: "recheck inconclusive", status: model.OrderApproved,
@@ -333,6 +389,50 @@ func TestDispatch(t *testing.T) {
 
 // errAny 表示期望任意非 nil 错误（check 中特判）。
 var errAny = errors.New("any error")
+
+// REAL 单 + 开关关：Adapter 调用 0 次、不复检、无迁移，写一条 DISPATCH_HELD 审计（system、order:3、DENIED）。
+func TestDispatch_RealHeldAudit(t *testing.T) {
+	f := newDispatchFixture(t, model.OrderApproved, false)
+	f.store.order.DispatchMode = string(model.DispatchReal)
+	if err := f.svc.Dispatch(context.Background(), dispatchMsg(okDispatchPayload)); err != nil {
+		t.Fatal(err)
+	}
+	if f.dev.dryRuns != 0 || f.pre.calls != 0 || len(f.store.transitions) != 0 || f.flags.calls != 1 {
+		t.Errorf("dryRuns=%d prechecks=%d transitions=%d flagReads=%d, want 0/0/0/1", f.dev.dryRuns, f.pre.calls,
+			len(f.store.transitions), f.flags.calls)
+	}
+	if len(f.audit.recs) != 1 {
+		t.Fatalf("audit = %+v, want one DISPATCH_HELD", f.audit.recs)
+	}
+	r := f.audit.recs[0]
+	var held dispatchHeld
+	if err := json.Unmarshal(r.Summary, &held); err != nil {
+		t.Fatal(err)
+	}
+	if r.Action != string(model.AuditDispatchHeld) || r.Target != "order:3" || r.Result != model.AuditResultDenied ||
+		r.Actor.Type != model.ActorSystem || r.TenantID != 1 || r.FarmID != 1 || r.RunID == nil || *r.RunID != 5 ||
+		held != (dispatchHeld{OrderID: 3, TicketID: 7, DispatchMode: model.DispatchReal, FlagKey: model.FlagEnableRobotDispatch}) {
+		t.Errorf("audit = %+v summary %s", r, r.Summary)
+	}
+	// 重投：outbox 已 DONE，单仍 APPROVED → 再读一次开关、再写一条审计，仍不调 Adapter
+	if err := f.svc.Dispatch(context.Background(), dispatchMsg(okDispatchPayload)); err != nil {
+		t.Fatal(err)
+	}
+	if f.dev.dryRuns != 0 {
+		t.Errorf("dryRuns after redelivery = %d, want 0", f.dev.dryRuns)
+	}
+}
+
+// DRY_RUN 单不读 enable_robot_dispatch（开关只管 REAL）。
+func TestDispatch_DryRunIgnoresFlag(t *testing.T) {
+	f := newDispatchFixture(t, model.OrderApproved, false)
+	if err := f.svc.Dispatch(context.Background(), dispatchMsg(okDispatchPayload)); err != nil {
+		t.Fatal(err)
+	}
+	if f.flags.calls != 0 || len(f.audit.recs) != 0 || f.dev.dryRuns != 1 {
+		t.Errorf("flagReads=%d audits=%d dryRuns=%d, want 0/0/1", f.flags.calls, len(f.audit.recs), f.dev.dryRuns)
+	}
+}
 
 // 正常 dry-run 的落库细节：迁移链、dispatch_result JSON、PRE_DISPATCH 校验与复检入参。
 func TestDispatch_DryRunDetails(t *testing.T) {
@@ -433,8 +533,11 @@ func TestDispatch_NotConfigured(t *testing.T) {
 	store := &memDispatch{}
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	for name, d := range map[string]DispatchDeps{
-		"no adapter":          {Store: store, Tx: store, Locks: memLocks{}, Logger: log},
-		"recheck needs cards": {Adapter: adapter.MockAdapter{}, Recheck: &fakePrecheck{}, Store: store, Tx: store, Locks: memLocks{}, Logger: log},
+		"no adapter": {Store: store, Tx: store, Locks: memLocks{}, Flags: &fakeLiveFlags{}, Audit: &memAudit{}, Logger: log},
+		"no flags":   {Adapter: adapter.MockAdapter{}, Store: store, Tx: store, Locks: memLocks{}, Audit: &memAudit{}, Logger: log},
+		"no audit":   {Adapter: adapter.MockAdapter{}, Store: store, Tx: store, Locks: memLocks{}, Flags: &fakeLiveFlags{}, Logger: log},
+		"recheck needs cards": {Adapter: adapter.MockAdapter{}, Recheck: &fakePrecheck{}, Store: store, Tx: store, Locks: memLocks{},
+			Flags: &fakeLiveFlags{}, Audit: &memAudit{}, Logger: log},
 	} {
 		if err := svc.SetDispatch(d); !errors.Is(err, ErrDispatchNotConfigured) {
 			t.Errorf("%s: SetDispatch err = %v", name, err)

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strconv"
 	"time"
 
 	"agri-steward/internal/adapter"
@@ -48,7 +49,13 @@ type EpochAllocator interface {
 	RecheckEpoch(ctx context.Context, scope model.Scope, runID uint64) (int, error)
 }
 
+// LiveFlagReader 直读开关（不走缓存），FlagService 实现。
+type LiveFlagReader interface {
+	BoolLive(ctx context.Context, key model.FlagKey, scope model.Scope) (bool, error)
+}
+
 // DispatchDeps 是 WorkOrderService.Dispatch 的依赖。Recheck 为 nil 时跳过 ④（主链路不支持复检），只告警。
+// Flags / Audit 是第 ② 步的开关直读与 DISPATCH_HELD 审计（P1 L0）。
 type DispatchDeps struct {
 	Adapter adapter.DeviceAdapter
 	Recheck Prechecker
@@ -58,13 +65,15 @@ type DispatchDeps struct {
 	Epochs  EpochAllocator
 	Locks   KeyLocker
 	Keys    rediskey.Keys
+	Flags   LiveFlagReader
+	Audit   AuditTxAppender
 	Logger  *slog.Logger
 }
 
 func (d DispatchDeps) validate() error {
 	switch {
-	case d.Adapter == nil, d.Store == nil, d.Tx == nil, d.Locks == nil, d.Logger == nil:
-		return fmt.Errorf("%w: adapter / store / tx / locks / logger required", ErrDispatchNotConfigured)
+	case d.Adapter == nil, d.Store == nil, d.Tx == nil, d.Locks == nil, d.Flags == nil, d.Audit == nil, d.Logger == nil:
+		return fmt.Errorf("%w: adapter / store / tx / locks / flags / audit / logger required", ErrDispatchNotConfigured)
 	case d.Recheck != nil && (d.Cards == nil || d.Epochs == nil):
 		return fmt.Errorf("%w: recheck needs cards and epochs", ErrDispatchNotConfigured)
 	}
@@ -98,7 +107,8 @@ type dispatchParams struct {
 // Dispatch 处理一条 order.dispatch（P0 §6.9 流程 ①4，母文档 §4.6.2-3）。返回 nil 即 outbox 可置 DONE
 // （⑦ 已在同事务置过时轮询器的 DONE 影响 0 行）；返回错误由轮询器退避重试。
 // ① 读单：终态视为重复投递；DISPATCHED 无结果从 ⑥ 续跑；过 dispatch_deadline_at 同事务 APPROVED → EXPIRED。
-// ② P0 只接受 DRY_RUN。④ 锁外复检（结论变化：原单已取消、新 run 已建，写旧 run superseded_by_run_id）。
+// ② DRY_RUN 照旧走 MockAdapter；REAL 单直读 enable_robot_dispatch：关 → 不调 Adapter、写 DISPATCH_HELD（holdReal）。
+// ④ 锁外复检（结论变化：原单已取消、新 run 已建，写旧 run superseded_by_run_id）。
 // ⑤ 持 lock:order 同事务 APPROVED → DISPATCHED + DISPATCHED(INTENT)；⑥ DryRun；⑦ 同事务写结果 → DONE → outbox DONE →
 // DISPATCHED(RESULT)。不写 episodic_memory、不回写 field.history。
 func (s *WorkOrderService) Dispatch(ctx context.Context, msg repository.OutboxMessage) error {
@@ -121,12 +131,12 @@ func (s *WorkOrderService) Dispatch(ctx context.Context, msg repository.OutboxMe
 	if m.RunID != 0 && m.RunID != o.RunID {
 		return fmt.Errorf("%w: outbox %d run %d, order run %d", ErrBadOutboxPayload, msg.ID, m.RunID, o.RunID)
 	}
-	st := model.WorkOrderStatus(o.Status)
+	st, mode := model.WorkOrderStatus(o.Status), model.DispatchMode(o.DispatchMode)
 	switch {
 	case st.IsTerminal():
 		d.Logger.InfoContext(ctx, "dispatch: duplicate delivery", "order_id", o.ID, "status", o.Status, "outbox_id", msg.ID)
 		return nil
-	case st == model.OrderDispatched && !o.HasResult:
+	case st == model.OrderDispatched && !o.HasResult && mode == model.DispatchDryRun:
 		d.Logger.WarnContext(ctx, "dispatch: resume after crash", "order_id", o.ID, "outbox_id", msg.ID)
 		return s.lockedDispatch(ctx, msg, m, ref, false)
 	case st == model.OrderPendingApproval:
@@ -135,10 +145,12 @@ func (s *WorkOrderService) Dispatch(ctx context.Context, msg repository.OutboxMe
 		return nil
 	case st != model.OrderApproved:
 		return fmt.Errorf("%w: order %d is %s (has_result=%t)", ErrDispatchState, o.ID, o.Status, o.HasResult)
-	case model.DispatchMode(o.DispatchMode) != model.DispatchDryRun:
-		return fmt.Errorf("%w: order %d dispatch_mode %s, P0 only %s", ErrDispatchState, o.ID, o.DispatchMode, model.DispatchDryRun)
 	case s.overdue(o):
 		return s.expire(ctx, msg, ref)
+	case mode == model.DispatchReal:
+		return s.holdReal(ctx, msg, m, o)
+	case mode != model.DispatchDryRun:
+		return fmt.Errorf("%w: order %d dispatch_mode %q", ErrDispatchState, o.ID, o.DispatchMode)
 	}
 	done, err := s.precheck(ctx, o)
 	if err != nil || done {
@@ -150,6 +162,51 @@ func (s *WorkOrderService) Dispatch(ctx context.Context, msg repository.OutboxMe
 // overdue 判断是否已过下发截止时间。
 func (s *WorkOrderService) overdue(o repository.DispatchOrder) bool {
 	return o.DispatchDeadlineAt != nil && !s.clock.Now().Before(*o.DispatchDeadlineAt)
+}
+
+// dispatchHeld 是 DISPATCH_HELD 审计的 summary。
+type dispatchHeld struct {
+	OrderID      uint64             `json:"order_id"`
+	TicketID     uint64             `json:"ticket_id"`
+	DispatchMode model.DispatchMode `json:"dispatch_mode"`
+	FlagKey      model.FlagKey      `json:"flag_key"`
+}
+
+// holdReal 是第 ② 步的 REAL 分支（P1 §6.1 功能任务 4）。BoolLive(enable_robot_dispatch) 为关：不调 Adapter、单保持 APPROVED，
+// 同事务写 audit_log(DISPATCH_HELD) 并置本条 outbox DONE（到 dispatch_deadline_at 由时效扫描转 EXPIRED，开关恢复也不补发）。
+// 为开：P1-L2 前没有真实 Adapter，按不可下发告警并返回错误（outbox 退避重试，耗尽 DEAD）。
+func (s *WorkOrderService) holdReal(ctx context.Context, msg repository.OutboxMessage, m dispatchMessage,
+	o repository.DispatchOrder) error {
+	d := s.dispatch
+	scope := model.Scope{TenantID: o.TenantID, FarmID: o.FarmID}
+	on, err := d.Flags.BoolLive(ctx, model.FlagEnableRobotDispatch, scope)
+	if err != nil {
+		return fmt.Errorf("service: dispatch order %d read flag: %w", o.ID, err)
+	}
+	if on {
+		d.Logger.ErrorContext(ctx, "dispatch: REAL order but no real adapter wired", "alert", "REAL_DISPATCH_UNAVAILABLE",
+			"order_id", o.ID, "outbox_id", msg.ID)
+		return fmt.Errorf("%w: order %d is REAL, no real adapter before P1-L2", ErrDispatchState, o.ID)
+	}
+	payload, err := json.Marshal(dispatchHeld{OrderID: o.ID, TicketID: m.TicketID, DispatchMode: model.DispatchReal,
+		FlagKey: model.FlagEnableRobotDispatch})
+	if err != nil {
+		return fmt.Errorf("service: encode DISPATCH_HELD order %d: %w", o.ID, err)
+	}
+	runID := o.RunID
+	rec := repository.NewAuditRecord(scope, &runID, model.Actor{Type: model.ActorSystem}, model.AuditDispatchHeld,
+		"order:"+strconv.FormatUint(o.ID, 10), payload, model.AuditResultDenied, s.clock.Now())
+	err = d.Tx.InTx(ctx, func(tx *repository.DB) error {
+		if err := d.Audit.AppendTx(ctx, tx, rec); err != nil {
+			return err
+		}
+		return s.markDoneTx(ctx, tx, msg.ID, o.ID)
+	})
+	if err != nil {
+		return fmt.Errorf("service: dispatch hold order %d: %w", o.ID, err)
+	}
+	d.Logger.WarnContext(ctx, "dispatch: held, enable_robot_dispatch off", "order_id", o.ID, "outbox_id", msg.ID)
+	return nil
 }
 
 // expire 持锁同事务 APPROVED → EXPIRED(APPROVAL_EXPIRED) 并置 outbox DONE（与 approval_expire 扫描同一迁移）。

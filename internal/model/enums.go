@@ -117,14 +117,19 @@ const (
 	RiskHigh RiskLevel = "HIGH"
 )
 
-// Role 是静态鉴权配置中的角色。
+// Role 是 user_role.role 的取值（P1 L1）；平台角色只绑定在 (0,0)。
 type Role string
 
 const (
+	RoleFarmer        Role = "farmer"
 	RoleFarmManager   Role = "farm_manager"
 	RoleAgronomist    Role = "agronomist"
 	RoleOperator      Role = "operator"
+	RoleAdmin         Role = "admin"
+	RoleAuditor       Role = "auditor"
 	RolePlatformAdmin Role = "platform_admin"
+	RoleKBExpert      Role = "kb_expert" // 预留，权限由 Phase 3/4 定义
+	RoleLegal         Role = "legal"     // 预留，权限由 Phase 3/4 定义
 )
 
 // ActorType 是 run_event.actor 与 work_order_transition.actor_type 的取值。

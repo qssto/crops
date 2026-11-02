@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strconv"
 	"time"
 
@@ -77,7 +78,8 @@ func (s *AuthService) Authenticate(token string) (uint64, error) {
 }
 
 // ResolveScope 返回用户在路径农场上的 Scope；平台授权 (0,0) 不匹配任何农场路径。
-func (s *AuthService) ResolveScope(userID, farmID uint64) (model.Scope, error) {
+// P1-L1 起改查 user_role（签名冻结，接缝见 docs/briefs/P1-L0L1.md）。
+func (s *AuthService) ResolveScope(_ context.Context, userID, farmID uint64) (model.Scope, error) {
 	if farmID == 0 {
 		return model.Scope{}, fmt.Errorf("%w: farm_id 0", ErrForbidden)
 	}
@@ -88,6 +90,35 @@ func (s *AuthService) ResolveScope(userID, farmID uint64) (model.Scope, error) {
 		}
 	}
 	return model.Scope{}, fmt.Errorf("%w: user %d farm %d", ErrForbidden, userID, farmID)
+}
+
+// ResolvePlatformScope 返回用户的平台 Scope（tenant_id=farm_id=0），用于 /api/v1/admin/...；
+// 没有 (0,0) 绑定返回 ErrForbidden。P1-L1 起改查 user_role。
+func (s *AuthService) ResolvePlatformScope(_ context.Context, userID uint64) (model.Scope, error) {
+	for _, g := range s.grants[userID] {
+		if g.TenantID == 0 && g.FarmID == 0 {
+			return model.Scope{UserID: userID, Roles: append([]model.Role(nil), g.Roles...)}, nil
+		}
+	}
+	return model.Scope{}, fmt.Errorf("%w: user %d has no platform grant", ErrForbidden, userID)
+}
+
+// FarmRoleChecker 判断农场是否有某角色的绑定（L0：enable_robot_dispatch 置开要求有 agronomist）。
+// AuthService 用静态表实现；P1-L1 起由 user_role 实现。
+type FarmRoleChecker interface {
+	FarmHasRole(ctx context.Context, tenantID, farmID uint64, role model.Role) (bool, error)
+}
+
+// FarmHasRole 实现 FarmRoleChecker（静态授权表）。
+func (s *AuthService) FarmHasRole(_ context.Context, tenantID, farmID uint64, role model.Role) (bool, error) {
+	for _, gs := range s.grants {
+		for _, g := range gs {
+			if g.TenantID == tenantID && g.FarmID == farmID && slices.Contains(g.Roles, role) {
+				return true, nil
+			}
+		}
+	}
+	return false, nil
 }
 
 type scopeKey struct{}

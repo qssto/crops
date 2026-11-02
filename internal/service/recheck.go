@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 
@@ -48,7 +49,7 @@ type PreDispatchInput struct {
 	Epoch    int
 }
 
-// PreDispatchResult 是复检结论：Changed 时原单已取消，NewRunID 为新建的 run；Checks 为复检判定的 PRE_DISPATCH 约束。
+// PreDispatchResult 是复检结论：Changed 时原单已取消，NewRunID 为新建的 run（本农场 enable_advice 关时为 0）；Checks 为复检判定的 PRE_DISPATCH 约束。
 type PreDispatchResult struct {
 	Changed  bool
 	Detail   string
@@ -74,6 +75,11 @@ func (s *RecheckService) PreDispatch(ctx context.Context, in PreDispatchInput) (
 	s.d.Logger.InfoContext(ctx, "order canceled by recheck", "order_id", in.Order.OrderID, "run_id", in.Question.RunID,
 		"detail", res.Detail)
 	runID, err := s.d.Starter.Ask(ctx, in.Question.Scope, AskInput{FieldID: in.Question.FieldID, Text: in.Question.Text})
+	if errors.Is(err, ErrAdviceDisabled) {
+		// 本农场 enable_advice 已关：单照常取消，不生成新建议（P1 §8.1），不算失败。
+		s.d.Logger.InfoContext(ctx, "recheck new run skipped, advice disabled", "order_id", in.Order.OrderID)
+		return out, nil
+	}
 	if err != nil {
 		return out, fmt.Errorf("service: recheck order %d: new run: %w", in.Order.OrderID, err)
 	}

@@ -49,6 +49,9 @@ type Deps struct {
 	// Presign 是 L7 原文读取的预签名器（生产：repository.MinIOPresigner，与 RawStore 同一 bucket）；
 	// 为空时不挂 GET /runs/:run_id/raw/:raw_id。
 	Presign repository.Presigner
+	// FarmRoles 是 P1-L0 enable_robot_dispatch 置开的 agronomist 前置检查（可选；生产为 *service.AuthService）。
+	// 为空时该开关一律不可置开（失败关闭）。
+	FarmRoles service.FarmRoleChecker
 }
 
 // metaer 是能报告自身版本信息的主链路（graph.Agent）。
@@ -92,6 +95,8 @@ type App struct {
 	// L7：带授权审计的原文读取（Deps.Presign 为空时 nil）；分区维护（cmd/server 启动 Partitions.Run）。
 	Audit      *service.AuditService
 	Partitions *service.PartitionMaintainer
+	// P1-L0：开关统一读写入口（cmd/server 启动 Flags.Run 订阅 flags:changed）。
+	Flags *service.FlagService
 	// eventRepo 是唯一的 run_event 写入口（同事务 audit_log 投影 + 提交后 PUBLISH sse:run:{run_id}）。
 	eventRepo repository.EventRepo
 }
@@ -163,6 +168,9 @@ func Build(deps Deps) (*App, error) {
 
 		DashboardDir: deps.DashboardDir,
 	}
+	if err := a.buildFlags(deps); err != nil {
+		return nil, err
+	}
 	if deps.NewAgent != nil {
 		ag, err := deps.NewAgent(a)
 		if err != nil {
@@ -177,7 +185,7 @@ func Build(deps Deps) (*App, error) {
 	a.Ask = service.NewAskService(service.AskDeps{
 		Fields:  repository.FieldScope{DB: deps.DB},
 		Limiter: repository.NewAskLimiter(deps.Redis, deps.Keys, AskPerMinute),
-		Runs:    runs, Advice: advice, Agent: a.Agent, Meta: meta, Logger: deps.Logger,
+		Runs:    runs, Advice: advice, Agent: a.Agent, Meta: meta, Logger: deps.Logger, Flags: a.Flags,
 	})
 	a.buildHITLServices()
 	if err := a.buildDispatch(); err != nil {
@@ -216,6 +224,7 @@ func (a *App) Handler(auth *service.AuthService) http.Handler {
 		mounts = append(mounts, controller.AuditRoutes(a.Audit))
 	}
 	r := controller.NewRouter(auth, a.Ask, mounts...)
+	controller.MountAdmin(r, auth, a.Flags) // P1-L0：/api/v1/admin/flags
 	if a.DashboardDir != "" {
 		controller.MountDashboard(r, a.DashboardDir)
 	}
@@ -227,7 +236,7 @@ func (a *App) Handler(auth *service.AuthService) http.Handler {
 func (a *App) buildDispatch() error {
 	store := repository.NewDispatchRepo(a.DB)
 	d := service.DispatchDeps{Adapter: a.Adapter, Store: store, Tx: a.HITL.decisions, Cards: a.Advice, Epochs: a.Runs,
-		Locks: a.Locker, Keys: a.Keys, Logger: a.Logger}
+		Locks: a.Locker, Keys: a.Keys, Logger: a.Logger, Flags: a.Flags, Audit: repository.AuditRepo{DB: a.DB}}
 	if a.HITL.Recheck != nil {
 		d.Recheck = a.HITL.Recheck
 	}

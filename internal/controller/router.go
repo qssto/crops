@@ -3,6 +3,7 @@
 package controller
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"strconv"
@@ -19,7 +20,8 @@ const bearerPrefix = "Bearer "
 // Authenticator 是中间件需要的鉴权能力，service.AuthService 实现。
 type Authenticator interface {
 	Authenticate(token string) (uint64, error)
-	ResolveScope(userID, farmID uint64) (model.Scope, error)
+	ResolveScope(ctx context.Context, userID, farmID uint64) (model.Scope, error)
+	ResolvePlatformScope(ctx context.Context, userID uint64) (model.Scope, error)
 }
 
 // errorBody 是统一错误响应。
@@ -49,7 +51,7 @@ func FarmAuth(a Authenticator) gin.HandlerFunc {
 			abort(c, http.StatusBadRequest, "bad farm_id")
 			return
 		}
-		scope, err := a.ResolveScope(uid, farmID)
+		scope, err := a.ResolveScope(c.Request.Context(), uid, farmID)
 		if err != nil {
 			status := http.StatusInternalServerError
 			if errors.Is(err, service.ErrForbidden) {

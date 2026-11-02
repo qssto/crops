@@ -17,7 +17,7 @@ import (
 // ErrBadDraft 表示作业单草稿参数不合法。
 var ErrBadDraft = errors.New("repository: bad work order draft")
 
-// OrderDraftRepo 实现 agent.OrderDraftStore：同一事务写 work_order(DRAFT, DRY_RUN) + work_order_transition
+// OrderDraftRepo 实现 agent.OrderDraftStore：同一事务写 work_order(DRAFT, dispatch_mode 缺省 DRY_RUN) + work_order_transition
 // + run_event(ORDER_TRANSITION)；uk_advice 保证一卡一单，重跑返回已有 order_id 且不重复写迁移与事件。
 type OrderDraftRepo struct {
 	db     *gorm.DB
@@ -51,8 +51,8 @@ func validateDraft(scope model.Scope, o model.WorkOrder) error {
 	if o.Status != "" && o.Status != model.OrderDraft {
 		problems = append(problems, fmt.Sprintf("status %s, want DRAFT", o.Status))
 	}
-	if o.DispatchMode != "" && o.DispatchMode != model.DispatchDryRun {
-		problems = append(problems, fmt.Sprintf("dispatch_mode %s, P0 fixed DRY_RUN", o.DispatchMode))
+	if o.DispatchMode != "" && o.DispatchMode != model.DispatchDryRun && o.DispatchMode != model.DispatchReal {
+		problems = append(problems, fmt.Sprintf("dispatch_mode %s, want DRY_RUN / REAL", o.DispatchMode))
 	}
 	if o.TimeWindow.From.IsZero() || o.TimeWindow.To.Before(o.TimeWindow.From) {
 		problems = append(problems, "time_window invalid")
@@ -72,6 +72,10 @@ func (r *OrderDraftRepo) CreateDraft(ctx context.Context, scope model.Scope, o m
 	if len(payload) == 0 {
 		payload = json.RawMessage(`{}`)
 	}
+	mode := o.DispatchMode
+	if mode == "" {
+		mode = model.DispatchDryRun
+	}
 	now := r.clock.Now()
 	var orderID uint64
 	err := inTx(ctx, r.db, func(tx *gorm.DB) error {
@@ -80,7 +84,7 @@ func (r *OrderDraftRepo) CreateDraft(ctx context.Context, scope model.Scope, o m
 ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id)`,
 			scope.TenantID, scope.FarmID, o.FieldID, o.AdviceID, o.RunID, string(o.WorkType), o.DeviceType,
 			string(payload), o.TimeWindow.From, o.TimeWindow.To, string(model.OrderDraft),
-			string(model.DispatchDryRun), model.ContractVersion, now, now)
+			string(mode), model.ContractVersion, now, now)
 		if err != nil {
 			return fmt.Errorf("repository: insert work_order advice %d: %w", o.AdviceID, err)
 		}

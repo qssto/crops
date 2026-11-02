@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"reflect"
@@ -64,6 +65,8 @@ func TestRecheckService_PreDispatch(t *testing.T) {
 		{name: "order busy", rc: fakeRechecker{res: agent.RecheckResult{Changed: true}}, lockHeld: true, wantErr: ErrOrderBusy},
 		{name: "new run failure surfaces after cancel", rc: fakeRechecker{res: agent.RecheckResult{Changed: true}},
 			starterErr: ErrRateLimited, wantErr: ErrRateLimited, wantTo: []model.WorkOrderStatus{model.OrderCanceled}},
+		{name: "advice disabled cancels without new run", rc: fakeRechecker{res: agent.RecheckResult{Changed: true}},
+			starterErr: fmt.Errorf("wrap: %w", ErrAdviceDisabled), wantTo: []model.WorkOrderStatus{model.OrderCanceled}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

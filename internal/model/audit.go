@@ -13,6 +13,10 @@ const (
 	AuditOrderTransition AuditAction = "ORDER_TRANSITION"
 	AuditDispatch        AuditAction = "DISPATCH"
 	AuditRawRead         AuditAction = "RAW_READ"
+	// P1
+	AuditFlagChange      AuditAction = "FLAG_CHANGE"       // L0：开关变更（actor / 旧值 / 新值 / scope）
+	AuditCrossFarmDenied AuditAction = "CROSS_FARM_DENIED" // L1：跨农场 / IDOR / 越权访问拒绝
+	AuditDispatchHeld    AuditAction = "DISPATCH_HELD"     // L0/L8：下发器第 ② 步读到开关关闭
 )
 
 // audit_log.result 取值。

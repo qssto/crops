@@ -155,7 +155,7 @@ func TestLocker_Integration(t *testing.T) {
 	slot := e.Fresh(t, t0)
 	l := repository.NewLocker(e.Redis)
 	key := slot.Keys.LockOrder(42)
-	if !strings.HasPrefix(key, "as:it-repo-t1:lock:order:") {
+	if !strings.HasPrefix(key, "as:") || !strings.HasSuffix(key, "it-repo-t1:lock:order:42") { // 设了 AS_TEST_NS 时前缀多一段命名空间
 		t.Fatalf("key = %s", key)
 	}
 	ctx := t.Context()

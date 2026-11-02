@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"os"
 
 	"github.com/redis/go-redis/v9"
 
@@ -110,7 +111,7 @@ func (f *infraFlags) open(ctx context.Context, logW io.Writer, ls *loadedSamples
 		return nil, err
 	}
 	in.pool, err = env.NewPool(ctx, env.PoolConfig{MySQL: cfg.MySQL, MigrationsDir: f.migrations, Seed: data,
-		Redis: in.rdb, Logger: logger, Size: f.poolSize})
+		Redis: in.rdb, Logger: logger, Size: f.poolSize, Namespace: os.Getenv(env.NamespaceEnv)})
 	if err != nil {
 		return nil, err
 	}

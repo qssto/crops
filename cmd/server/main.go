@@ -124,7 +124,7 @@ func run() (err error) {
 		NewAgent: app.GraphAgent(ctx, app.GraphConfig{Model: mcfg, Chat: chat, Taxonomy: tx,
 			KB: knowledge.NewStore(knowledge.NewRepoReader(*repoRoot))}),
 		Tools: tools, Risk: risk, DashboardDir: filepath.Join(*repoRoot, dashboardDir),
-		Presign: repository.MinIOPresigner{Client: mc, Bucket: cfg.MinIO.BucketRaw},
+		Presign: repository.MinIOPresigner{Client: mc, Bucket: cfg.MinIO.BucketRaw}, FarmRoles: auth,
 		HITL: app.HITLDeps{Objects: repository.MinIOGetter{Client: mc}, RawBucket: cfg.MinIO.BucketRaw,
 			Memory: memory.Options{Enabled: cfg.Memory.Enabled, EpisodicLimit: cfg.Memory.EpisodicLimit,
 				RuneBudget: cfg.Memory.RuneBudget}}})
@@ -156,6 +156,12 @@ func serve(ctx context.Context, srv *http.Server, a *app.App) error {
 		defer close(outboxDone)
 		a.Outbox.Run(ctx)
 	}()
+	// P1-L0 开关缓存失效：订阅 flags:changed，断线 5s 重连；退出时等待。
+	flagsDone := make(chan struct{})
+	go func() {
+		defer close(flagsDone)
+		a.Flags.Run(ctx)
+	}()
 	// SSE 长连接不随 Shutdown 结束，关闭开始时让推送返回
 	srv.RegisterOnShutdown(a.EventStream.Shutdown)
 	errCh := make(chan error, 1)
@@ -181,6 +187,7 @@ func serve(ctx context.Context, srv *http.Server, a *app.App) error {
 	<-scanDone
 	<-partDone
 	<-outboxDone
+	<-flagsDone
 	a.HITL.Decisions.Wait()
 	return nil
 }

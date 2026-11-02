@@ -48,7 +48,7 @@ func RepoRoot() (string, error) {
 	}
 }
 
-// Setup 打开 agri_it_{name}_t_1 库与 as:it-{name}-t1: 前缀；任何依赖不可用直接 Fatal（集成测试不 Skip）。
+// Setup 打开 agri_it_{name}_t_1 库与 as:it-{name}-t1: 前缀（设了 AS_TEST_NS 时再加命名空间前缀）；任何依赖不可用直接 Fatal（集成测试不 Skip）。
 func Setup(t *testing.T, name string) *Env {
 	t.Helper()
 	root, err := RepoRoot()
@@ -76,7 +76,8 @@ func Setup(t *testing.T, name string) *Env {
 		t.Fatalf("redis unavailable (docker compose up?): %v", err)
 	}
 	pool, err := env.NewPool(ctx, env.PoolConfig{MySQL: cfg.MySQL, MigrationsDir: filepath.Join(root, "migrations"),
-		Seed: data, Redis: rdb, Logger: logger, SchemaPrefix: "agri_it_" + name + "_t_", EnvPrefix: "it-" + name + "-t"})
+		Seed: data, Redis: rdb, Logger: logger, SchemaPrefix: "agri_it_" + name + "_t_", EnvPrefix: "it-" + name + "-t",
+		Namespace: os.Getenv(env.NamespaceEnv)})
 	if err != nil {
 		t.Fatalf("mysql unavailable (docker compose up?): %v", errors.Join(err, rdb.Close()))
 	}

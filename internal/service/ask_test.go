@@ -97,11 +97,25 @@ func (f *fakeAgent) Ask(ctx context.Context, q agent.Question) (agent.Answer, er
 
 var askScope = model.Scope{TenantID: 1, FarmID: 1, UserID: 1001, Roles: []model.Role{model.RoleFarmManager}}
 
+// fakeFlags 是 FlagReader 的桩：off 为真时 enable_advice 关。
+type fakeFlags struct {
+	off bool
+	err error
+}
+
+func (f fakeFlags) Bool(_ context.Context, key model.FlagKey, _ model.Scope) (bool, error) {
+	if key != model.FlagEnableAdvice {
+		return false, fmt.Errorf("unexpected flag %s", key)
+	}
+	return !f.off, f.err
+}
+
 func TestAskService_Ask(t *testing.T) {
 	tests := []struct {
 		name       string
 		in         AskInput
 		fields     fakeFields
+		flags      fakeFlags
 		limiter    fakeLimiter
 		createErr  error
 		agent      *fakeAgent
@@ -110,6 +124,10 @@ func TestAskService_Ask(t *testing.T) {
 	}{
 		{name: "ok async completes without FAILED", in: AskInput{FieldID: 3, Text: "稻飞虱要不要打药"},
 			fields: fakeFields{ok: true}, limiter: fakeLimiter{allow: true}, agent: &fakeAgent{}},
+		{name: "enable_advice off", in: AskInput{FieldID: 3, Text: "x"}, fields: fakeFields{ok: true},
+			flags: fakeFlags{off: true}, limiter: fakeLimiter{allow: true}, wantErr: ErrAdviceDisabled, agent: &fakeAgent{}},
+		{name: "flag read error fails closed", in: AskInput{FieldID: 3, Text: "x"}, fields: fakeFields{ok: true},
+			flags: fakeFlags{err: errors.New("mysql down")}, limiter: fakeLimiter{allow: true}, agent: &fakeAgent{}},
 		{name: "empty text", in: AskInput{FieldID: 3, Text: "  "}, wantErr: ErrBadInput, agent: &fakeAgent{}},
 		{name: "text too long", in: AskInput{FieldID: 3, Text: strings.Repeat("稻", MaxQuestionRunes+1)},
 			wantErr: ErrBadInput, agent: &fakeAgent{}},
@@ -136,13 +154,13 @@ func TestAskService_Ask(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			runs := &fakeRuns{createErr: tt.createErr}
 			svc := NewAskService(AskDeps{Fields: tt.fields, Limiter: tt.limiter, Runs: runs, Advice: fakeAdvice{},
-				Agent: tt.agent, Logger: slog.New(slog.NewTextHandler(io.Discard, nil))})
+				Agent: tt.agent, Flags: tt.flags, Logger: slog.New(slog.NewTextHandler(io.Discard, nil))})
 			// 请求 ctx 在返回后立即取消：异步主链路不得受影响。
 			ctx, cancel := context.WithCancel(context.Background())
 			runID, err := svc.Ask(ctx, askScope, tt.in)
 			cancel()
 			svc.Wait()
-			wantOK := tt.wantErr == nil && tt.createErr == nil && tt.fields.err == nil
+			wantOK := tt.wantErr == nil && tt.createErr == nil && tt.fields.err == nil && tt.flags.err == nil
 			switch {
 			case tt.wantErr != nil && !errors.Is(err, tt.wantErr):
 				t.Fatalf("err = %v, want %v", err, tt.wantErr)
