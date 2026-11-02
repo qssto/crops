@@ -7,28 +7,37 @@ package graph
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 
 	"agri-steward/internal/agent/guardrail/pii"
 	"agri-steward/internal/agent/harness/runner"
 	"agri-steward/internal/model"
 )
 
-// emitAs 经 Config.Events 发一条图内事件：e 只需给出 Type / Actor / ActorID / StepID，其余由 s 补齐。
-// Events 为空或执行权已丢失（含 runner 外调用，如下发前复检）时跳过；发送失败只告警（事件是观测，不夺执行）。
+// emitAs 经 Config.Events 发一条观测类图内事件（RUN_STARTED / KB_LOADED / ADVICE_READY）：发送失败只告警
+// （事件是观测，不夺执行）。必须落库的事件（DEGRADED）用 emitStrict 并把错误交给节点。
 func (a *Agent) emitAs(ctx context.Context, s *state, e model.RunEvent, payload any) {
+	if err := a.emitStrict(ctx, s, e, payload); err != nil {
+		a.log.WarnContext(ctx, "emit run event", "run_id", s.runID, "type", e.Type, "err", err)
+	}
+}
+
+// emitStrict 发一条图内事件：e 只需给出 Type / Actor / ActorID / StepID，其余由 s 补齐。
+// Events 为空或执行权已丢失（含 runner 外调用，如下发前复检）时跳过并返回 nil；编码或发送失败返回错误。
+func (a *Agent) emitStrict(ctx context.Context, s *state, e model.RunEvent, payload any) error {
 	if a.cfg.Events == nil || runner.Alive(ctx) != nil {
-		return
+		return nil
 	}
 	body, err := json.Marshal(payload)
 	if err != nil {
-		a.log.WarnContext(ctx, "encode run event", "run_id", s.runID, "type", e.Type, "err", err)
-		return
+		return fmt.Errorf("encode %s event: %w", e.Type, err)
 	}
 	e.TenantID, e.FarmID, e.RunID, e.Payload, e.CreatedAt = s.q.Scope.TenantID, s.q.Scope.FarmID, s.runID, body,
 		a.cfg.Clock.Now()
 	if _, err := a.cfg.Events.Emit(context.WithoutCancel(ctx), e); err != nil {
-		a.log.WarnContext(ctx, "emit run event", "run_id", s.runID, "type", e.Type, "err", err)
+		return fmt.Errorf("emit %s event: %w", e.Type, err)
 	}
+	return nil
 }
 
 // emitRunStarted 发 RUN_STARTED（投影为 ASK）：actor 为提问用户，问题经 pii.Mask。

@@ -1,7 +1,8 @@
 // Package llm 是 ChatModel 的薄封装：档位（温度 / max_tokens / 超时 / 重试）、限流、入模脱敏与 token 计量。
 // 模型只出现在主链路的 classify / choose / explain 三个节点，均以「JSON 任务」形式调用：
 // system = 分层提示词 + 任务提示词，user = {"task": ..., "input": ...}，回复必须是 JSON。
-// 任何不可用（限流、超时、重试耗尽、回复非 JSON）都返回 ErrUnavailable，由主链路走降级。
+// 不可用（限流、超时、5xx / 连接错误重试耗尽）返回 ErrUnavailable，由主链路走降级；
+// 模型有回复但内容不合规（非 JSON / 空回复，重试后仍如此）返回 ErrBadReply（不包装 ErrUnavailable），主链路按校验失败拒答（P1 L6）。
 package llm
 
 import (
@@ -57,7 +58,7 @@ func (u *Usage) Add(o Usage) {
 	u.TotalTokens += o.TotalTokens
 }
 
-// 错误。ErrUnavailable 是降级判据；ErrRateLimited 包装在 ErrUnavailable 之下。
+// 错误。ErrUnavailable 是降级判据；ErrRateLimited 包装在 ErrUnavailable 之下；ErrBadReply 不是不可用（P1 L6 故障矩阵）。
 var (
 	ErrUnavailable = errors.New("llm: model unavailable")
 	ErrRateLimited = errors.New("llm: rate limited")
@@ -154,7 +155,8 @@ type taskMessage struct {
 }
 
 // Do 以 tier 档位执行一个 JSON 任务，回复解码进 out。返回本次（含重试）的 token 用量。
-// 限流、超时、重试耗尽与回复非 JSON 均返回包装 ErrUnavailable 的错误；父 ctx 取消时返回 ctx 错误。
+// 限流、超时、重试耗尽返回包装 ErrUnavailable 的错误；最后一次尝试回复非 JSON 返回包装 ErrBadReply 的错误；
+// 父 ctx 取消时返回 ctx 错误。
 func (c *Client) Do(ctx context.Context, tier Tier, task Task, input any, out any) (Usage, error) {
 	cfg, ok := c.tiers[tier]
 	if !ok {
@@ -206,6 +208,9 @@ func (c *Client) run(ctx context.Context, cfg TierConfig, tier Tier, task Task, 
 			return total, fmt.Errorf("llm %s: %w", task, ctx.Err())
 		}
 		last = err
+	}
+	if errors.Is(last, ErrBadReply) {
+		return total, fmt.Errorf("llm %s after %d attempts: %w", task, cfg.MaxRetries+1, last)
 	}
 	return total, fmt.Errorf("%w: %s after %d attempts: %w", ErrUnavailable, task, cfg.MaxRetries+1, last)
 }

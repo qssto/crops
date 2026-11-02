@@ -8,11 +8,15 @@ tools:
     mode: mock
     timeout: 3s
     level: read
+    # P1 L6：正常读只认 fresh 内的缓存；TIMEOUT / UPSTREAM 时 now - collected_at ≤ max_staleness 的缓存回落
+    # （source=cache），max_staleness 也是缓存写入 TTL。field / device 不缓存（配置即启动失败）。
+    cache: {fresh: 10m, max_staleness: 1h}
     real: {base_url: ""}   # 待对接：气象源 D6
   crop:
     mode: mock
     timeout: 3s
     level: read
+    cache: {fresh: 24h, max_staleness: 24h}
     real: {base_url: ""}   # 待对接：极飞 XGEO / 农技知识服务
   field:
     mode: mock

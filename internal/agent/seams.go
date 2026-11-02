@@ -83,7 +83,8 @@ type AuditStore interface {
 }
 
 // ToolCall 是一次工具调用请求。CallSeq 是同一 step 内同工具同入参的第几次调用（参与 call_key），
-// Epoch 取 agent_run.resume_epoch（只对时效工具参与 call_key）。
+// Epoch 取 agent_run.resume_epoch（只对时效工具参与 call_key）。Recheck 标记下发前复检（graph.Recheck）：
+// 网关不读缓存、TIMEOUT / UPSTREAM 不回落，去重命中的 source=cache 结果也不复用（不参与 call_key）。
 type ToolCall struct {
 	RunID   uint64
 	StepID  string
@@ -91,6 +92,7 @@ type ToolCall struct {
 	Args    json.RawMessage
 	CallSeq int
 	Epoch   int
+	Recheck bool
 }
 
 // ToolCallStore 是 tool_call 读写（P0 §6.3 流程 2、4），各方法自管事务。

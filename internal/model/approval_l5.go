@@ -14,6 +14,8 @@ import (
 const (
 	RiskReasonPesticide = "PESTICIDE"  // 用药类（SPRAY）
 	RiskReasonLargeArea = "LARGE_AREA" // 面积达到 risk_matrix.yaml 的 large_area_mu
+	// RiskReasonLargeAreaUnknown 是作业面积未知（payload.area_mu 缺失 / 非正 / 非有限数）：无从核对是否大面积，按 HIGH（失败关闭）。
+	RiskReasonLargeAreaUnknown = "LARGE_AREA:unknown"
 	// RiskReasonNearThresholdPrefix 后接 rule_id，如 NEAR_THRESHOLD:wind_speed_max（PRE_APPROVAL 通过但离阈值在裕度内）。
 	RiskReasonNearThresholdPrefix = "NEAR_THRESHOLD:"
 )

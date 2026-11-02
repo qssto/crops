@@ -18,8 +18,10 @@ import (
 const (
 	fromInvoke = "invoke"
 	fromCache  = "cache"
-	fromDedup  = "dedup"
-	fromPolicy = "policy"
+	// fromFallback：调用 TIMEOUT / UPSTREAM 后回落到 max_staleness 内的缓存（source=cache，P1 §6.7）。
+	fromFallback = "cache_fallback"
+	fromDedup    = "dedup"
+	fromPolicy   = "policy"
 )
 
 // errNotOwned 表示归属入参畸形（field_id 非正整数、device_id 非字符串等），按 REJECTED 返回。
@@ -166,19 +168,27 @@ func (g *Gateway) checkDevice(ctx context.Context, scope model.Scope, runID uint
 	return fmt.Errorf("%w: device %q not in farm (%d,%d)", agent.ErrScopeDenied, deviceID, scope.TenantID, scope.FarmID)
 }
 
-// fetch 先读缓存（时效工具 epoch>0 与 pre_dispatch 复检不读），未命中再调 Server；error 只表示 ctx 取消。
+// fetch 先读新鲜期内的缓存（Bypass 的调用不读：时效工具 epoch>0、下发前复检、pre_dispatch），未命中再调 Server；
+// 调用重试后仍 TIMEOUT / UPSTREAM 时回落到 max_staleness 内的缓存（同样不覆盖 bypassCache 的调用）。error 只表示 ctx 取消。
 // Server 一律拿到带 Scope 的 ctx（mcp.WithScope）；返回 SCOPE_DENIED 时补写越界审计。
 func (g *Gateway) fetch(ctx context.Context, c *callState) (outcome, error) {
 	t := c.tool
 	key := c.cacheKey(g.opt.Keys)
-	if t.cacheTTL > 0 && !c.bypassCache() {
-		if res, ok := g.cacheGet(ctx, key); ok {
-			return outcome{res: res, from: fromCache}, nil
+	useCache := t.cacheTTL > 0 && !c.bypassCache()
+	if useCache {
+		if e, ok := g.cacheGet(ctx, key); ok && g.fresh(e, t.cacheTTL) {
+			return outcome{res: e.Result, from: fromCache}, nil
 		}
 	}
 	o, err := g.invoke(WithScope(ctx, c.scope), t, c.call.Args)
-	if err != nil || o.code != ErrScopeDenied {
+	if err != nil {
 		return o, err
+	}
+	if useCache && (o.code == ErrTimeout || o.code == ErrUpstream) {
+		return g.fallback(ctx, c, key, o), nil
+	}
+	if o.code != ErrScopeDenied {
+		return o, nil
 	}
 	if derr := g.opt.Fields.Deny(ctx, c.scope, c.call.RunID, deniedTarget(c.call)); derr != nil {
 		return outcome{}, fmt.Errorf("audit scope denied: %w", derr)
@@ -202,36 +212,82 @@ func (c *callState) cacheKey(k Keys) string {
 	return k.CacheMCP(c.call.Tool, c.scope.TenantID, c.scope.FarmID, c.digest)
 }
 
-// bypassCache：epoch>0 的时效调用与 pre_dispatch 复检一律不读缓存（P0 §6.3 流程 3）。
-func (c *callState) bypassCache() bool {
-	return (c.timeSense && c.epoch > 0) || c.call.StepID == PreDispatchStep
+// bypassCache 见 Bypass（与评测夹具同一判定）。
+func (c *callState) bypassCache() bool { return Bypass(c.call, c.timeSense) }
+
+// cacheEntry 是 cache:mcp 的值：标准化 Result 与写入时刻（正常读按写入时刻判新鲜期，回落按 collected_at 判陈旧度）。
+type cacheEntry struct {
+	Result
+	CachedAt time.Time `json:"cached_at"`
 }
 
-func (g *Gateway) cacheGet(ctx context.Context, key string) (Result, bool) {
+func (g *Gateway) cacheGet(ctx context.Context, key string) (cacheEntry, bool) {
 	b, ok, err := g.opt.Cache.Get(ctx, key)
 	if err != nil {
 		g.opt.Logger.WarnContext(ctx, "mcp cache get failed", "key", key, "err", err)
-		return Result{}, false
+		return cacheEntry{}, false
 	}
 	if !ok {
-		return Result{}, false
+		return cacheEntry{}, false
 	}
-	var res Result
-	if err := json.Unmarshal(b, &res); err != nil {
+	var e cacheEntry
+	if err := json.Unmarshal(b, &e); err != nil {
 		g.opt.Logger.WarnContext(ctx, "mcp cache entry undecodable", "key", key, "err", err)
-		return Result{}, false
+		return cacheEntry{}, false
 	}
-	return res, true
+	return e, true
 }
 
+// fresh 表示缓存值写入后未超过新鲜期（缓存 TTL 已延长到 max_staleness，正常读仍只认新鲜期内的值）。
+func (g *Gateway) fresh(e cacheEntry, ttl time.Duration) bool {
+	return !e.CachedAt.IsZero() && g.opt.Clock.Now().Sub(e.CachedAt) <= ttl
+}
+
+// fallback：调用 TIMEOUT / UPSTREAM 后读同一 cache:mcp 键，now - collected_at ≤ max_staleness 才回落：
+// source 改为 cache、collected_at 保留原采集时间、data_freshness_sec 按当前时钟重算（即 staleness）。
+// 无缓存、采集时间缺失或超限时返回原失败（由 graph 按数据缺失拒答）。
+func (g *Gateway) fallback(ctx context.Context, c *callState, key string, failure outcome) outcome {
+	e, ok := g.cacheGet(ctx, key)
+	if !ok {
+		g.logFallback(ctx, c, failure, "no cache entry", 0)
+		return failure
+	}
+	at, err := time.Parse(time.RFC3339, e.CollectedAt)
+	if err != nil {
+		g.logFallback(ctx, c, failure, "cache entry has no collected_at", 0)
+		return failure
+	}
+	age, ok := g.cache.FallbackAge(c.tool.server.Name(), c.tool.spec, c.call, g.opt.Clock.Now(), at)
+	if !ok {
+		g.logFallback(ctx, c, failure, "cache older than max_staleness", age)
+		return failure
+	}
+	res := e.Result
+	res.Source, res.DataFreshnessSec = model.ToolSourceCache, int(age/time.Second)
+	g.logFallback(ctx, c, failure, "", age)
+	return outcome{res: res, from: fromFallback}
+}
+
+// logFallback 记录回落结果（reason 为空表示已回落）；告警名取故障矩阵 MCP_TIMEOUT 的告警项由 L7 接入。
+func (g *Gateway) logFallback(ctx context.Context, c *callState, failure outcome, reason string, age time.Duration) {
+	args := []any{"tool", c.call.Tool, "run_id", c.call.RunID, "step_id", c.call.StepID, "error_code", failure.code,
+		"fault", model.FaultMCPTimeout, "staleness_sec", int(age / time.Second), "max_staleness", c.tool.maxStale}
+	if reason == "" {
+		g.opt.Logger.WarnContext(ctx, "mcp cache fallback", args...)
+		return
+	}
+	g.opt.Logger.WarnContext(ctx, "mcp cache fallback unavailable", append(args, "reason", reason)...)
+}
+
+// cachePut 写缓存，TTL 为 max_staleness（正常读另按新鲜期判断）。
 func (g *Gateway) cachePut(ctx context.Context, c *callState, res Result) {
-	b, err := json.Marshal(res)
+	b, err := json.Marshal(cacheEntry{Result: res, CachedAt: g.opt.Clock.Now()})
 	if err != nil {
 		g.opt.Logger.WarnContext(ctx, "mcp cache encode failed", "tool", c.call.Tool, "err", err)
 		return
 	}
 	key := c.cacheKey(g.opt.Keys)
-	if err := g.opt.Cache.Set(ctx, key, b, c.tool.cacheTTL); err != nil {
+	if err := g.opt.Cache.Set(ctx, key, b, c.tool.maxStale); err != nil {
 		g.opt.Logger.WarnContext(ctx, "mcp cache set failed", "key", key, "err", err)
 	}
 }

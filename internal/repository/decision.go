@@ -231,6 +231,8 @@ func (r *DecisionRepo) VoidPreparingTx(ctx context.Context, tx *gorm.DB, t Ticke
 }
 
 // SetDispatchDeadlineTx 在 Transition(→ APPROVED) 之后写 dispatch_deadline_at（Transition 不写业务列；文档未给 SQL）。
+// MySQL 影响行数只计值有变化的行：退回重审在同一时刻写出与首审相同的 deadline / updated_at 时为 0，
+// 此时在同一事务内复查单仍 APPROVED 且 deadline 已是该值即成功，否则 model.ErrConcurrentUpdate。
 func (r *DecisionRepo) SetDispatchDeadlineTx(ctx context.Context, tx *gorm.DB, ref model.OrderRef, deadline, now time.Time) error {
 	if err := requireFarm(ref.TenantID, ref.FarmID); err != nil {
 		return err
@@ -238,10 +240,23 @@ func (r *DecisionRepo) SetDispatchDeadlineTx(ctx context.Context, tx *gorm.DB, r
 	if err := requireTx(tx); err != nil {
 		return err
 	}
+	what := "dispatch deadline work_order " + strconv.FormatUint(ref.OrderID, 10)
 	res := tx.WithContext(ctx).Exec(
 		`UPDATE work_order SET dispatch_deadline_at=?, updated_at=? WHERE tenant_id=? AND farm_id=? AND id=? AND status='APPROVED'`,
 		deadline, now, ref.TenantID, ref.FarmID, ref.OrderID)
-	return affected(res, "dispatch deadline work_order "+strconv.FormatUint(ref.OrderID, 10))
+	if res.Error != nil || res.RowsAffected > 0 {
+		return affected(res, what)
+	}
+	var n int64
+	if err := tx.WithContext(ctx).Raw(
+		`SELECT COUNT(*) FROM work_order WHERE tenant_id=? AND farm_id=? AND id=? AND status='APPROVED' AND dispatch_deadline_at=?`,
+		ref.TenantID, ref.FarmID, ref.OrderID, deadline).Scan(&n).Error; err != nil {
+		return fmt.Errorf("repository: %s: %w", what, err)
+	}
+	if n == 0 {
+		return fmt.Errorf("repository: %s: %w", what, model.ErrConcurrentUpdate)
+	}
+	return nil
 }
 
 // InsertDispatchOutboxTx 照抄 P0 §6.7 outbox(order.dispatch)，dedup_key=order.dispatch:{order_id}:{ticket_id}:1。

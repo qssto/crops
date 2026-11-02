@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"agri-steward/internal/agent/tools/mcp"
 )
 
 const repoRoot = "../.."
@@ -22,6 +24,24 @@ func TestNewReceiptSecret(t *testing.T) {
 	}
 	if len(a) != receiptSecretLen || len(b) != receiptSecretLen || bytes.Equal(a, b) {
 		t.Fatalf("secret lengths %d/%d, equal=%t", len(a), len(b), bytes.Equal(a, b))
+	}
+}
+
+// P1 L6：评测 run 的 FixtureMCP 用 configs/tools.yaml 合并后的回落时间窗（与生产网关同一合并），validate 的
+// fixtures.mcp.*.cache 校验与无库评测用 mcp.DefaultCacheRule；两者逐 server 必须一致（应失败：改了 tools.yaml 的
+// max_staleness 而样本仍按旧边界写，评测与生产回落判定分叉）。
+func TestLoadCacheRule_MatchesSampleDefaults(t *testing.T) {
+	got, err := loadCacheRule(filepath.Join(repoRoot, defaultToolsFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	def := mcp.DefaultCacheRule()
+	for _, server := range []string{"weather", "crop", "field", "device"} {
+		gf, gm := got.Window(server)
+		df, dm := def.Window(server)
+		if gf != df || gm != dm {
+			t.Errorf("server %s: tools.yaml window %v/%v, sample defaults %v/%v", server, gf, gm, df, dm)
+		}
 	}
 }
 
@@ -74,8 +94,9 @@ signed_at: 2026-10-28
 	}{
 		{name: "no args", args: nil, wantCode: exitUsage},
 		{name: "unknown subcommand", args: []string{"foo"}, wantCode: exitUsage},
-		// 171 个样本全部静态校验；其中 rice-rcpt-0001..0006 共 6 个隔离（需 REAL 评测设施），run 只跑 165 个。
-		{name: "validate repo samples", wantCode: exitOK, wantStdout: "validate OK: 171 samples",
+		// 181 个样本全部静态校验（含 P1 L5 审批样本 rice-approval-0001..0011、P1 L6 故障样本 rice-l6fault-0001..0007）；
+		// 其中 rice-rcpt-0001..0006 共 6 个隔离（需 REAL 评测设施），run 只跑 175 个。
+		{name: "validate repo samples", wantCode: exitOK, wantStdout: "validate OK: 181 samples",
 			args: []string{"validate", "--suites-dir", suites, "--taxonomy", tax, "--repo", repoRoot}},
 		{name: "validate counts quarantined", wantCode: exitOK, wantStdout: "6 quarantined (run skips them)\n",
 			args: []string{"validate", "--suites-dir", suites, "--taxonomy", tax, "--repo", repoRoot}},
@@ -97,7 +118,7 @@ signed_at: 2026-10-28
 		{name: "run baseline bad name", wantCode: exitFailed, wantStderr: "baseline name",
 			args: []string{"run", "--suites-dir", suites, "--taxonomy", tax, "--repo", repoRoot, "--out", outDir,
 				"--baseline", "../escape"}},
-		{name: "kbdump regression", wantCode: exitOK, wantStdout: "kbdump: 125 samples",
+		{name: "kbdump regression", wantCode: exitOK, wantStdout: "kbdump: 135 samples",
 			args: []string{"kbdump", "--suites-dir", suites, "--taxonomy", tax, "--repo", repoRoot, "--suite", "regression"}},
 		{name: "kbdump unknown suite", wantCode: exitFailed, wantStderr: "no sample matches",
 			args: []string{"kbdump", "--suites-dir", suites, "--taxonomy", tax, "--repo", repoRoot, "--suite", "nope"}},

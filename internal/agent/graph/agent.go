@@ -19,6 +19,7 @@ import (
 	"agri-steward/internal/agent/guardrail/constraint"
 	harnesscb "agri-steward/internal/agent/harness/callbacks"
 	"agri-steward/internal/agent/harness/checkpoint"
+	"agri-steward/internal/agent/harness/policy"
 	"agri-steward/internal/agent/harness/runner"
 	"agri-steward/internal/agent/knowledge"
 	"agri-steward/internal/agent/llm"
@@ -35,7 +36,7 @@ const (
 	chinaOffsetSec     = 8 * 3600
 )
 
-// Config 是主链路依赖。LLM、Tools、Runs、Advice、Drafts、Locker、Clock、KB、Taxonomy 必填。
+// Config 是主链路依赖。LLM、Tools、Runs、Advice、Drafts、Locker、Clock、KB、Taxonomy、Faults 必填。
 type Config struct {
 	LLM      *llm.Client
 	Tier     llm.Tier
@@ -55,6 +56,8 @@ type Config struct {
 	Regions agent.FarmRegionSource
 	Loc     *time.Location
 	Logger  *slog.Logger
+	// Faults 是故障降级矩阵与文案（P1 L6）：LLM 降级模板、故障类拒答文案、工具错误码归类与 DEGRADED 事件。
+	Faults *policy.FaultMatrix
 
 	// L5 / L6 接缝，均可空（空时退回 L4 行为）。
 	Gate        agent.ApprovalGate    // L5：to_order 写 DRAFT 后开票；空则不开票
@@ -100,7 +103,7 @@ func New(ctx context.Context, cfg Config) (*Agent, error) {
 		"LLM": cfg.LLM == nil, "Tools": cfg.Tools == nil, "Runs": cfg.Runs == nil, "Advice": cfg.Advice == nil,
 		"Drafts": cfg.Drafts == nil, "Locker": cfg.Locker == nil, "Clock": cfg.Clock == nil, "KB": cfg.KB == nil,
 		"Taxonomy": cfg.Taxonomy == nil, "Crop": cfg.Crop == "", "Region": cfg.Region == "",
-		"Constraints": cfg.Constraints == nil,
+		"Constraints": cfg.Constraints == nil, "Faults": cfg.Faults == nil,
 	} {
 		if nilDep {
 			missing = append(missing, name)

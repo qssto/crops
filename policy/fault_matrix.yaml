@@ -1,0 +1,34 @@
+# 故障分类与降级矩阵 v1（P1 §6.7 技术实现第 1 条，母文档降级矩阵）。由 internal/agent/harness/policy.LoadFaultMatrix
+# 与 configs/texts/zh-CN.yaml 一起加载；cmd/server、cmd/worker、cmd/eval 启动时校验，违反即启动失败：
+#   - 四个故障码 LLM_UNAVAILABLE / MCP_TIMEOUT / KB_MISS / DEVICE_OFFLINE 必须齐全，不认识的码报错。
+#   - behavior / refuse_reason 必须与代码实现一致（矩阵是声明，代码按它执行，不一致即配置与实现脱节）。
+#   - text_key（LLM_UNAVAILABLE 另有 degraded_text_key）必须在 zh-CN.yaml 中有非空文案，文案不含数字；
+#     降级模板必须且只含一个 {decision}（规则层决策句）。
+#   - alert 必须有 name 与 level（critical | warning），name / text_key 在各故障间不重复（一一对应）；告警规则由 L7 接入。
+#   - MCP_TIMEOUT 的 tool_error_codes 必须恰为 MCP 网关错误码 TIMEOUT 与 UPSTREAM（与 L2 错误码归一，UPSTREAM 不改名）。
+# behavior 取值：RULE_FALLBACK（规则层保守建议，degraded=true）/ CACHE_FALLBACK（max_staleness 内缓存，source=cache）/
+#   REFUSE（拒答）/ HOLD_AND_NOTIFY（不下发、工单状态不变、通知一次、消息推后 1 分钟）。
+# 无法降级时（规则层条件不满足 / 缓存超限或缺失）按 refuse_reason 拒答，卡片文案取 text_key。
+version: 1
+faults:
+  LLM_UNAVAILABLE:
+    behavior: RULE_FALLBACK
+    refuse_reason: LLM_UNAVAILABLE
+    text_key: fault.llm_unavailable.refused
+    degraded_text_key: fault.llm_unavailable.degraded
+    alert: {name: as_fault_llm_unavailable, level: critical}
+  MCP_TIMEOUT:
+    behavior: CACHE_FALLBACK
+    refuse_reason: DATA_MISSING
+    tool_error_codes: [TIMEOUT, UPSTREAM]
+    text_key: fault.mcp_timeout.refused
+    alert: {name: as_fault_mcp_timeout, level: warning}
+  KB_MISS:
+    behavior: REFUSE
+    refuse_reason: KB_MISS
+    text_key: fault.kb_miss.refused
+    alert: {name: as_fault_kb_miss, level: warning}
+  DEVICE_OFFLINE:
+    behavior: HOLD_AND_NOTIFY
+    text_key: fault.device_offline.notify
+    alert: {name: as_fault_device_offline, level: warning}

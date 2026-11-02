@@ -22,7 +22,8 @@ const argFieldID = "field_id"
 // knowledgeLimit 是 load_knowledge 截断条数。
 const knowledgeLimit = 8
 
-// callLLM 调用模型：成功返回 true；模型不可用（含限流、回复非法）返回 false 且不报错；
+// callLLM 调用模型：成功返回 true；模型不可用（llm 重试后仍超时 / 5xx / 连接错误 / 限流）返回 false 且不报错，
+// 由调用节点走降级分支；回复内容不合规（llm.ErrBadReply）不算不可用，直接拒答 VALIDATION_FAILED 并返回 false；
 // ctx 已取消（含租约丢失）时返回错误，run 以失败收尾。
 func (a *Agent) callLLM(ctx context.Context, s *state, task llm.Task, in, out any) (bool, error) {
 	u, err := a.cfg.LLM.Do(ctx, a.cfg.Tier, task, in, out)
@@ -32,6 +33,11 @@ func (a *Agent) callLLM(ctx context.Context, s *state, task llm.Task, in, out an
 	}
 	if cause := context.Cause(ctx); cause != nil {
 		return false, fmt.Errorf("%s: %w", task, cause)
+	}
+	if errors.Is(err, llm.ErrBadReply) {
+		a.log.WarnContext(ctx, "llm reply rejected", "run_id", s.runID, "task", task, "err", err)
+		s.refuseWith(RefuseValidation, fmt.Sprintf("%s: %v", task, err))
+		return false, nil
 	}
 	a.log.WarnContext(ctx, "llm unavailable", "run_id", s.runID, "task", task, "err", err)
 	return false, nil
@@ -49,7 +55,9 @@ func (a *Agent) classify(ctx context.Context, s *state) (*state, error) {
 	var out llm.ClassifyOutput
 	ok, err := a.callLLM(ctx, s, llm.TaskClassify, in, &out)
 	if err != nil || !ok {
-		s.degrade(llm.TaskClassify)
+		if err == nil && !s.stopped() {
+			err = a.degrade(ctx, s, NodeClassify, llm.TaskClassify) // 尚无知识与规则结论：必然拒答 LLM_UNAVAILABLE
+		}
 		return s, err
 	}
 	s.cls = out
@@ -65,6 +73,7 @@ func (a *Agent) classify(ctx context.Context, s *state) (*state, error) {
 }
 
 // enrich：按一级类规则并发调用只读工具。超时 / 空 / 非法返回 → DATA_MISSING；REJECTED 视为该数据不存在。
+// 超时 / UPSTREAM 时网关已尝试 max_staleness 内的缓存回落（source=cache），回落成功即视为 OK。
 func (a *Agent) enrich(ctx context.Context, s *state) (*state, error) {
 	if s.stopped() {
 		return s, nil
@@ -93,6 +102,14 @@ func (a *Agent) enrich(ctx context.Context, s *state) (*state, error) {
 		s.tools[o.Tool] = o
 		if st := o.Result.Status; (st == statusOK && o.Data == nil) || (st != statusOK && st != statusRejected) {
 			s.refuseWith(RefuseDataMissing, fmt.Sprintf("tool %s: %s %s", o.Tool, st, o.Result.ErrorCode))
+			a.noteToolFault(s, o)
+		}
+	}
+	if !s.stopped() {
+		for _, o := range outs {
+			if err := a.noteCacheFallback(ctx, s, o); err != nil { // L6：source=cache 的回落结果照常使用并记降级
+				return s, fmt.Errorf("enrich: %w", err)
+			}
 		}
 	}
 	if s.stopped() {
@@ -105,8 +122,9 @@ func (a *Agent) enrich(ctx context.Context, s *state) (*state, error) {
 
 // callTool 调用一个工具并解码数据；只有 ctx 取消或网关内部错误返回 error。
 func (a *Agent) callTool(ctx context.Context, s *state, name string, args json.RawMessage) (*toolOut, error) {
+	// L6：重入重跑时带新 resume_epoch，时效工具不读缓存、重取；下发前复检另带 Recheck，任何工具都不读缓存、不回落。
 	res, err := a.cfg.Tools.Call(ctx, s.q.Scope, agent.ToolCall{RunID: s.runID, StepID: NodeEnrich, Tool: name, Args: args,
-		Epoch: runner.Epoch(ctx)}) // L6：重入重跑时带新 resume_epoch，时效工具不读缓存、重取
+		Epoch: runner.Epoch(ctx), Recheck: rechecking(ctx)})
 	if err != nil {
 		return nil, fmt.Errorf("tool %s: %w", name, err)
 	}
@@ -190,7 +208,9 @@ func (a *Agent) choose(ctx context.Context, s *state) (*state, error) {
 	var out llm.ChooseOutput
 	ok, err := a.callLLM(ctx, s, llm.TaskChoose, in, &out)
 	if err != nil || !ok {
-		s.degrade(llm.TaskChoose)
+		if err == nil && !s.stopped() {
+			err = a.degrade(ctx, s, NodeChoose, llm.TaskChoose)
+		}
 		return s, err
 	}
 	s.selected = strings.TrimSpace(out.ProductID)
@@ -203,13 +223,14 @@ func (a *Agent) compute(_ context.Context, s *state) (*state, error) {
 	if s.stopped() || fn == nil || (s.selected != "" && !slices.Contains(s.candidates, s.selected)) {
 		return s, nil
 	}
+	s.markProduct()
 	if err := fn(s.env, s); err != nil {
 		return s, s.fail(err)
 	}
 	return s, nil
 }
 
-// explain：模型组织结论（LLM），数值只能写 {{nK}} 占位符；模型不可用则降级为保守文案或拒答。
+// explain：模型组织结论（LLM），数值只能写 {{nK}} 占位符；模型不可用则降级为规则层模板或拒答。
 func (a *Agent) explain(ctx context.Context, s *state) (*state, error) {
 	if s.stopped() {
 		return s, nil
@@ -233,19 +254,16 @@ func (a *Agent) explain(ctx context.Context, s *state) (*state, error) {
 			s.conclusion, s.modelWhy = out.Conclusion, out.Reasons
 			return s, nil
 		}
-		if s.degrade(llm.TaskExplain); s.stopped() {
-			return s, nil
+		if s.stopped() {
+			return s, nil // 回复不合规：已拒答 VALIDATION_FAILED
+		}
+		if err := a.degrade(ctx, s, NodeExplain, llm.TaskExplain); err != nil || s.stopped() {
+			return s, err
 		}
 	}
-	s.conclusion = degradedPrefix + s.dec.Text + degradedSuffix
+	s.conclusion = a.degradedConclusion(s) // 规则层模板（文案表，不含数字）；照常经 validate
 	return s, nil
 }
-
-// 降级文案（不含数字）。
-const (
-	degradedPrefix = "模型暂不可用，按规则层判定给出保守建议："
-	degradedSuffix = "；请人工复核后再安排作业"
-)
 
 // placeholder 是第 i 个数值的占位符。
 func placeholder(i int) string { return fmt.Sprintf("{{n%d}}", i) }

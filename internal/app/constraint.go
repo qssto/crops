@@ -5,8 +5,22 @@ import (
 	"os"
 
 	"agri-steward/internal/agent/guardrail/constraint"
+	"agri-steward/internal/agent/harness/policy"
 	"agri-steward/internal/service"
 )
+
+// LoadRiskMatrix 读审批风险矩阵（policy/risk_matrix.yaml）并按内置约束注册表交叉校验 near_threshold 的 rule_id
+// （拼错的 rule_id 永远不会命中临界、定级静默偏低）；不合法即报错（服务不启动）。
+func LoadRiskMatrix(path string) (*policy.RiskMatrix, error) {
+	m, err := policy.LoadRiskMatrix(path)
+	if err != nil {
+		return nil, err
+	}
+	if err := m.CheckRuleIDs(constraint.Default().Has); err != nil {
+		return nil, fmt.Errorf("app: %s: %w", path, err)
+	}
+	return m, nil
+}
 
 // LoadConstraintReviewer 读法规对照表（policy/regulation_map.yaml）并按内置约束注册表启动期校验 rule_id，
 // 返回开票前拦截判定（Deps.Constraints）；文件缺失或任一条目不合法即报错（服务不启动）。

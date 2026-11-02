@@ -30,7 +30,9 @@ const dashboardDir = "web/amis"
 // Flags 是两个进程共用的命令行参数。
 type Flags struct {
 	Config, EnvFile, Tools, Model, Repo, Taxonomy, Policy, Risk, Permissions, Devices, Regulation string
-	NotifyTexts                                                                                   string
+	// P1 L6：故障降级矩阵与用户文案表（启动期交叉校验，缺码 / 缺文案 / 缺告警即退出）。
+	FaultMatrix, Texts string
+	NotifyTexts        string
 }
 
 // RegisterFlags 在 fs 上登记参数（缺省值与 P0 cmd/server 一致）。
@@ -47,6 +49,8 @@ func RegisterFlags(fs *flag.FlagSet) *Flags {
 	fs.StringVar(&f.Permissions, "permissions", "policy/permission_matrix.yaml", "权限矩阵（角色 → 操作，未声明即拒绝）")
 	fs.StringVar(&f.Devices, "devices", "configs/devices.yaml", "设备 Adapter 注册表配置（devicesim 开关；骨架不可开放）")
 	fs.StringVar(&f.Regulation, "regulation", "policy/regulation_map.yaml", "法规对照表（P1 L3，rule_id 启动期校验）")
+	fs.StringVar(&f.FaultMatrix, "fault-matrix", app.DefaultFaultMatrixPath, "故障降级矩阵（P1 L6，故障码 → 行为 / 文案 key / 告警）")
+	fs.StringVar(&f.Texts, "texts", app.DefaultTextsPath, "用户可读文案表（P1 L6，故障矩阵的 text_key 须在表内）")
 	fs.StringVar(&f.NotifyTexts, "notify-texts", "configs/texts/notify.zh-CN.yaml", "通知文案（P1 L5，缺任一通知类型即启动失败）")
 	return f
 }
@@ -106,6 +110,10 @@ func Open(ctx context.Context, f *Flags) (_ *Process, err error) {
 	if err != nil {
 		return nil, err
 	}
+	faults, err := policy.LoadFaultMatrix(f.FaultMatrix, f.Texts)
+	if err != nil {
+		return nil, err
+	}
 	notifyTexts, err := service.LoadNotifyTexts(f.NotifyTexts)
 	if err != nil {
 		return nil, err
@@ -141,7 +149,7 @@ func Open(ctx context.Context, f *Flags) (_ *Process, err error) {
 	if err != nil {
 		return nil, err
 	}
-	risk, err := policy.LoadRiskMatrix(f.Risk)
+	risk, err := app.LoadRiskMatrix(f.Risk)
 	if err != nil {
 		return nil, err
 	}
@@ -162,6 +170,7 @@ func Open(ctx context.Context, f *Flags) (_ *Process, err error) {
 			KB: knowledge.NewStore(knowledge.NewRepoReader(f.Repo))}),
 		Tools: tools, Risk: risk, Constraints: constraints, Permissions: grants, Devices: devices, Env: cfg.Env,
 		Dispatch:      cfg.Dispatch,
+		Faults:        faults,                           // P1 L6
 		Approval:      cfg.Approval,                     // P1 L5：驳回导出跨度上限
 		NotifyTexts:   notifyTexts,                      // P1 L5：notify.send 文案
 		ReceiptSecret: []byte(cfg.DeviceReceipt.Secret), // P1-L4-B：为空不挂回执 webhook（只有 server 挂路由）

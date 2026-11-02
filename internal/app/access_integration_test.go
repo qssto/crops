@@ -106,7 +106,7 @@ func TestCrossFarmDenied_Integration(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	a, err := app.Build(app.Deps{Clock: slot.Clock, Logger: logger, DB: slot.DB, Redis: e.Redis, Keys: slot.Keys,
 		RawStore: nopRaw{}, Agent: refuseAgent{}, Tools: nopTools{}, Risk: risk, Constraints: constraints, Presign: itPresign{},
-		Permissions: perms})
+		Permissions: perms, Faults: mustFaults(t, e.Root)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -193,4 +193,14 @@ func TestCrossFarmDenied_Integration(t *testing.T) {
 			t.Fatalf("%s: status = %d body=%s", c.name, rec.Code, rec.Body.String())
 		}
 	}
+}
+
+// mustFaults 加载仓库内的故障矩阵（P1 L6：app.Build 必填）。
+func mustFaults(t *testing.T, root string) *policy.FaultMatrix {
+	t.Helper()
+	m, err := app.LoadFaults(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return m
 }

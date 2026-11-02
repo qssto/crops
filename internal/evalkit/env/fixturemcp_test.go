@@ -12,6 +12,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"agri-steward/internal/agent"
+	"agri-steward/internal/agent/tools/mcp"
 	"agri-steward/internal/evalkit/sample"
 	"agri-steward/internal/model"
 )
@@ -132,6 +133,15 @@ func TestNewFixtureMCP_Rejects(t *testing.T) {
 		{"field and field_id", "a.b: [{match: {field: field-002, field_id: 12}, return: {x: 1}}]", resolveSeeded, "both"},
 		{"no resolver", "a.b: [{match: {field: field-002}, return: {x: 1}}]", nil, "needs a resolver"},
 		{"resolver error", "a.b: [{match: {field: field-002}, return: {x: 1}}]", failResolve, "db down"},
+		{"cache without fault", "weather.realtime: [{return: {x: 1}, cache: {collected_at: \"2026-08-04T06:00:00Z\"}}]",
+			resolveSeeded, "cache requires error"},
+		{"cache with empty fault", "weather.realtime: [{error: empty, cache: {collected_at: \"2026-08-04T06:00:00Z\"}}]",
+			resolveSeeded, "cache requires error"},
+		{"cache on uncached server", "field.get: [{error: upstream, cache: {collected_at: \"2026-08-04T06:00:00Z\"}}]",
+			resolveSeeded, "not cacheable"},
+		{"cache on unregistered tool", "weather.now: [{error: upstream, cache: {collected_at: \"2026-08-04T06:00:00Z\"}}]",
+			resolveSeeded, "not cacheable"},
+		{"cache without collected_at", "weather.realtime: [{error: timeout, cache: {x: 1}}]", resolveSeeded, "collected_at"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -189,3 +199,111 @@ func TestFixtureMCP_Canceled(t *testing.T) {
 
 // 编译期保证 FixtureMCP 实现 agent.ToolProvider。
 var _ agent.ToolProvider = (*FixtureMCP)(nil)
+
+// 缓存回落（P1 L6）：error: timeout / upstream 带 cache 时，now - collected_at ≤ max_staleness（天气 1h、作物 24h）
+// 返回缓存（source=cache、collected_at 原值、新鲜度按原采集时间）；恰好等于上限仍可用，超 1s 注入原故障（应失败：超限仍回落）。
+func TestFixtureMCP_CacheFallback(t *testing.T) {
+	now := time.Date(2026, 8, 4, 8, 0, 0, 0, time.UTC)
+	tests := []struct {
+		name, src            string
+		tool                 string
+		wantStatus, wantCode string
+		wantFresh            int
+	}{
+		{name: "weather upstream at max_staleness", tool: "weather.realtime",
+			src:        `weather.realtime: [{error: upstream, cache: {temp_c: 30, collected_at: "2026-08-04T07:00:00Z", source: mock-station}}]`,
+			wantStatus: StatusOK, wantFresh: 3600},
+		{name: "weather upstream 1s over", tool: "weather.realtime",
+			src:        `weather.realtime: [{error: upstream, cache: {temp_c: 30, collected_at: "2026-08-04T06:59:59Z"}}]`,
+			wantStatus: StatusError, wantCode: CodeUpstream},
+		{name: "crop timeout within 24h", tool: "crop.phenology",
+			src:        `crop.phenology: [{error: timeout, cache: {stage: 分蘖期, collected_at: "2026-08-03T09:00:00Z"}}]`,
+			wantStatus: StatusOK, wantFresh: 23 * 3600},
+		{name: "crop timeout 25h", tool: "crop.phenology",
+			src:        `crop.phenology: [{error: timeout, cache: {stage: 分蘖期, collected_at: "2026-08-03T07:00:00Z"}}]`,
+			wantStatus: StatusTimeout, wantCode: CodeTimeout},
+		{name: "upstream without cache", tool: "weather.realtime", src: `weather.realtime: [{error: upstream}]`,
+			wantStatus: StatusError, wantCode: CodeUpstream},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f, err := NewFixtureMCP(context.Background(), fixturesYAML(t, tt.src), resolveSeeded, NewFrozenClock(now))
+			if err != nil {
+				t.Fatal(err)
+			}
+			res, err := f.Call(context.Background(), model.Scope{}, agent.ToolCall{Tool: tt.tool, Args: json.RawMessage(`{}`)})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if res.Status != tt.wantStatus || res.ErrorCode != tt.wantCode || res.DataFreshnessSec != tt.wantFresh {
+				t.Fatalf("res = %+v, want status=%s code=%s fresh=%d", res, tt.wantStatus, tt.wantCode, tt.wantFresh)
+			}
+			if tt.wantStatus != StatusOK {
+				if res.Source != "" || len(res.Data) != 0 {
+					t.Errorf("fault result carries data: %+v", res)
+				}
+				return
+			}
+			var data map[string]any
+			if err := json.Unmarshal(res.Data, &data); err != nil {
+				t.Fatal(err)
+			}
+			if res.Source != CacheSource || data["collected_at"] == nil {
+				t.Errorf("source = %q data = %v, want cache with original collected_at", res.Source, data)
+			}
+		})
+	}
+}
+
+// 回落判定与网关同一函数（mcp.CacheRule.FallbackAge）：复检（ToolCall.Recheck）、pre_dispatch 与 epoch>0 的时效工具不回落，
+// epoch>0 的非时效作物工具照常回落；WithCacheRule 换成 tools.yaml 合并后的时间窗后按新上限判定
+// （应失败：夹具自算回落、忽略复检标志或不读配置）。
+func TestFixtureMCP_CacheFallbackSharesGatewayRule(t *testing.T) {
+	now := time.Date(2026, 8, 4, 8, 0, 0, 0, time.UTC)
+	const (
+		weatherSrc = `weather.realtime: [{error: timeout, cache: {temp_c: 30, collected_at: "2026-08-04T07:30:00Z"}}]`
+		cropSrc    = `crop.phenology: [{error: timeout, cache: {stage: 分蘖期, collected_at: "2026-08-04T06:00:00Z"}}]`
+	)
+	tight, err := mcp.NewCacheRule(map[string]time.Duration{"weather": 5 * time.Minute},
+		map[string]time.Duration{"weather": 10 * time.Minute})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tests := []struct {
+		name string
+		src  string
+		call agent.ToolCall
+		opts []FixtureOption
+		want string
+	}{
+		{name: "weather ask falls back", src: weatherSrc, call: agent.ToolCall{Tool: "weather.realtime"}, want: StatusOK},
+		{name: "weather recheck no fallback", src: weatherSrc,
+			call: agent.ToolCall{Tool: "weather.realtime", Recheck: true}, want: StatusTimeout},
+		{name: "weather epoch>0 no fallback", src: weatherSrc,
+			call: agent.ToolCall{Tool: "weather.realtime", Epoch: 2}, want: StatusTimeout},
+		{name: "crop epoch>0 falls back", src: cropSrc, call: agent.ToolCall{Tool: "crop.phenology", Epoch: 2}, want: StatusOK},
+		{name: "crop recheck no fallback", src: cropSrc,
+			call: agent.ToolCall{Tool: "crop.phenology", Epoch: 2, Recheck: true}, want: StatusTimeout},
+		{name: "crop pre_dispatch no fallback", src: cropSrc,
+			call: agent.ToolCall{Tool: "crop.phenology", StepID: mcp.PreDispatchStep}, want: StatusTimeout},
+		{name: "configured weather window 10m rejects 30m-old cache", src: weatherSrc,
+			call: agent.ToolCall{Tool: "weather.realtime"}, opts: []FixtureOption{WithCacheRule(tight)}, want: StatusTimeout},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f, err := NewFixtureMCP(context.Background(), fixturesYAML(t, tt.src), resolveSeeded, NewFrozenClock(now), tt.opts...)
+			if err != nil {
+				t.Fatal(err)
+			}
+			c := tt.call
+			c.Args = json.RawMessage(`{}`)
+			res, err := f.Call(context.Background(), model.Scope{}, c)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if res.Status != tt.want || (tt.want == StatusOK) != (res.Source == CacheSource) {
+				t.Fatalf("res = %+v, want status %s", res, tt.want)
+			}
+		})
+	}
+}

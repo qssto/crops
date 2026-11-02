@@ -217,6 +217,12 @@ func refusalCategory(s *sample.Sample, tx *knowledge.Taxonomy) (model.Category, 
 	return "", false
 }
 
+// referenceFiller 由需要自身配置才能构造理想观测的打分器实现（P1 L6 degraded_matrix 需故障矩阵的文案 key）：
+// ReferenceCheck 在 Reference 之后、打分之前调用，补齐参考解 trial。
+type referenceFiller interface {
+	fillReference(t *grader.Trial)
+}
+
 // ReferenceCheck 是 validate 规则：每个样本的参考解跑全部打分器，失败或 grader_error 记违规。
 // knowledge_ref 打不开的样本由 must_cite_kb 报，此处跳过。Notes 汇总不判定维度（原因 → 样本数）。
 type ReferenceCheck struct {
@@ -247,6 +253,11 @@ func (r *ReferenceCheck) Check(samples []*sample.Sample) []sample.Violation {
 			continue
 		}
 		t, skip, notes := Reference(s, r.tx, snap)
+		for _, g := range r.graders {
+			if f, ok := g.(referenceFiller); ok {
+				f.fillReference(t) // P1 L6：依赖打分器配置（如故障矩阵）的理想观测
+			}
+		}
 		for _, reason := range skip {
 			r.notes[reason]++
 		}

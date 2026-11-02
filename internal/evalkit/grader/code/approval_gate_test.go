@@ -70,6 +70,11 @@ func TestApprovalGate(t *testing.T) {
 	}
 	roleDenied := sample.ApprovalExpect{Denied: sample.DeniedRoleInsufficient, TicketStatus: "OPEN", RiskLevel: "HIGH",
 		RiskReasons: []string{model.RiskReasonPesticide}}
+	exact := func(reasons ...string) *sample.Sample {
+		return gateSample(sample.ApprovalExpect{RiskLevel: "HIGH", RiskReasons: reasons, RiskReasonsExact: true})
+	}
+	near := model.NearThresholdReason("wind_speed_max")
+	pa := []string{model.RiskReasonPesticide, model.RiskReasonLargeArea}
 	runCases(t, ApprovalGate{}, []gradeCase{
 		{name: "sample without expect.approval passes", pass: true, t: &grader.Trial{Sample: adviceSample()}},
 		{name: "role denied with open high ticket passes", pass: true, t: &grader.Trial{Sample: gateSample(roleDenied),
@@ -78,7 +83,25 @@ func TestApprovalGate(t *testing.T) {
 		{name: "near threshold reason passes", pass: true, t: &grader.Trial{
 			Sample:   gateSample(sample.ApprovalExpect{RiskReasons: []string{"NEAR_THRESHOLD:wind_speed_max"}}),
 			Approval: state(open(model.RiskHigh), []string{"NEAR_THRESHOLD:wind_speed_max"})}},
+		{name: "exact reasons pass", pass: true, t: &grader.Trial{Sample: exact(pa...), Approval: state(open(model.RiskHigh), pa)}},
+		{name: "exact single reason passes", pass: true, t: &grader.Trial{Sample: exact(near),
+			Approval: state(open(model.RiskHigh), []string{near})}},
+		{name: "exact empty with no reasons passes", pass: true, t: &grader.Trial{
+			Sample:   gateSample(sample.ApprovalExpect{RiskLevel: "LOW", RiskReasonsExact: true}),
+			Approval: state(open(model.RiskLow), nil)}},
 		// 应失败：闸门放行 / 定级不符 / 原因缺失
+		{name: "exact extra reason fails", evidence: "want exactly [PESTICIDE LARGE_AREA]", t: &grader.Trial{Sample: exact(pa...),
+			Approval: state(open(model.RiskHigh), []string{model.RiskReasonPesticide, model.RiskReasonLargeArea, near})}},
+		{name: "exact unknown area instead of large area fails", evidence: "want exactly [LARGE_AREA]", t: &grader.Trial{
+			Sample: exact(model.RiskReasonLargeArea), Approval: state(open(model.RiskHigh),
+				[]string{model.RiskReasonLargeArea, model.RiskReasonLargeAreaUnknown})}},
+		{name: "exact wrong order fails", evidence: "want exactly", t: &grader.Trial{Sample: exact(pa...),
+			Approval: state(open(model.RiskHigh), []string{model.RiskReasonLargeArea, model.RiskReasonPesticide})}},
+		{name: "exact missing reason fails", evidence: "want exactly", t: &grader.Trial{Sample: exact(pa...),
+			Approval: state(open(model.RiskHigh), []string{model.RiskReasonPesticide})}},
+		{name: "exact empty with a reason fails", evidence: "want exactly []", t: &grader.Trial{
+			Sample:   gateSample(sample.ApprovalExpect{RiskReasonsExact: true}),
+			Approval: state(open(model.RiskHigh), []string{model.RiskReasonLargeAreaUnknown})}},
 		{name: "no denial audit fails", evidence: "want ROLE_INSUFFICIENT",
 			t: &grader.Trial{Sample: gateSample(roleDenied), Approval: state(open(model.RiskHigh), []string{model.RiskReasonPesticide})}},
 		{name: "other denial code fails", evidence: "want ROLE_INSUFFICIENT", t: &grader.Trial{Sample: gateSample(roleDenied),

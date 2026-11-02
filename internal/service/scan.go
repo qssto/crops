@@ -86,9 +86,21 @@ type ScanDeps struct {
 	Clock    clock.Clock
 	Logger   *slog.Logger
 	Interval time.Duration // 0 取 DefaultScanInterval
-	// Expiring / Notify 是 P1 L5 即将过期提醒（approval_expiring）的依赖；任一为空不注册该任务。
+	// Expiring / Notify 是 P1 L5 即将过期提醒（approval_expiring）的依赖；任一为空不注册该任务，Run 启动时打 Warn。
 	Expiring ExpiringScanStore
 	Notify   NotifyOutboxWriter
+}
+
+// missingExpiringDeps 返回 approval_expiring 缺的依赖名；非空时该任务不注册。
+func (d ScanDeps) missingExpiringDeps() []string {
+	var miss []string
+	if d.Expiring == nil {
+		miss = append(miss, "Expiring")
+	}
+	if d.Notify == nil {
+		miss = append(miss, "Notify")
+	}
+	return miss
 }
 
 // Scanner 执行四个 HITL 扫描任务（配了 Expiring / Notify 时加 approval_expiring）；Resume 异步执行，Wait 等待其结束。
@@ -115,14 +127,18 @@ func NewScanner(d ScanDeps) *Scanner {
 		{ScanRunFinalize, s.runFinalize},
 		{ScanStuckRun, s.stuckRun},
 	}
-	if d.Expiring != nil && d.Notify != nil {
+	if len(d.missingExpiringDeps()) == 0 {
 		s.tasks = append(s.tasks, scanTask{ScanApprovalExpiring, s.approvalExpiring})
 	}
 	return s
 }
 
 // Run 每个周期执行一轮扫描，直到 ctx 取消；退出前等待异步 Resume。
+// 未注册 approval_expiring（缺依赖）时启动即打 Warn，不让即将过期提醒静默失效。
 func (s *Scanner) Run(ctx context.Context) {
+	if miss := s.d.missingExpiringDeps(); len(miss) > 0 {
+		s.d.Logger.WarnContext(ctx, "scan: task disabled, missing deps", "task", ScanApprovalExpiring, "missing", miss)
+	}
 	t := time.NewTicker(s.d.Interval)
 	defer t.Stop()
 	defer s.wg.Wait()

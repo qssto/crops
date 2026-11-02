@@ -58,7 +58,8 @@ func waitAsync(a *app.App) {
 // runDispatch 执行样本 fixtures.dispatch（P1-L4-A，在首次审批脚本之后，含审批未通过）：
 //  1. 排空 outbox（order.dispatch → 下发器 ①-⑦；复检退回时 notify.send）；
 //  2. reapprove 非空且该 run 有退回后的新票（ticket_seq > 1）时，对新票执行该脚本并再排空；
-//  3. redeliver 次：把已 DONE 的 order.dispatch 放回 PENDING（模拟重复投递）并排空。
+//  3. redeliver 次：把已 DONE 的 order.dispatch 放回 PENDING（模拟重复投递）并排空；
+//  4. advance 非空时把冻结时钟拨快该时长再排空（P1 L6：设备离线推后的消息越过下发时效 → EXPIRED）。
 func runDispatch(ctx context.Context, a *app.App, s *sample.Sample, scope model.Scope, ans agent.Answer,
 	act func(script string, ticketID uint64) error) error {
 	fx := s.Fixtures.Dispatch
@@ -94,6 +95,23 @@ func runDispatch(ctx context.Context, a *app.App, s *sample.Sample, scope model.
 		if _, err := DrainOutbox(ctx, a, drainMaxRounds); err != nil {
 			return err
 		}
+	}
+	return advanceAndDrain(ctx, a, fx)
+}
+
+// advanceAndDrain 执行 fixtures.dispatch.advance：拨快 FrozenClock 后排空一次（未声明时不动）。
+func advanceAndDrain(ctx context.Context, a *app.App, fx *sample.DispatchFixture) error {
+	d, err := fx.AdvanceDuration()
+	if err != nil || d == 0 {
+		return err
+	}
+	clk, ok := a.Clock.(*env.FrozenClock)
+	if !ok {
+		return fmt.Errorf("evalkit: dispatch advance needs *env.FrozenClock, got %T", a.Clock)
+	}
+	clk.Advance(d)
+	if _, err := DrainOutbox(ctx, a, drainMaxRounds); err != nil {
+		return fmt.Errorf("evalkit: drain after advance %s: %w", d, err)
 	}
 	return nil
 }

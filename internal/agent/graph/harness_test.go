@@ -49,6 +49,8 @@ type harness struct {
 	prompts *llm.Prompts
 	// reg 是约束注册表：主链路与 reviewGate 的 Reviewer 共用同一实例（同 app 装配）。
 	reg *constraint.Registry
+	// faults 是仓库的故障降级矩阵与文案（L6）。
+	faults *policy.FaultMatrix
 }
 
 func newHarness(t *testing.T) *harness {
@@ -61,7 +63,12 @@ func newHarness(t *testing.T) *harness {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return &harness{kb: knowledge.NewStore(knowledge.NewRepoReader(repoRoot)), tx: tx, prompts: p, reg: constraint.Default()}
+	faults, err := app.LoadFaults(repoRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return &harness{kb: knowledge.NewStore(knowledge.NewRepoReader(repoRoot)), tx: tx, prompts: p, reg: constraint.Default(),
+		faults: faults}
 }
 
 // resolveField 把 field-00N 解析为 N（测试种子的 field_profile.id）。
@@ -114,7 +121,7 @@ func (h *harness) newAgent(t *testing.T, clk *env.FrozenClock, d deps) *graph.Ag
 	cfg := graph.Config{LLM: c, Tier: tierStd, Tools: d.tools,
 		Runs: d.store, Advice: d.store, Drafts: d.store, Locker: d.locker, Clock: clk, KB: h.kb,
 		Taxonomy: h.tx, Crop: testCrop, Region: testReg, Logger: d.logger,
-		RenewEvery: d.renew, Events: d.events, Constraints: h.reg}
+		RenewEvery: d.renew, Events: d.events, Constraints: h.reg, Faults: h.faults}
 	if d.cfg != nil {
 		d.cfg(&cfg)
 	}
@@ -207,7 +214,12 @@ func (h *harness) runExperiment(t *testing.T, ss []*sample.Sample) *evalkit.Expe
 		if err != nil {
 			return nil, nil, err
 		}
-		a := h.newAgent(t, clk, deps{tools: tools, store: newMemStore(), logger: logger})
+		// P1 L6：样本声明 fixtures.model.unavailable 时包装桩模型（与 cmd/eval 同一包装）。
+		chat, err := env.NewFaultModel(llm.Stub{}, s.Fixtures.Model)
+		if err != nil {
+			return nil, nil, err
+		}
+		a := h.newAgent(t, clk, deps{model: chat, tools: tools, store: newMemStore(), logger: logger})
 		return &app.App{Agent: a, Tools: tools, Logger: logger, Adapter: &env.RecordingAdapter{}}, func() error { return nil }, nil
 	}
 	devices, err := device.LoadBindings(repoRoot + "/configs/mock/device.yaml")

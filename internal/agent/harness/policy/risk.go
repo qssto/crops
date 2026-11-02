@@ -205,7 +205,8 @@ func checkRoles(wt model.WorkType, roles []model.Role) error {
 	return errors.Join(errs...)
 }
 
-// Assess 按规则定级：PESTICIDE（用药类）、LARGE_AREA（area_mu ≥ large_area_mu）、NEAR_THRESHOLD:{rule_id}
+// Assess 按规则定级：PESTICIDE（用药类）、LARGE_AREA（area_mu ≥ large_area_mu）、LARGE_AREA:unknown（area_mu 缺失 /
+// 非正 / 非有限数：矩阵列出的作业类型都是按亩计的田间作业，面积无从核对即失败关闭）、NEAR_THRESHOLD:{rule_id}
 // （PRE_APPROVAL 通过行离阈值在裕度内）任一命中 → HIGH，否则 LOW；Roles 为副本。作业类型未列出返回 ErrNoRisk。
 func (m *RiskMatrix) Assess(in RiskInput) (Risk, error) {
 	roles, ok := m.roles[in.WorkType]
@@ -216,7 +217,10 @@ func (m *RiskMatrix) Assess(in RiskInput) (Risk, error) {
 	if model.IsPesticide(in.WorkType) {
 		reasons = append(reasons, model.RiskReasonPesticide)
 	}
-	if in.AreaMu != nil && *in.AreaMu >= m.largeAreaMu {
+	switch a := in.AreaMu; {
+	case a == nil || !(*a > 0) || math.IsInf(*a, 0):
+		reasons = append(reasons, model.RiskReasonLargeAreaUnknown)
+	case *a >= m.largeAreaMu:
 		reasons = append(reasons, model.RiskReasonLargeArea)
 	}
 	for _, c := range in.Checks {
@@ -254,6 +258,18 @@ func (m *RiskMatrix) nearThreshold(c model.ConstraintCheck) bool {
 		return false
 	}
 	return math.Abs(*th.Value-*obs.Value) <= ratio*math.Abs(*th.Value)
+}
+
+// CheckRuleIDs 交叉校验 rules.near_threshold 的 rule_id 都是已注册的约束规则（known 由约束注册表给出，
+// 本包不依赖 guardrail）；未注册的 rule_id 永远不会命中临界，启动期即报 ErrBadRiskMatrix（装配层调用）。
+func (m *RiskMatrix) CheckRuleIDs(known func(ruleID string) bool) error {
+	var errs []error
+	for _, id := range sortedKeys(m.near) {
+		if !known(id) {
+			errs = append(errs, fmt.Errorf("%w: rules.near_threshold.%s is not a registered constraint rule", ErrBadRiskMatrix, id))
+		}
+	}
+	return errors.Join(errs...)
 }
 
 // TTL 返回该风险等级票据 PREPARING → OPEN 后的有效期；未列出返回 ErrNoRisk。

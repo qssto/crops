@@ -24,6 +24,8 @@ type File struct {
 	Imports []string // import 路径
 	NowAt   []int    // 出现 time.Now 选择子的行号
 	SysAt   []int    // 出现 repository.NewSystemScope 选择子的行号
+	// SprayCmpAt 是 == / != 一侧为 model.WorkSpray 的比较所在行号（用药类判定应走 model.IsPesticide）。
+	SprayCmpAt []int
 }
 
 // Violation 是一条违规。
@@ -93,7 +95,32 @@ func parseFile(fset *token.FileSet, root, path string) (File, error) {
 	}
 	f.NowAt = selectorLines(fset, af, names["time"], "Now")
 	f.SysAt = selectorLines(fset, af, names[Module+"/internal/repository"], "NewSystemScope")
+	f.SprayCmpAt = comparisonLines(fset, af, names[Module+"/internal/model"], "WorkSpray")
 	return f, nil
+}
+
+// comparisonLines 返回 == / != 任一侧为 pkg.sel 的比较所在行号；pkg 为空（未 import）返回 nil。
+func comparisonLines(fset *token.FileSet, af *ast.File, pkg, sel string) []int {
+	if pkg == "" {
+		return nil
+	}
+	isSel := func(e ast.Expr) bool {
+		s, ok := e.(*ast.SelectorExpr)
+		if !ok || s.Sel.Name != sel {
+			return false
+		}
+		id, ok := s.X.(*ast.Ident)
+		return ok && id.Name == pkg
+	}
+	var lines []int
+	ast.Inspect(af, func(n ast.Node) bool {
+		b, ok := n.(*ast.BinaryExpr)
+		if ok && (b.Op == token.EQL || b.Op == token.NEQ) && (isSel(b.X) || isSel(b.Y)) {
+			lines = append(lines, fset.Position(b.Pos()).Line)
+		}
+		return true
+	})
+	return lines
 }
 
 // selectorLines 返回 pkg.sel 选择子出现的行号；pkg 为空（未 import）返回 nil。

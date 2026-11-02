@@ -99,13 +99,20 @@ type state struct {
 	candidates []string
 	selected   string
 	numbers    []number
-	conclusion string   // 模型原文（含 {{nK}} 占位符）
-	modelWhy   []string // 模型给出的理由（只校验，不进卡片）
+	// productMark 是 compute（依赖所选药剂的数值）开始前的数值数与结论引用数；规则层降级时截回，
+	// 剥离 phi_days / 用量 / 施药液量等药剂相关数值及其知识引用（L6）。nil 表示 compute 未跑。
+	productMark *mark
+	conclusion  string   // 模型原文（含 {{nK}} 占位符）
+	modelWhy    []string // 模型给出的理由（只校验，不进卡片）
 
 	refuse   string
-	degraded bool
-	usage    llm.Usage
-	detail   string // 拒答 / 校验失败的细节（日志，不进卡片）
+	degraded bool // LLM 不可用的规则层降级（观察类、置信度降低、不要求药剂）
+	// staleData 表示有工具结果来自 MCP 缓存回落（source=cache）：卡片 degraded=true，其余照常（L6）。
+	staleData bool
+	// toolFault 是首个归入故障矩阵（MCP_TIMEOUT）的失败工具名，拒答 DATA_MISSING 时写 DEGRADED(REFUSE)。
+	toolFault string
+	usage     llm.Usage
+	detail    string // 拒答 / 校验失败的细节（日志，不进卡片）
 
 	card   *model.AdviceCard
 	order  *model.WorkOrder
@@ -116,6 +123,22 @@ type state struct {
 
 // stopped 表示已拒答（后续节点直通到 assemble / persist）。
 func (s *state) stopped() bool { return s.refuse != "" }
+
+// mark 是 s.numbers 与 s.dec.Cites 的长度快照（二者只追加，截回即撤销其后的追加）。
+type mark struct{ numbers, cites int }
+
+// markProduct 在 compute 前记下快照。
+func (s *state) markProduct() {
+	s.productMark = &mark{numbers: len(s.numbers), cites: len(s.dec.Cites)}
+}
+
+// dropProductNumbers 撤销 compute 追加的数值与引用（addNumber 的 cite 去重，已在快照前的引用不受影响）。
+func (s *state) dropProductNumbers() {
+	if m := s.productMark; m != nil {
+		s.numbers, s.dec.Cites = s.numbers[:m.numbers], s.dec.Cites[:m.cites]
+		s.productMark = nil
+	}
+}
 
 func (s *state) refuseWith(reason, detail string) {
 	if s.refuse == "" {
@@ -134,17 +157,6 @@ func (s *state) fail(err error) error {
 
 // category 是分类得到的一级类。
 func (s *state) category() model.Category { return model.Category(s.cls.Category) }
-
-// degrade：模型不可用时，有明确阈值结论与知识命中则降级为保守的观察类建议（不转工单），否则拒答。
-func (s *state) degrade(task llm.Task) {
-	if s.dec.Evaluated == 0 || len(s.dec.Cites) == 0 {
-		s.refuseWith(RefuseLLMUnavailable, string(task)+": model unavailable")
-		return
-	}
-	s.degraded = true
-	s.dec.AdviceType = model.AdviceTypeObservation
-	s.candidates, s.selected = nil, ""
-}
 
 // operation 表示当前决策为作业类。
 func (s *state) operation() bool { return s.dec.AdviceType == model.AdviceTypeOperation }

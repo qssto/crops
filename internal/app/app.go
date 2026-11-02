@@ -14,6 +14,7 @@ import (
 
 	"agri-steward/internal/adapter"
 	"agri-steward/internal/agent"
+	"agri-steward/internal/agent/harness/policy"
 	"agri-steward/internal/clock"
 	"agri-steward/internal/config"
 	"agri-steward/internal/controller"
@@ -68,6 +69,9 @@ type Deps struct {
 	// FieldHistory 是 field.history 回写写端（P1-L4-B，可选：为空取 mock 的 service.MemFieldHistory；
 	// mcp-field real 无写接口时传 service.UnwiredFieldHistory 失败关闭为告警）。不对模型可见。
 	FieldHistory service.FieldHistoryWriter
+	// Faults 是故障降级矩阵（P1 L6，policy.LoadFaultMatrix：policy/fault_matrix.yaml + configs/texts/zh-CN.yaml）；
+	// 主链路取拒答 / 降级文案，下发器取设备离线通知文案 key。
+	Faults *policy.FaultMatrix
 	// NotifyTexts 是 notify.send 文案（P1 L5，service.LoadNotifyTexts(configs/texts/notify.zh-CN.yaml)）；
 	// 为空时 server 照常启动，worker / 评测排空构造 outbox 处理器即失败（ErrMissingNotifyTexts）。
 	NotifyTexts *service.NotifyTexts
@@ -137,6 +141,8 @@ type App struct {
 	OrderOps       *service.OrderOpsService
 	FieldHistory   service.FieldHistoryWriter
 	receiptWebhook bool
+	// P1 L6：故障降级矩阵（Deps.Faults）。
+	Faults *policy.FaultMatrix
 	// P1 L5：待审批详情、驳回导出与 notify.send 文案（见 approval_l5.go）。
 	L5 *ApprovalL5
 }
@@ -175,6 +181,7 @@ func Build(deps Deps) (*App, error) {
 	check(deps.Risk == nil, ErrMissingRisk)
 	check(deps.Constraints == nil, ErrMissingConstraints)
 	check(deps.Permissions == nil, ErrMissingPermissions)
+	check(deps.Faults == nil, ErrMissingFaults)
 	if err := errors.Join(errs...); err != nil {
 		return nil, err
 	}
@@ -216,6 +223,7 @@ func Build(deps Deps) (*App, error) {
 		DashboardDir: deps.DashboardDir,
 	}
 	a.constraints = deps.Constraints
+	a.Faults = deps.Faults
 	if err := a.buildAccess(deps); err != nil {
 		return nil, err
 	}
@@ -321,7 +329,8 @@ func (a *App) buildDispatch(cfg config.Dispatch) error {
 		Locks: a.Locker, Keys: a.Keys, Logger: a.Logger, Flags: a.Flags, Audit: repository.AuditRepo{DB: a.DB},
 		Devices: a.Devices, Attempts: repository.DispatchAttemptRepo{DB: a.DB}, Idem: repository.NewRedisIdem(a.Redis),
 		Picker: service.ToolDevicePicker{Tools: a.Tools}, Reopener: reopener,
-		MaxAttempts: cfg.MaxAttempts, ReceiptTimeout: cfg.ReceiptTimeout, DeviceWaitMax: cfg.DeviceWaitMax}
+		MaxAttempts: cfg.MaxAttempts, ReceiptTimeout: cfg.ReceiptTimeout, DeviceWaitMax: cfg.DeviceWaitMax,
+		Notify: repository.NotifyOutboxRepo{}, OfflineTextKey: offlineTextKey(a.Faults)}
 	if a.HITL.Recheck != nil {
 		d.Recheck = a.HITL.Recheck
 	}

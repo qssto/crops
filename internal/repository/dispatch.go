@@ -108,10 +108,13 @@ func (r DispatchRepo) RecheckSource(ctx context.Context, scope model.Scope, runI
 	if res.RowsAffected == 0 {
 		return RecheckSource{}, fmt.Errorf("repository: agent_run %d: %w", runID, model.ErrNotFound)
 	}
-	var payload []byte
+	// 扫进结构体：GORM 把 *[]byte 目标当成多行 uint8 切片，直接 Scan(&[]byte) 会报 converting to a uint8。
+	var ev struct {
+		PayloadRaw []byte `gorm:"column:payload"`
+	}
 	res = r.DB.WithContext(ctx).Raw(
 		`SELECT payload FROM run_event WHERE tenant_id=? AND farm_id=? AND run_id=? AND event_type=? ORDER BY seq LIMIT 1`,
-		scope.TenantID, scope.FarmID, runID, string(model.EventRunStarted)).Scan(&payload)
+		scope.TenantID, scope.FarmID, runID, string(model.EventRunStarted)).Scan(&ev)
 	if res.Error != nil {
 		return RecheckSource{}, fmt.Errorf("repository: recheck source run %d question: %w", runID, res.Error)
 	}
@@ -119,7 +122,7 @@ func (r DispatchRepo) RecheckSource(ctx context.Context, scope model.Scope, runI
 		return RecheckSource{}, fmt.Errorf("repository: run %d RUN_STARTED: %w", runID, model.ErrNotFound)
 	}
 	var q model.RunStartedPayload
-	if err := json.Unmarshal(payload, &q); err != nil {
+	if err := json.Unmarshal(ev.PayloadRaw, &q); err != nil {
 		return RecheckSource{}, fmt.Errorf("repository: run %d RUN_STARTED payload: %w", runID, err)
 	}
 	return RecheckSource{UserID: run.UserID, FieldID: run.FieldID, Question: q.Question}, nil

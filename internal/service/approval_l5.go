@@ -64,7 +64,7 @@ func parsePayload(raw json.RawMessage) (orderPayload, error) {
 	return p, nil
 }
 
-// assessRisk 按 risk_matrix v2 定级：作业类型、payload.area_mu（缺失不计大面积）与复核后的校验行。
+// assessRisk 按 risk_matrix v2 定级：作业类型、payload.area_mu（缺失时矩阵记 LARGE_AREA:unknown → HIGH）与复核后的校验行。
 func (s *ApprovalService) assessRisk(wt model.WorkType, payload json.RawMessage, checks []model.ConstraintCheck) (policy.Risk, error) {
 	p, err := parsePayload(payload)
 	if err != nil {

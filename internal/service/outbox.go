@@ -23,6 +23,8 @@ const (
 	DefaultOutboxRenew = 20 * time.Second
 	// outboxDeferDelay 是拿不到 lock:order（或处理器要求推后）时 next_run_at 的推后量（P1 §6.5 Defer SQL 注释 now+5s）。
 	outboxDeferDelay = 5 * time.Second
+	// OutboxDeviceOfflineDelay 是设备离线时 next_run_at 的推后量（P1 §6.7 SQL now+1 分钟，由 SQL 计算，此处供日志 / 测试）。
+	OutboxDeviceOfflineDelay = time.Minute
 	// outboxHandleTimeout 是单条消息的处理上限；处理中按 DefaultOutboxRenew 续租，可长于租约。
 	outboxHandleTimeout = 2 * time.Minute
 )
@@ -47,6 +49,9 @@ var (
 	ErrOutboxDeferred = errors.New("service: outbox message deferred")
 	// ErrOutboxLeaseLost 是续租影响 0 行时取消处理器 ctx 的 cause：租约已被他人接走，本条不再写结果。
 	ErrOutboxLeaseLost = errors.New("service: outbox lease lost")
+	// ErrOutboxDeviceOffline 由下发器第 ③ 步返回（errors.Is）：设备离线 / 选不到，按 §6.7 推后 1 分钟、last_error='DEVICE_OFFLINE'、
+	// 不计 attempts。包装 ErrOutboxDeferred（仍是「推后」语义），轮询器先于 5s 推后判断它，两种推后不合并。
+	ErrOutboxDeviceOffline = fmt.Errorf("%w: device offline", ErrOutboxDeferred)
 )
 
 // OutboxStore 是 outbox 领取 / 续租 / 完成 / 推后 / 退避，repository.OutboxRepo 实现；除 Claim 外都带认领时的 row_ver
@@ -56,6 +61,8 @@ type OutboxStore interface {
 	Renew(ctx context.Context, sys repository.SystemScope, id uint64, rowVer int, leaseUntil, now time.Time) (bool, error)
 	MarkDone(ctx context.Context, sys repository.SystemScope, id uint64, rowVer int, now time.Time) (bool, error)
 	Defer(ctx context.Context, sys repository.SystemScope, id uint64, rowVer int, nextRunAt, now time.Time) (bool, error)
+	// DeferDeviceOffline 是 §6.7 设备离线推后（now+1 分钟、last_error='DEVICE_OFFLINE'、不计 attempts）。
+	DeferDeviceOffline(ctx context.Context, sys repository.SystemScope, id uint64, rowVer int, now time.Time) (bool, error)
 	MarkRetry(ctx context.Context, sys repository.SystemScope, id uint64, rowVer int, nextRunAt time.Time, lastErr string,
 		now time.Time) (bool, error)
 }
@@ -162,7 +169,7 @@ func (p *OutboxPoller) handle(ctx context.Context, m repository.OutboxMessage) e
 	return p.settle(base, m, lease.rowVer, herr, attrs)
 }
 
-// settle 按处理结果带 row_ver 写 DONE / 推后 / 退避。
+// settle 按处理结果带 row_ver 写 DONE / 推后 / 退避。设备离线推后 1 分钟（§6.7），其余推后（拿不到 lock:order 等）5s。
 func (p *OutboxPoller) settle(ctx context.Context, m repository.OutboxMessage, rowVer int, herr error, attrs []any) error {
 	now := p.d.Clock.Now()
 	switch {
@@ -174,6 +181,18 @@ func (p *OutboxPoller) settle(ctx context.Context, m repository.OutboxMessage, r
 		if !ok {
 			p.d.Logger.WarnContext(ctx, "outbox lease lost before done", attrs...)
 		}
+		return nil
+	case errors.Is(herr, ErrOutboxDeviceOffline):
+		ok, err := p.d.Store.DeferDeviceOffline(ctx, outboxSystem, m.ID, rowVer, now)
+		if err != nil {
+			return errors.Join(fmt.Errorf("service: outbox %d defer device offline: %w", m.ID, err), herr)
+		}
+		if !ok {
+			p.d.Logger.WarnContext(ctx, "outbox lease lost before device offline defer", append(attrs, "err", herr)...)
+			return nil
+		}
+		p.d.Logger.WarnContext(ctx, "outbox message deferred: device offline",
+			append(attrs, "delay", OutboxDeviceOfflineDelay, "alert", string(model.FaultDeviceOffline), "err", herr)...)
 		return nil
 	case errors.Is(herr, ErrOrderBusy) || errors.Is(herr, ErrOutboxDeferred):
 		ok, err := p.d.Store.Defer(ctx, outboxSystem, m.ID, rowVer, now.Add(outboxDeferDelay), now)

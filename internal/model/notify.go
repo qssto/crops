@@ -17,8 +17,11 @@ const (
 
 // NotifyDedupKey 是 notify.send 的 outbox dedup_key：notify:{kind}:{order_id}:{ticket_id}。
 func NotifyDedupKey(kind NotifyKind, orderID, ticketID uint64) string {
-	return fmt.Sprintf("notify:%s:%d:%d", kind, orderID, ticketID)
+	return fmt.Sprintf("%s%d:%d", NotifyDedupPrefix(kind), orderID, ticketID)
 }
+
+// NotifyDedupPrefix 是 dedup_key 中 {order_id} 之前的固定前缀 notify:{kind}:（SQL 侧 CONCAT 拼同一格式时用）。
+func NotifyDedupPrefix(kind NotifyKind) string { return "notify:" + string(kind) + ":" }
 
 // NotifyEnvelope 是 notify.send payload 的公共字段；各类通知在此之上追加自己的字段（处理器忽略未知字段）。
 type NotifyEnvelope struct {

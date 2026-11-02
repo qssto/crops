@@ -3,6 +3,7 @@ package policy
 import (
 	"encoding/json"
 	"errors"
+	"math"
 	"slices"
 	"strings"
 	"testing"
@@ -16,7 +17,8 @@ func TestLoadRiskMatrix_Repo(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	spray, err := m.Assess(RiskInput{WorkType: model.WorkSpray})
+	small := 10.0
+	spray, err := m.Assess(RiskInput{WorkType: model.WorkSpray, AreaMu: &small})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -37,15 +39,16 @@ func TestLoadRiskMatrix_Repo(t *testing.T) {
 		t.Fatalf("unlisted level: err = %v", err)
 	}
 	spray.Roles[0] = model.RoleOperator
-	if again, _ := m.Assess(RiskInput{WorkType: model.WorkSpray}); again.Roles[0] != model.RoleAgronomist {
+	if again, _ := m.Assess(RiskInput{WorkType: model.WorkSpray, AreaMu: &small}); again.Roles[0] != model.RoleAgronomist {
 		t.Fatal("Assess must return a copy of Roles")
 	}
 }
 
 // riskSrc 是合法的 v2 矩阵；各用例替换其中一段触发失败。
 const (
-	riskHead   = "version: 2\n"
-	riskWork   = "work_types:\n  SPRAY: {required_role: [agronomist]}\n  FERTILIZE: {required_role: [agronomist, farm_manager]}\n"
+	riskHead = "version: 2\n"
+	riskWork = "work_types:\n  SPRAY: {required_role: [agronomist]}\n  FERTILIZE: {required_role: [agronomist, farm_manager]}\n" +
+		"  IRRIGATE: {required_role: [farm_manager, agronomist]}\n"
 	riskRules  = "rules:\n  large_area_mu: 50\n  near_threshold: {wind_speed_max: 0.2}\n"
 	riskLevels = "levels:\n  HIGH: {confirm_required: true, approval_ttl: 2h}\n  LOW: {confirm_required: false, approval_ttl: 6h}\n"
 )
@@ -94,6 +97,43 @@ func TestParseRiskMatrix_Invalid(t *testing.T) {
 	}
 }
 
+// TestRiskMatrix_CheckRuleIDs（P1-L5 审查修复 11）：near_threshold 列出的 rule_id 须全部为已注册规则。
+func TestRiskMatrix_CheckRuleIDs(t *testing.T) {
+	m, err := ParseRiskMatrix([]byte(riskHead + riskWork + "rules:\n  large_area_mu: 50\n  near_threshold: {wind_speed_max: 0.2, temp: 0.1}\n" +
+		riskLevels))
+	if err != nil {
+		t.Fatal(err)
+	}
+	tests := []struct {
+		name  string
+		known []string
+		want  []string // 期望错误里出现的 rule_id；空表示通过
+	}{
+		{"all registered", []string{"wind_speed_max", "temp"}, nil},
+		{"one unknown", []string{"wind_speed_max"}, []string{"near_threshold.temp"}},
+		{"both unknown", nil, []string{"near_threshold.temp", "near_threshold.wind_speed_max"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := m.CheckRuleIDs(func(id string) bool { return slices.Contains(tt.known, id) })
+			if len(tt.want) == 0 {
+				if err != nil {
+					t.Fatal(err)
+				}
+				return
+			}
+			if !errors.Is(err, ErrBadRiskMatrix) {
+				t.Fatalf("err = %v, want ErrBadRiskMatrix", err)
+			}
+			for _, w := range tt.want {
+				if !strings.Contains(err.Error(), w) {
+					t.Fatalf("err = %v, want it to mention %q", err, w)
+				}
+			}
+		})
+	}
+}
+
 // check 构造一条 PRE_APPROVAL 校验行。
 func check(rule string, passed bool, observed any, op string, threshold float64) model.ConstraintCheck {
 	obs, _ := json.Marshal(map[string]any{"value": observed, "source": "mock"})
@@ -116,30 +156,43 @@ func TestRiskMatrix_Assess(t *testing.T) {
 	dispatchPhase := near
 	dispatchPhase.Phase = model.PhasePreDispatch
 	nearReason := model.NearThresholdReason("wind_speed_max")
+	unknown := model.RiskReasonLargeAreaUnknown
+	ten := area(10)
 	tests := []struct {
 		name   string
 		in     RiskInput
 		level  model.RiskLevel
 		reason []string
 	}{
-		{"none hit", RiskInput{WorkType: model.WorkFertilize, AreaMu: area(10), Checks: []model.ConstraintCheck{far}}, model.RiskLow, nil},
-		{"no area, no checks", RiskInput{WorkType: model.WorkFertilize}, model.RiskLow, nil},
-		{"pesticide only", RiskInput{WorkType: model.WorkSpray, AreaMu: area(10), Checks: []model.ConstraintCheck{far}}, model.RiskHigh,
+		{"none hit", RiskInput{WorkType: model.WorkFertilize, AreaMu: ten, Checks: []model.ConstraintCheck{far}}, model.RiskLow, nil},
+		{"irrigate small area", RiskInput{WorkType: model.WorkIrrigate, AreaMu: ten}, model.RiskLow, nil},
+		// 面积未知失败关闭：缺失 / 0 / 负数 / NaN / Inf 都记 LARGE_AREA:unknown → HIGH
+		{"fertilize no area", RiskInput{WorkType: model.WorkFertilize}, model.RiskHigh, []string{unknown}},
+		{"irrigate no area", RiskInput{WorkType: model.WorkIrrigate}, model.RiskHigh, []string{unknown}},
+		{"fertilize zero area", RiskInput{WorkType: model.WorkFertilize, AreaMu: area(0)}, model.RiskHigh, []string{unknown}},
+		{"fertilize negative area", RiskInput{WorkType: model.WorkFertilize, AreaMu: area(-5)}, model.RiskHigh, []string{unknown}},
+		{"fertilize NaN area", RiskInput{WorkType: model.WorkFertilize, AreaMu: area(math.NaN())}, model.RiskHigh, []string{unknown}},
+		{"fertilize Inf area", RiskInput{WorkType: model.WorkFertilize, AreaMu: area(math.Inf(1))}, model.RiskHigh, []string{unknown}},
+		{"spray no area", RiskInput{WorkType: model.WorkSpray}, model.RiskHigh, []string{model.RiskReasonPesticide, unknown}},
+		{"no area + near", RiskInput{WorkType: model.WorkFertilize, Checks: []model.ConstraintCheck{near}}, model.RiskHigh,
+			[]string{unknown, nearReason}},
+		{"pesticide only", RiskInput{WorkType: model.WorkSpray, AreaMu: ten, Checks: []model.ConstraintCheck{far}}, model.RiskHigh,
 			[]string{model.RiskReasonPesticide}},
 		{"large area only", RiskInput{WorkType: model.WorkFertilize, AreaMu: area(50)}, model.RiskHigh, []string{model.RiskReasonLargeArea}},
+		{"irrigate large area", RiskInput{WorkType: model.WorkIrrigate, AreaMu: area(60)}, model.RiskHigh, []string{model.RiskReasonLargeArea}},
 		{"area just below", RiskInput{WorkType: model.WorkFertilize, AreaMu: area(49.99)}, model.RiskLow, nil},
-		{"near threshold only", RiskInput{WorkType: model.WorkFertilize, Checks: []model.ConstraintCheck{near}}, model.RiskHigh,
+		{"near threshold only", RiskInput{WorkType: model.WorkFertilize, AreaMu: ten, Checks: []model.ConstraintCheck{near}}, model.RiskHigh,
 			[]string{nearReason}},
-		{"near threshold at margin", RiskInput{WorkType: model.WorkFertilize, Checks: []model.ConstraintCheck{edge}}, model.RiskHigh,
+		{"near threshold at margin", RiskInput{WorkType: model.WorkFertilize, AreaMu: ten, Checks: []model.ConstraintCheck{edge}}, model.RiskHigh,
 			[]string{nearReason}},
 		{"all three in order", RiskInput{WorkType: model.WorkSpray, AreaMu: area(80), Checks: []model.ConstraintCheck{near, near}},
 			model.RiskHigh, []string{model.RiskReasonPesticide, model.RiskReasonLargeArea, nearReason}},
 		{"area + near", RiskInput{WorkType: model.WorkFertilize, AreaMu: area(60), Checks: []model.ConstraintCheck{near}}, model.RiskHigh,
 			[]string{model.RiskReasonLargeArea, nearReason}},
-		{"failed check is not near", RiskInput{WorkType: model.WorkFertilize, Checks: []model.ConstraintCheck{failed}}, model.RiskLow, nil},
-		{"unlisted rule is not near", RiskInput{WorkType: model.WorkFertilize, Checks: []model.ConstraintCheck{unlisted}}, model.RiskLow, nil},
-		{"nil observed is not near", RiskInput{WorkType: model.WorkFertilize, Checks: []model.ConstraintCheck{nilValue}}, model.RiskLow, nil},
-		{"pre_dispatch row ignored", RiskInput{WorkType: model.WorkFertilize, Checks: []model.ConstraintCheck{dispatchPhase}}, model.RiskLow, nil},
+		{"failed check is not near", RiskInput{WorkType: model.WorkFertilize, AreaMu: ten, Checks: []model.ConstraintCheck{failed}}, model.RiskLow, nil},
+		{"unlisted rule is not near", RiskInput{WorkType: model.WorkFertilize, AreaMu: ten, Checks: []model.ConstraintCheck{unlisted}}, model.RiskLow, nil},
+		{"nil observed is not near", RiskInput{WorkType: model.WorkFertilize, AreaMu: ten, Checks: []model.ConstraintCheck{nilValue}}, model.RiskLow, nil},
+		{"pre_dispatch row ignored", RiskInput{WorkType: model.WorkFertilize, AreaMu: ten, Checks: []model.ConstraintCheck{dispatchPhase}}, model.RiskLow, nil},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

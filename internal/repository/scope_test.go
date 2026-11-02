@@ -378,9 +378,12 @@ func TestSystemScopeRequired(t *testing.T) {
 			_, err := (&DecisionRepo{}).ListApprovedInterrupted(ctx, zero, now)
 			return err
 		},
-		"RunRepo.ListStuck":         func() error { _, err := (&RunRepo{}).ListStuck(ctx, zero, now); return err },
-		"RunRepo.ListSystemError":   func() error { _, err := (&RunRepo{}).ListSystemError(ctx, zero); return err },
-		"DecisionRepo.ListExpiring": func() error { _, err := (&DecisionRepo{}).ListExpiring(ctx, zero, time.Time{}); return err },
+		"RunRepo.ListStuck":       func() error { _, err := (&RunRepo{}).ListStuck(ctx, zero, now); return err },
+		"RunRepo.ListSystemError": func() error { _, err := (&RunRepo{}).ListSystemError(ctx, zero); return err },
+		"DecisionRepo.ListExpiring": func() error {
+			_, err := (&DecisionRepo{}).ListExpiring(ctx, zero, time.Time{}, ExpiringBatch)
+			return err
+		},
 		"DispatchAttemptRepo.ByJob": func() error {
 			_, err := DispatchAttemptRepo{}.ByJob(ctx, zero, "uav", "sim-1")
 			return err

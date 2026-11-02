@@ -80,6 +80,8 @@ func TestClient_Do(t *testing.T) {
 		{name: "retry then ok", replies: []any{boom, `{"product_id":"a"}`}, retries: 1, wantCalls: 2, wantUsage: 15},
 		{name: "retries exhausted", replies: []any{boom}, retries: 2, wantErr: ErrUnavailable, wantCalls: 3},
 		{name: "bad json counts usage", replies: []any{"not json"}, wantErr: ErrBadReply, wantCalls: 1, wantUsage: 15},
+		{name: "bad json after retry", replies: []any{boom, "not json"}, retries: 1, wantErr: ErrBadReply, wantCalls: 2,
+			wantUsage: 15},
 		{name: "timeout", replies: []any{"block"}, wantErr: ErrUnavailable, wantCalls: 1},
 		{name: "rate limited", replies: []any{`{}`}, limiter: fixedLimiter{allow: false}, wantErr: ErrRateLimited},
 		{name: "limiter error", replies: []any{`{}`}, limiter: fixedLimiter{err: boom}, wantErr: ErrUnavailable},
@@ -100,8 +102,9 @@ func TestClient_Do(t *testing.T) {
 			if tt.wantErr == nil && out.ProductID != "a" {
 				t.Fatalf("out = %+v", out)
 			}
-			if tt.wantErr != nil && !errors.Is(err, ErrUnavailable) {
-				t.Fatalf("err %v must wrap ErrUnavailable", err)
+			// P1 L6：内容不合规不算模型不可用（应失败：回复非 JSON 也走降级）。
+			if wantUnavailable := tt.wantErr != nil && !errors.Is(tt.wantErr, ErrBadReply); errors.Is(err, ErrUnavailable) != wantUnavailable {
+				t.Fatalf("err %v: wraps ErrUnavailable = %t, want %t", err, errors.Is(err, ErrUnavailable), wantUnavailable)
 			}
 			if got := m.n.Load(); got != tt.wantCalls {
 				t.Fatalf("calls = %d, want %d", got, tt.wantCalls)

@@ -13,7 +13,8 @@ import (
 // ApprovalGate 是 approval_gate（P1 L5）：断言 expect.approval 的样本，对该 run 最新一张 ORDER 票——
 //   - denied：脚本审批人的决策被闸门拒绝，该票 audit_log(APPROVAL, DENIED) 的 summary.code 含该码；
 //   - ticket_status：票据状态一致（如 HIGH 票只一人通过仍 OPEN）；
-//   - risk_level / risk_reasons：开票定级一致，risk_reasons 包含所列各项（顺序不限）。
+//   - risk_level / risk_reasons：开票定级一致，risk_reasons 包含所列各项（顺序不限）；risk_reasons_exact 时须逐项相同
+//     （含顺序、不多不少，防止多出 LARGE_AREA:unknown 之类的原因被「包含」断言放过）。
 //
 // 未断言 expect.approval 的样本直接通过；断言了但无审批观测返回 grader_error。
 type ApprovalGate struct{}
@@ -52,9 +53,16 @@ func (g ApprovalGate) Grade(_ context.Context, t *grader.Trial) (grader.Score, e
 	if exp.RiskLevel != "" && tk.RiskLevel != model.RiskLevel(exp.RiskLevel) {
 		fails = append(fails, fmt.Sprintf("ticket %d risk_level %s, want %s", tk.TicketID, tk.RiskLevel, exp.RiskLevel))
 	}
-	for _, r := range exp.RiskReasons {
-		if !slices.Contains(t.Approval.RiskReasons, r) {
-			fails = append(fails, fmt.Sprintf("ticket %d risk_reasons %v missing %s", tk.TicketID, t.Approval.RiskReasons, r))
+	if exp.RiskReasonsExact {
+		if !slices.Equal(t.Approval.RiskReasons, exp.RiskReasons) {
+			fails = append(fails, fmt.Sprintf("ticket %d risk_reasons %v, want exactly %v", tk.TicketID, t.Approval.RiskReasons,
+				exp.RiskReasons))
+		}
+	} else {
+		for _, r := range exp.RiskReasons {
+			if !slices.Contains(t.Approval.RiskReasons, r) {
+				fails = append(fails, fmt.Sprintf("ticket %d risk_reasons %v missing %s", tk.TicketID, t.Approval.RiskReasons, r))
+			}
 		}
 	}
 	if len(fails) > 0 {

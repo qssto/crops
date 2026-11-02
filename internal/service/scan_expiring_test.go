@@ -1,11 +1,13 @@
 package service
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
 	"log/slog"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -19,6 +21,7 @@ type memExpiring struct {
 	listErr error
 	gotNow  time.Time
 	gotSys  repository.SystemScope
+	gotLim  int
 	txs     int
 }
 
@@ -27,8 +30,8 @@ func (m *memExpiring) InTx(_ context.Context, fn func(tx *repository.DB) error) 
 	return fn(nil)
 }
 
-func (m *memExpiring) ListExpiring(_ context.Context, sys repository.SystemScope, now time.Time) ([]repository.ExpiringTicket, error) {
-	m.gotSys, m.gotNow = sys, now
+func (m *memExpiring) ListExpiring(_ context.Context, sys repository.SystemScope, now time.Time, limit int) ([]repository.ExpiringTicket, error) {
+	m.gotSys, m.gotNow, m.gotLim = sys, now, limit
 	return m.rows, m.listErr
 }
 
@@ -74,8 +77,10 @@ func TestScanner_ApprovalExpiring(t *testing.T) {
 			}
 		}
 		want := []string{model.NotifyDedupKey(model.NotifyExpiringSoon, 9, 7), model.NotifyDedupKey(model.NotifyExpiringSoon, 10, 8)}
-		if !slices.Equal(out.inserted, want) || store.gotSys != scanSystem || !store.gotNow.Equal(decideNow) || store.txs != 4 {
-			t.Fatalf("inserted = %v sys = %v now = %v txs = %d", out.inserted, store.gotSys, store.gotNow, store.txs)
+		if !slices.Equal(out.inserted, want) || store.gotSys != scanSystem || !store.gotNow.Equal(decideNow) || store.txs != 4 ||
+			store.gotLim != repository.ExpiringBatch {
+			t.Fatalf("inserted = %v sys = %v now = %v txs = %d limit = %d", out.inserted, store.gotSys, store.gotNow, store.txs,
+				store.gotLim)
 		}
 	})
 	t.Run("one insert fails, others continue", func(t *testing.T) {
@@ -112,4 +117,43 @@ func TestScanner_ApprovalExpiring(t *testing.T) {
 			}
 		}
 	})
+}
+
+// P1-L5 审查修复 15：缺 Expiring / Notify 时 approval_expiring 不注册，Run 启动必须打 Warn 并点名缺的依赖
+// （应失败：静默跳过时 worker 正常起来但即将过期提醒从不发出，无人察觉）。
+func TestScanner_RunWarnsWhenExpiringDisabled(t *testing.T) {
+	tests := []struct {
+		name     string
+		expiring ExpiringScanStore
+		notify   NotifyOutboxWriter
+		want     string // 空表示不应告警
+	}{
+		{name: "both wired", expiring: &memExpiring{}, notify: &dedupOutbox{}},
+		{name: "expiring missing", notify: &dedupOutbox{}, want: "missing=[Expiring]"},
+		{name: "notify missing", expiring: &memExpiring{}, want: "missing=[Notify]"},
+		{name: "both missing", want: "missing=\"[Expiring Notify]\""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := newScanFixture(t)
+			var buf bytes.Buffer
+			s := NewScanner(ScanDeps{Tickets: f.store, Runs: f.store, Expirer: f.expirer, Orders: f.orders, Gate: f.gate,
+				Resumer: f.resumer, Locks: probeLocks{held: map[string]bool{}}, Keys: f.keys, Clock: fixedClock{decideNow},
+				Logger: slog.New(slog.NewTextHandler(&buf, nil)), Expiring: tt.expiring, Notify: tt.notify})
+			ctx, cancel := context.WithCancel(context.Background())
+			cancel()
+			s.Run(ctx)
+			got := buf.String()
+			if tt.want == "" {
+				if got != "" {
+					t.Fatalf("unexpected log: %s", got)
+				}
+				return
+			}
+			if !strings.Contains(got, "level=WARN") || !strings.Contains(got, "task="+ScanApprovalExpiring) ||
+				!strings.Contains(got, tt.want) {
+				t.Fatalf("log = %q, want WARN task=%s %s", got, ScanApprovalExpiring, tt.want)
+			}
+		})
+	}
 }

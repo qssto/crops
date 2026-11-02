@@ -64,16 +64,26 @@ type ExpiringTicket struct {
 	OrderID  uint64
 }
 
-// ListExpiring 照抄 §6.6「即将过期提醒」（worker 专用索引 idx_expire）：expires_at ∈ [now, now + 1h] 的 OPEN 票。
-func (r *DecisionRepo) ListExpiring(ctx context.Context, sys SystemScope, now time.Time) ([]ExpiringTicket, error) {
+// ExpiringBatch 是即将过期扫描每轮最多取出的票数（§6.6 扫描 SQL 的 LIMIT 100）。
+const ExpiringBatch = 100
+
+// ListExpiring 照抄 §6.6「即将过期提醒」（worker 专用索引 idx_expire）：expires_at ∈ [now, now + 1h] 的 OPEN 票，
+// 按 expires_at, id 升序取前 limit 张；已写过 EXPIRING_SOON 提醒（outbox.dedup_key = model.NotifyDedupKey 同格式）的票
+// 用 NOT EXISTS 反连接排除（走 uk_dedup），否则窗口内超过 limit 张已提醒票会让后面的票永远轮不到。
+func (r *DecisionRepo) ListExpiring(ctx context.Context, sys SystemScope, now time.Time, limit int) ([]ExpiringTicket, error) {
 	if err := requireSystem(sys); err != nil {
 		return nil, err
 	}
+	if limit <= 0 {
+		return nil, fmt.Errorf("repository: list expiring approval_ticket: limit %d must be > 0", limit)
+	}
 	var rows []ExpiringTicket
 	if err := r.db.WithContext(ctx).Raw(
-		`SELECT id, tenant_id, farm_id, order_id FROM approval_ticket
- WHERE ticket_kind='ORDER' AND status='OPEN' AND expires_at BETWEEN ? AND ? + INTERVAL 1 HOUR LIMIT 100`,
-		now, now).Scan(&rows).Error; err != nil {
+		`SELECT t.id, t.tenant_id, t.farm_id, t.order_id FROM approval_ticket t
+ WHERE t.ticket_kind='ORDER' AND t.status='OPEN' AND t.expires_at BETWEEN ? AND ? + INTERVAL 1 HOUR
+   AND NOT EXISTS (SELECT 1 FROM outbox o WHERE o.dedup_key = CONCAT(?, t.order_id, ':', t.id))
+ ORDER BY t.expires_at, t.id LIMIT ?`,
+		now, now, model.NotifyDedupPrefix(model.NotifyExpiringSoon), limit).Scan(&rows).Error; err != nil {
 		return nil, fmt.Errorf("repository: list expiring approval_ticket: %w", err)
 	}
 	return rows, nil

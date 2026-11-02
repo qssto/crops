@@ -90,6 +90,18 @@ func TestDetectsViolations(t *testing.T) {
 			src: `import _ "os"`, wantRule: "guardrail/constraint must not import"},
 		{name: "constraint may import knowledge and model", path: "internal/agent/guardrail/constraint/x.go",
 			src: "import (\n_ \"agri-steward/internal/agent/knowledge\"\n_ \"agri-steward/internal/model\"\n_ \"encoding/json\"\n)"},
+		{name: "service compares WorkSpray", path: "internal/service/x.go",
+			src:      "import \"agri-steward/internal/model\"\nvar w model.WorkType\nvar _ = w == model.WorkSpray",
+			wantRule: "via model.IsPesticide"},
+		{name: "service compares WorkSpray reversed with alias", path: "internal/service/x.go",
+			src:      "import m \"agri-steward/internal/model\"\nvar w m.WorkType\nvar _ = m.WorkSpray != w",
+			wantRule: "via model.IsPesticide"},
+		{name: "service may assign WorkSpray", path: "internal/service/x.go",
+			src: "import \"agri-steward/internal/model\"\nvar w = model.WorkSpray"},
+		{name: "service may call IsPesticide", path: "internal/service/x.go",
+			src: "import \"agri-steward/internal/model\"\nvar _ = model.IsPesticide(model.WorkSpray)"},
+		{name: "graph may compare WorkSpray", path: "internal/agent/graph/x.go",
+			src: "import \"agri-steward/internal/model\"\nvar w model.WorkType\nvar _ = w == model.WorkSpray"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

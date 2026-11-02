@@ -417,7 +417,7 @@ func (s *DecisionService) check(ctx context.Context, scope model.Scope, t reposi
 	return scope.Roles[idx], nil
 }
 
-// decideOp 按作业类型取审批操作：SPRAY 为用药类，其余为非用药类（L5 再细化）。
+// decideOp 按作业类型取审批操作：model.IsPesticide（与风险定级同一判定）为用药类，其余为非用药类。
 // 本农场票据已命中而作业单缺失是数据完整性错误：返回不含 model.ErrNotFound 的内部错误（→ 500 并记日志），不当成越界。
 func (s *DecisionService) decideOp(ctx context.Context, scope model.Scope, t repository.TicketRow) (Operation, error) {
 	orders, err := s.d.Store.OrdersWithChecks(ctx, scope, []uint64{t.OrderID})
@@ -429,7 +429,7 @@ func (s *DecisionService) decideOp(ctx context.Context, scope model.Scope, t rep
 		return "", fmt.Errorf("service: decide ticket %d: work order %d missing in farm (%d,%d): data integrity",
 			t.ID, t.OrderID, scope.TenantID, scope.FarmID)
 	}
-	if o.WorkType == model.WorkSpray {
+	if model.IsPesticide(o.WorkType) {
 		return OpApprovalDecidePesticide, nil
 	}
 	return OpApprovalDecideOther, nil

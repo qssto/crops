@@ -570,6 +570,14 @@
 - Renew 无超时：持锁续期调用没有单独的超时。
 - 仅评测用的代码留在生产包内，待单独清理。
 
+### P1-L4 评测修复（2026-11-02）
+
+修复前 RecheckSource 每次报错（160dda7 已修），复检从未真正跑过，eval 75 才暴露下面两处：
+
+- 重审写下发截止 0 行误报冲突（`repository/decision.go` SetDispatchDeadlineTx）：MySQL 影响行数只计值有变化的行，退回重审在冻结时钟下写出与首审相同的 deadline / updated_at 得 0 行 → ErrConcurrentUpdate，重审整体回滚（rice-dispatch-0001 INFRA_ERROR）。现 0 行时同事务复查「仍 APPROVED 且 deadline 已是该值」即成功，否则仍 ErrConcurrentUpdate。集成测试 TestSetDispatchDeadlineTx_Integration。
+- 样本天气采集时刻超前时钟（rice-dispatch-0001 / 0002、rice-hitl-0002）：复检用的 weather.forecast `collected_at` 为 20:00，晚于样本时钟 18:00；L3 约束层对超前当前时刻 5 分钟以上的数据失败关闭（`constraint/kb.go` maxClockSkew），风速 / 降雨 / 气温三条 PRE_DISPATCH 全不通过 → 退回。这是样本错，规则正确：三条样本改为 17:50。修后 `make eval TAGS=L4,L6 N=1`（exp 76）80/80 PASS。
+- 遗留（P2，本轮不修）：规则层 sprayWindow 的 weather_age 为负（未来数据）时按新鲜处理，只靠约束层兜住；两层判定口径不一致，L7 前评估是否在 buildFacts 里同样拒收超前数据。
+
 ## P1-L5 · 审批体系：风险矩阵 v2、二人确认守卫、驳回原因、即将过期、站内通知、审批页数据（2026-11-02）
 
 - 迁移 `0010_approval_l5`（§6.6 SQL 照抄：`approval_ticket.risk_reasons` JSON + `rejection_reason` 表），migrations 被 gitignore，不提交，由调度方在主仓应用。
@@ -585,9 +593,61 @@
   - worktree 里 `go run ./cmd/eval validate` 被权限拒绝，改由 cmd/eval 的 go test「validate repo samples」核对。
 - 测试：TestParseRiskMatrix_Invalid、TestRiskMatrix_Assess、TestDecide_RejectReasonInvalid、TestDecide_ConfirmGuardZeroRows、TestRejectionExportHandler、TestRejectionExport_Window、TestScanner_ApprovalExpiring、TestNotifyHandler、TestApprovalDetail_Errors、TestExpired、TestApprovalGate、TestCheckApproval 等，均含应失败用例。集成 TestConfirmTicketTxGuard_Integration、TestRejectionInsertAndExport_Integration、TestListExpiring_Integration、TestTicketGateObservations_Integration 只过了 vet，待调度方在主仓带 0010 迁移跑。
 
+### P1-L5 审查修复（2026-11-02）
+
+- 面积缺失 fail-closed（红线）：`area_mu` 缺失、≤0、NaN、Inf 一律记 `LARGE_AREA:unknown` 定 HIGH，不再当小面积放过。测试：TestRiskMatrix_Assess（施肥 / 灌溉 / 用药无面积、零、负、NaN、Inf、无面积 + 临界共 8 条）、TestCheckApproval「unknown area reason ok」。
+- 即将过期查询（红线，`repository.ListExpiring`）：加 `ORDER BY expires_at, id`、`LIMIT ?`（`repository.ExpiringBatch = 100`，limit ≤ 0 报错）和 `NOT EXISTS` outbox 反连接（按 `model.NotifyDedupPrefix(EXPIRING_SOON)` 拼 dedup_key）。已提醒的票不再占批次，避免前 100 张已提醒的票把后面的票永远挤出去。测试：TestListExpiring_Integration（6 张票，limit 2 取最早两张；已提醒的跳过、无关 kind 不影响；全部提醒后为空），TestNotifyDedupKey，TestScanner_ApprovalExpiring 断言传入 ExpiringBatch。
+- near_threshold 规则 ID 启动对表（红线）：`RiskMatrix.CheckRuleIDs` + `app.LoadRiskMatrix`（server / worker / eval 共用）核对 `rules.near_threshold` 的 key 都在约束注册表，拼错即启动失败（否则临界定级静默失效）。测试：TestRiskMatrix_CheckRuleIDs、TestLoadRiskMatrix_CrossChecksRuleIDs。
+- 样本精确原因：`expect.approval.risk_reasons_exact`（顺序与内容都相等；不带原因时须 risk_level LOW）；0007 / 0008 改为 exact。新增 rice-approval-0009（施肥 60 亩，恰 [LARGE_AREA]）、rice-approval-0010（施肥无人机风速 2.5，恰 [NEAR_THRESHOLD:wind_speed_max]）、rice-approval-0011（灌溉 60 亩，恰 [LARGE_AREA]），覆盖非用药类只因面积 / 临界定 HIGH。validate 178 → 181（6 隔离，run 175），regression kbdump 132 → 135。三条新样本的 approval 期望要连库评测才会打分（approval_gate 不在图级回归桩的红线列表）。测试：TestApprovalGate（exact 多 / 少 / 乱序 / unknown 代替 LARGE_AREA / 空 exact 带原因 5 条应失败），TestCheckApproval。
+- CSV 公式注入（红线，`controller/rejection.go`）：去掉前导空白（含全角空格、换行）后再判 `= + - @`，并覆盖全角 `＝ ＋ － ＠`；制表符 / 回车开头照旧加 `'`。测试：TestCSVSafe（9 条应失败用例）。
+- 审批细分判定（`service/decision.go`）：`decideOp` 改用 `model.IsPesticide`，与风险定级同一判定。archtest 新增规则「service must classify pesticide work via model.IsPesticide」，禁止 internal/service 里出现 `== / != model.WorkSpray`。测试：archtest TestRepo（未改时报 decision.go:432），TestDetectsViolations 新增 5 条。
+- approval_expiring 缺依赖（`service/scan.go`）：选「Run 启动打 Warn」而非启动失败。理由：Scanner 的其余四个任务不依赖它，测试与评测装配可以只要部分任务；生产装配 `app/hitl.go` 总是传入两项依赖。Warn 带 `task` 与 `missing`。测试：TestScanner_RunWarnsWhenExpiringDisabled。
+- 文档：`policy/risk_matrix.yaml` 注释补 `LARGE_AREA:unknown`、rule_id 启动对表和二人规则。SPRAY 的 required_role 只有 agronomist，HIGH 票要两位不同的农艺师（都不是发起人），所以农场需要至少 2 名非发起人的 agronomist，否则这张票只能等过期。
+- 以上红线测试均已确认去掉修复后失败。
+- 评测修复（2026-11-02）：rice-approval-0010 v1「无人机撒尿素、风速 2.5 临界」在 eval 75 / 79 中 5/5 定级 LOW。原因是颗粒肥按人工撒施建单（`graph.deviceOf` 只对喷雾与磷酸二氢钾取施药器具），FERTILIZE/manual 的必检集合没有风速，样本前提不成立。v2 改为无人机叶面喷施磷酸二氢钾（同 rice-fert-0021，风速 2.5），`make eval TAGS=L5 N=3`（exp 80）87/87 PASS。
+  - 遗留（P2，待产品定）：用户点名「无人机撒施颗粒肥」时仍按人工撒施建单，风速 / 禁飞区不进必检集合；方向是失败安全（不下发到无人机），但与用户意图不符。
+
 ### P1-L5 遗留
+
 
 - Reopen 新票 `risk_reasons` 为 NULL（沿用旧票定级但不复制原因）。
 - `expired` 的「下发被拒有审计」以 work_order_transition(APPROVAL_EXPIRED) 投影为证据，不单独读审计行。
 - 新打分器需要 DB，没进 graph 回归桩的 redLine 列表；8 条样本的 Gate 依赖调度方跑 `make eval`。
 - 验收第 5 条（专家 / 机手试用）待签字。
+- 审查后留待后续（本轮不修）：驳回导出没写审计，也没有行数上限；即将过期提醒发送前不复核票据状态（扫描到发送之间票被决策仍会提醒）；`explainConflict` 未覆盖 SAME_APPROVER；`operator` 角色与 `approval.decide` 权限未交叉核对；`expired` 打分器不读驳回审计；`ListRejections` 用 `SELECT *`，未写明列。
+
+## P1-L6 · 故障分类与降级矩阵（2026-11-02）
+
+- 无迁移。故障矩阵 `policy/fault_matrix.yaml`（LLM_UNAVAILABLE / MCP_TIMEOUT / KB_MISS / DEVICE_OFFLINE → 行为 / refuse_reason / 文案 key / 告警），文案在 `configs/texts/zh-CN.yaml`（`fault.llm_unavailable.refused`、`fault.llm_unavailable.degraded`（含 `{decision}`）、`fault.mcp_timeout.refused`、`fault.kb_miss.refused`、`fault.device_offline.notify`）。`policy.LoadFaultMatrix` 经 `app.LoadFaults` 在 server / worker / eval 启动时校验：四码齐全、行为与实现一致、文案非空不含数字、告警 name / level 齐全且一一对应、MCP_TIMEOUT 的 tool_error_codes 恰为 TIMEOUT 与 UPSTREAM，违反即启动失败。告警规则由 L7 接入。
+- LLM 不可用（`agent/llm`）：限流 / 超时 / 5xx 重试耗尽返回 ErrUnavailable；回复非 JSON 改为 ErrBadReply（不算不可用，按校验失败拒答）。`agent/graph/fault.go` 的 degrade：choose / explain 不可用且「知识命中 + 规则层有阈值结论与引用 + 植保作业类候选非空」时降级为观察类建议（不选药、不转工单，数值仍由 calc 算，输出校验照常），卡片 degraded=true、文案取 degraded 模板，写 DEGRADED(RULE_FALLBACK)；否则拒答 LLM_UNAVAILABLE + DEGRADED(REFUSE)。classify 不可用时必然拒答。
+- MCP 缓存回落（`tools/mcp/call.go`、`configs/tools.yaml`）：weather `fresh 10m / max_staleness 1h`，crop `24h / 24h`；field / device 配缓存即启动失败。TIMEOUT / UPSTREAM 时 `now - collected_at ≤ max_staleness` 的缓存回落，source=cache，引用保留原 collected_at，DEGRADED(CACHE_FALLBACK, staleness_sec, tool)；超限或无缓存拒答 DATA_MISSING + DEGRADED(REFUSE, tool)。PRE_DISPATCH 复检不回落。空数据 / 非法返回 / 校验失败不写 DEGRADED。
+- 设备离线（`service/dispatch_device.go`）：下发器 ③ 不调 Adapter、工单状态不变；同事务写 DEVICE_UNAVAILABLE 审计、经 `NotifyOutboxWriter` INSERT IGNORE `notify:DEVICE_OFFLINE:{order}:{ticket}`（首次插入才写 DEGRADED(HOLD_AND_NOTIFY)）；`OutboxRepo.DeferDeviceOffline` 推后 1 分钟、last_error=DEVICE_OFFLINE、attempts 不变、row_ver 租约守卫。过 dispatch_deadline_at 转 EXPIRED（沿用 L4 上限逻辑）。
+- DEGRADED 事件经 `EventRepo.AppendTx` 写 run_event(actor=system)，同事务投影 audit_log(DEGRADED, target `fault:{fault}`)。
+- 评测：
+  - 样本字段：`fixtures.mcp[*].cache`（带 RFC3339 collected_at，只许有 max_staleness 的工具）、`fixtures.model.unavailable`（classify / choose / explain / all）、`fixtures.dispatch.advance`（(0, 24h]）、`expect.degraded`（fault / action 取矩阵枚举），校验规则 `sample/fault.go`。
+  - `env.FaultModel` 按任务注入模型不可用；FixtureMCP 支持缓存回落；`evalkit` 在 dispatch 后按 advance 拨快 FrozenClock 再排空；Trial 新增 Events（run_event 时间线）。
+  - 新打分器 `degraded_matrix`（红线）：DEGRADED 的 (fault, action) 多重集、actor、text_key、staleness / tool 与结局逐项对矩阵；缺事件时间线记 grader_error。ReferenceCheck 经 referenceFiller 补参考解观测。cmd/eval 把它追加到打分器列表。
+  - 新增 regression 样本 rice-l6fault-0001–0007：规则层降级、模型全不可用拒答、UPSTREAM 无缓存拒答、缓存恰 1h 回落、缓存超 1s 拒答、KB_MISS、设备离线 DRY_RUN（advance 3h → EXPIRED，设备 0 次、DEVICE_OFFLINE 通知 1 条）。0007 需连库评测，图级测试只跑 0001–0006。validate 163 → 170 条（49 拒答，6 隔离，run 164 条），regression kbdump 117 → 124 条。
+- 测试：policy/fault_test、graph/fault_internal_test、graph/fault_samples_test（含按错误期望打分应失败、非故障拒答不写 DEGRADED）、mcp/fallback_test、service/dispatch_offline_test、outbox_test、env/faultmodel_test、fixturemcp_test、grader/code/degraded_test（17 条应失败用例）、sample/fault_test、config/tools_test。
+- 集成测试（本地只过 `go vet -tags integration`，worktree 无 deploy/.env，待调度方带 AS_TEST_NS=l6 在主仓跑）：TestDegradedEventAuditSameTx_Integration、TestDeviceOfflineDeferAndNotifyDedup_Integration，以及受影响的 TestOutboxDispatch_Integration、TestDispatchHeld_Integration 与 app/access_integration_test。
+- 演练清单 `docs/drill/P1-L6-fault-drill.md`（§6.7 验收 1，待演练 / 待签字）。
+- 已知问题：
+  - 模型整体不可用时 classify 先失败，只能拒答；规则层降级只在 choose / explain 失败时可达，现场没有按任务断开模型的开关（演练 1a 以样本为证）。
+  - mock 模式没有运行时 MCP 超时开关，演练 2 依赖样本与单测。
+  - 告警只在矩阵声明，触发与路由待 L7。
+  - 故障样本 pass^5 需连库评测 n=5 跑过才能确认（§6.7 验收 4）。
+  - 审查后留待后续（本轮不修）：植保以外类别的 `degradeBlocker` 条件是否放宽；`mcp/finish.go` 去重回放 source=cache 的结果时不重新核对 max_staleness（Recheck 调用已跳过缓存回放）；评测侧故障矩阵有两处来源，待合并为一份。
+
+### P1-L6 审查修复（2026-11-02）
+
+- PRE_DISPATCH 复检不回落（红线）：`agent.ToolCall` 新增 `Recheck`；`graph.Recheck` 经 ctx 标记，`callTool` 带上。网关共用 `mcp.CacheRule.Bypass`：Recheck、step=pre_dispatch、时效工具且 epoch>0 一律不读缓存、不回落，去重回放也跳过 source=cache 的结果。测试：TestAgentRecheck_NoCacheFallback、TestCall_RecheckSkipsFallbackReplay、fallback_test 的 recheck 用例。
+- 规则层降级剥离药剂数值（红线）：compute 前 `markProduct` 记 numbers / cites 长度，degrade 时 `dropProductNumbers` 截回（规则层自己的数值如 max_hours_per_day 保留）。`degraded_matrix` 的 RULE_FALLBACK 另断言无候选药剂、无 phi_days / 用量 / 配药量，植保卡无 water_per_mu。测试：TestFaultSamples_RuleFallbackDropsProductNumbers（rice-pest-0004 + explain 不可用），TestDegradedMatrix_Grade 新增 6 条（含 2 条应通过：规则层数值、施肥卡 water_per_mu）。
+- CACHE_FALLBACK 必须引用回落数据：`degraded_matrix` 要求至少一条 source=cache 的实测引用且保留原 collected_at；参考解补一条挂在 conclusion 上的 cache 引用。测试：「cache fallback without cache citation」「cache fallback citing only live data」。
+- 缓存窗口部分配置：`mcp.NewCacheRule` 按 Server 合并默认值（只配 weather 不会让 crop 失去缓存），配置注释同步改。测试：TestNewCacheRule_PartialOverridesKeepDefaults、TestNewGateway_PartialCacheWindows。
+- FixtureMCP 与网关同一规则：`env.WithCacheRule` + `servers.Lookup`，cmd/eval 新增 `-tools` 读 `configs/tools.yaml`；样本 max_staleness 校验也取同一默认值。测试：TestFixtureMCP_CacheFallbackSharesGatewayRule（7 个用例）、TestLoadCacheRule_MatchesSampleDefaults。
+- explain 回复非 JSON：图级补测，REFUSED(VALIDATION_FAILED)、不写 DEGRADED（TestFaultSamples_NonFaultRefusalsNotDegraded「explain reply not JSON」）。
+- 设备工具失败不算离线（红线，`service/dispatch_device.go`）：只有 device.list / device.status 返回 OK 且确无在线空闲设备才是 ErrDeviceUnavailable（推后 + DEVICE_OFFLINE 通知）。工具非 OK 或数据非法改为 `ErrDeviceToolFailed`（`deviceToolError` 带 tool / status / code）：按一般错误退避，不写 DEVICE_UNAVAILABLE、不通知、无 DEGRADED；TIMEOUT / UPSTREAM 不另告警，SCOPE_DENIED / REJECTED / MALFORMED 另记 Warn `dispatch: device tool rejected`。某台 status 失败但另一台可用时照常选中。mcp-device 没有显式离线错误码，离线只来自 OK 结果（online=false 或非 idle）。测试：TestToolDevicePicker（新增 list timeout / upstream / bad data、status timeout、status denied others offline 等），TestDispatch_DeviceToolFailureNotOffline。
+- DEGRADED 写失败让 run 失败（红线）：`emitDegraded` 改为返回错误，degrade / noteCacheFallback / emitRefusalFault 把它交给节点，Ask 返回错误、runner 记 RUN_FAILED、不发 ADVICE_READY。选这一种而非「转拒答」：拒答卡本身也要写 DEGRADED(REFUSE)，同一个事件库坏了转拒答仍缺留痕；与 VALIDATION_FAILED 写失败的现有处理一致。观测类事件（RUN_STARTED / KB_LOADED / ADVICE_READY）仍只告警（`emitAs` → `emitStrict`）。测试：TestFaultSamples_DegradedEmitFailureFailsRun（0001 / 0002 / 0003 / 0004 / 0006）。
+- 以上红线测试均已确认去掉修复后失败。
+- 评测样本（2026-11-02）：rice-l6fault-0007 第二条 weather.forecast 的 `collected_at` 20:00 晚于样本时钟 18:00，与 P1-L4 评测修复同一问题，改为 17:50（该样本设备离线、不进复检，判分不变）。
+

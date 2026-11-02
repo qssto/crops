@@ -14,9 +14,14 @@ type Rule struct {
 	NowOnly string
 	// SysOnly 非空时本规则改为检查 repository.NewSystemScope：只有白名单文件可构造。
 	SysOnly []string
+	// PesticideIn 非空时本规则改为检查该目录下 == / != model.WorkSpray 比较：用药类判定须走 model.IsPesticide。
+	PesticideIn string
 }
 
 func (r Rule) check(f File) []Violation {
+	if r.PesticideIn != "" {
+		return r.lines(f, f.SprayCmpAt, !under(f.Pkg, r.PesticideIn))
+	}
 	if r.SysOnly != nil {
 		return r.lines(f, f.SysAt, slices.Contains(r.SysOnly, f.Rel))
 	}
@@ -150,6 +155,9 @@ var Rules = []Rule{
 			return importsAny("internal/repository", "internal/service", "internal/agent/tools", "internal/adapter")(imp) ||
 				hasPrefix("os", "net", "database/sql", "io/fs")(imp)
 		}},
+	// P1-L5 审查修复 14：审批细分（approval.decide.pesticide / other）与风险定级同用 model.IsPesticide 判用药类，
+	// 新增用药类作业类型时 service 不会漏判（直接比较 WorkSpray 会把新类型当非用药类放给 farm_manager 审批）。
+	{Name: "service must classify pesticide work via model.IsPesticide", PesticideIn: "internal/service"},
 }
 
 // systemScopeCallers 是可构造 repository.SystemScope 的文件白名单（server 内扫描与 outbox 轮询）。

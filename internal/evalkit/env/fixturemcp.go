@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"agri-steward/internal/agent"
+	"agri-steward/internal/agent/tools/mcp"
+	"agri-steward/internal/agent/tools/mcp/servers"
 	"agri-steward/internal/clock"
 	"agri-steward/internal/evalkit/sample"
 	"agri-steward/internal/model"
@@ -26,10 +28,13 @@ const (
 	CodeTimeout        = "TIMEOUT"
 	CodeEmpty          = "EMPTY"
 	CodeMalformed      = "MALFORMED"
+	CodeUpstream       = "UPSTREAM" // P1 L6：上游连接错误
 	CodeUnexpectedCall = "UNEXPECTED_CALL"
 
 	// DefaultFixtureSource 是 return 中未写 source 时的数据源。
 	DefaultFixtureSource = "fixture"
+	// CacheSource 是超时回落到缓存时的数据源（与网关 tool_call.source 同值）。
+	CacheSource = model.ToolSourceCache
 	// ArgFieldID 是工具入参里的地块键，match.field 解析后改写为它。
 	ArgFieldID = "field_id"
 )
@@ -39,6 +44,7 @@ var faults = map[string][2]string{
 	sample.FaultTimeout:   {StatusTimeout, CodeTimeout},
 	sample.FaultEmpty:     {StatusEmpty, CodeEmpty},
 	sample.FaultMalformed: {StatusError, CodeMalformed},
+	sample.FaultUpstream:  {StatusError, CodeUpstream},
 }
 
 // FieldResolver 把样本里的地块编码（field-003）解析为 field_profile.id。
@@ -64,7 +70,8 @@ type stub struct {
 // FixtureMCP 是评测用 agent.ToolProvider：按样本 fixtures.mcp 回放工具返回、注入故障，并记录调用序列。
 // 每个 trial 新建一个实例（returns 游标与调用记录按 trial 隔离）。并发安全。
 type FixtureMCP struct {
-	clk clock.Clock
+	clk   clock.Clock
+	cache mcp.CacheRule
 
 	mu         sync.Mutex
 	stubs      map[string][]*stub // 工具名 → 按声明顺序的 fixture
@@ -72,13 +79,24 @@ type FixtureMCP struct {
 	unexpected []ToolCallRecord
 }
 
+// FixtureOption 是 NewFixtureMCP 的可选参数。
+type FixtureOption func(*FixtureMCP)
+
+// WithCacheRule 指定超时回落判定（评测装配传 configs/tools.yaml 合并后的 mcp.CacheRule，与生产网关同一份）；
+// 缺省为 mcp.DefaultCacheRule()。
+func WithCacheRule(r mcp.CacheRule) FixtureOption { return func(f *FixtureMCP) { f.cache = r } }
+
 // NewFixtureMCP 校验并解析 fixtures：结构非法、故障类型未知或地块编码解析失败都返回错误。
 // match 中的 field: field-00x 经 resolve 改写为 field_id: <id>；clk 用于由 return.collected_at 计算新鲜度。
-func NewFixtureMCP(ctx context.Context, fixtures map[string][]sample.ToolFixture, resolve FieldResolver, clk clock.Clock) (*FixtureMCP, error) {
+func NewFixtureMCP(ctx context.Context, fixtures map[string][]sample.ToolFixture, resolve FieldResolver, clk clock.Clock,
+	opts ...FixtureOption) (*FixtureMCP, error) {
 	if clk == nil {
 		return nil, fmt.Errorf("fixture mcp: clock is required")
 	}
-	f := &FixtureMCP{clk: clk, stubs: make(map[string][]*stub, len(fixtures))}
+	f := &FixtureMCP{clk: clk, cache: mcp.DefaultCacheRule(), stubs: make(map[string][]*stub, len(fixtures))}
+	for _, o := range opts {
+		o(f)
+	}
 	for _, tool := range sortedTools(fixtures) {
 		for i, fx := range fixtures[tool] {
 			where := fmt.Sprintf("fixtures.mcp.%s[%d]", tool, i)
@@ -87,6 +105,9 @@ func NewFixtureMCP(ctx context.Context, fixtures map[string][]sample.ToolFixture
 			}
 			if _, ok := faults[fx.Error]; fx.Error != "" && !ok {
 				return nil, fmt.Errorf("fixture mcp: %s: unknown error %q", where, fx.Error)
+			}
+			if p := sample.CacheProblem(tool, fx.Cache); fx.Cache != nil && p != "" {
+				return nil, fmt.Errorf("fixture mcp: %s.cache: %s", where, p)
 			}
 			m, err := resolveMatch(ctx, fx.Match, resolve)
 			if err != nil {
@@ -155,7 +176,7 @@ func (f *FixtureMCP) Call(ctx context.Context, _ model.Scope, call agent.ToolCal
 	args, argsOK := decodeArgs(call.Args)
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	res, err := f.reply(call.Tool, args, argsOK)
+	res, err := f.reply(call, args, argsOK)
 	if err != nil {
 		return agent.ToolResult{}, err
 	}
@@ -182,7 +203,8 @@ func decodeArgs(raw json.RawMessage) (map[string]any, bool) {
 }
 
 // reply 在持锁下选出 fixture 并生成结果。
-func (f *FixtureMCP) reply(tool string, args map[string]any, argsOK bool) (agent.ToolResult, error) {
+func (f *FixtureMCP) reply(call agent.ToolCall, args map[string]any, argsOK bool) (agent.ToolResult, error) {
+	tool := call.Tool
 	unexpected := agent.ToolResult{Status: StatusRejected, ErrorCode: CodeUnexpectedCall}
 	if !argsOK {
 		return unexpected, nil
@@ -198,6 +220,11 @@ func (f *FixtureMCP) reply(tool string, args map[string]any, argsOK bool) (agent
 	case st == nil:
 		return unexpected, nil
 	case st.fx.Error != "":
+		if f.cacheUsable(call, st.fx.Cache) {
+			res, err := f.ok(tool, st.fx.Cache)
+			res.Source = CacheSource
+			return res, err
+		}
 		fault := faults[st.fx.Error] // 构造时已校验
 		return agent.ToolResult{Status: fault[0], ErrorCode: fault[1]}, nil
 	case len(st.fx.Returns) > 0:
@@ -210,6 +237,22 @@ func (f *FixtureMCP) reply(tool string, args map[string]any, argsOK bool) (agent
 	default:
 		return f.ok(tool, st.fx.Return)
 	}
+}
+
+// cacheUsable 模拟网关超时回落（P1 L6）：与网关同一判定 mcp.CacheRule.FallbackAge（工具可缓存、调用未 Bypass——
+// 复检 / pre_dispatch / epoch>0 的时效工具——且 now - collected_at ≤ 该 server 的 max_staleness）。
+// 未注册的工具名不回落。
+func (f *FixtureMCP) cacheUsable(call agent.ToolCall, cache any) bool {
+	server, spec, ok := servers.Lookup(call.Tool)
+	if cache == nil || !ok {
+		return false
+	}
+	at, ok := sample.CacheCollectedAt(cache)
+	if !ok {
+		return false
+	}
+	_, ok = f.cache.FallbackAge(server, spec, call, f.clk.Now(), at)
+	return ok
 }
 
 // subsetMatch 判断 match 的每个顶层键都在 args 中且值相等（值本身整体比较）。

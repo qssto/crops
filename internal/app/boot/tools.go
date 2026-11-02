@@ -58,6 +58,7 @@ func buildTools(path, policyPath string, d toolDeps) (agent.ToolProvider, error)
 		levels[s.Name] = mcp.Level(s.Level)
 		timeouts[s.Name] = s.Timeout
 	}
+	fresh, maxStale := cfg.CacheWindows() // P1 L6：缓存新鲜期与超时回落上限
 	gw, err := mcp.NewGateway(srv, mcp.Options{
 		Clock: d.clk, Logger: d.logger, Keys: d.keys, ToolPolicy: tp,
 		Idem: repository.NewRedisIdem(d.rdb), Cache: repository.NewRedisCache(d.rdb),
@@ -65,6 +66,7 @@ func buildTools(path, policyPath string, d toolDeps) (agent.ToolProvider, error)
 		Fields:  repository.FieldScopeGuard{DB: d.db, Clock: d.clk, Logger: d.logger}, // 越界写 CROSS_FARM_DENIED 审计
 		Devices: devices,                                                              // device_id 按显式绑定判归属
 		Levels:  levels, Timeouts: timeouts, Mask: pii.MaskJSON, RawReader: d.rawRead,
+		CacheTTL: fresh, MaxStaleness: maxStale,
 		// Events: L7 接 EventRepo。
 	})
 	if err != nil {

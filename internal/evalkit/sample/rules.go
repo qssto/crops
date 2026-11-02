@@ -47,11 +47,11 @@ var (
 	knownRoles        = set("farm_manager", "agronomist", "operator")
 	knownReviews      = set(ReviewPendingExpert, ReviewSigned)
 	knownOutcomes     = set(string(model.OutcomeAdvice), string(model.OutcomeRefused))
-	knownRefuseReason = set("KB_MISS", "DATA_MISSING", "OUT_OF_SCOPE")
-	knownAdviceTypes  = set("作业类", "观察类") // 母文档 §5.0.5 AdviceCard.advice_type
+	knownRefuseReason = set("KB_MISS", "DATA_MISSING", "OUT_OF_SCOPE", "LLM_UNAVAILABLE") // LLM_UNAVAILABLE：P1 L6
+	knownAdviceTypes  = set("作业类", "观察类")                                                 // 母文档 §5.0.5 AdviceCard.advice_type
 	// knownApprovers 的后三个是 P1 L5 审批闸门反例脚本。
 	knownApprovers  = set("approve", "reject", "timeout", "approve_once", "approve_same_twice", "reject_no_reason")
-	knownToolErrors = set(FaultTimeout, FaultEmpty, FaultMalformed)
+	knownToolErrors = set(FaultTimeout, FaultEmpty, FaultMalformed, FaultUpstream)
 	// fieldCodePattern 是合成地块编码（context.field 与 match.field），L1 起写入 field_profile.ext_field_code。
 	fieldCodePattern = regexp.MustCompile(`^field-[0-9]{3}$`)
 	// toolNamePattern 是工具全名 {server}.{tool}。
@@ -86,6 +86,7 @@ func DefaultRules(tx *knowledge.Taxonomy, kb KnowledgeOpener) []Rule {
 		PerSample(RuleProductInCandidates, productInCheck(tx, kb)),
 		PerSample(RuleConstraint, checkConstraint),
 		PerSample(RuleDispatch, checkDispatch),
+		PerSample(RuleFault, checkFault),
 		PerSample(RuleQuarantine, checkQuarantine),
 		PerSample(RuleApproval, checkApproval), // P1 L5
 	}

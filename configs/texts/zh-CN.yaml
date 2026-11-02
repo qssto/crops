@@ -1,0 +1,11 @@
+# 用户可读故障文案（P1 §6.7，L6）。key 由 policy/fault_matrix.yaml 的 text_key / degraded_text_key 引用，
+# 启动期 policy.LoadFaultMatrix 校验每个故障码都有文案；文案不含数字（建议卡结论的裸数字会被 validate 拦截）。
+# 通知文案在 configs/texts/notify.zh-CN.yaml（L5），本文件只放故障文案。
+version: 1
+locale: zh-CN
+texts:
+  fault.llm_unavailable.refused: 模型暂不可用且规则层无明确结论，请稍后再问
+  fault.llm_unavailable.degraded: 模型暂不可用，按规则层判定给出保守建议：{decision}；请人工复核后再安排作业
+  fault.mcp_timeout.refused: 所需田块数据缺失或已过期，暂无法给出建议，请补充数据后再问
+  fault.kb_miss.refused: 知识库未覆盖该问题，不凭经验作答，请咨询农技专家
+  fault.device_offline.notify: 作业设备离线，作业单暂缓下发，设备恢复后自动重试；超过审批时效将自动过期

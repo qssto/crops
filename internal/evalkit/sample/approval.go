@@ -22,12 +22,14 @@ const (
 // ApprovalExpect 是审批期望（approval_gate 打分器使用）：
 //   - Denied：脚本审批人的决策被闸门拒绝的错误码（该票须有 audit_log(APPROVAL, DENIED) 且 summary.code 一致）；
 //   - TicketStatus：该 run 最新一张 ORDER 票的状态；
-//   - RiskLevel / RiskReasons：开票定级（risk_reasons 须包含所列各项，顺序不限）。
+//   - RiskLevel / RiskReasons：开票定级（risk_reasons 须包含所列各项，顺序不限）；
+//   - RiskReasonsExact：risk_reasons 须与所列逐项相同（含顺序，即矩阵命中顺序；不多不少），空列表即断言无原因。
 type ApprovalExpect struct {
-	Denied       string   `yaml:"denied,omitempty"`
-	TicketStatus string   `yaml:"ticket_status,omitempty"`
-	RiskLevel    string   `yaml:"risk_level,omitempty"`
-	RiskReasons  []string `yaml:"risk_reasons,omitempty"`
+	Denied           string   `yaml:"denied,omitempty"`
+	TicketStatus     string   `yaml:"ticket_status,omitempty"`
+	RiskLevel        string   `yaml:"risk_level,omitempty"`
+	RiskReasons      []string `yaml:"risk_reasons,omitempty"`
+	RiskReasonsExact bool     `yaml:"risk_reasons_exact,omitempty"`
 }
 
 // deniedScripts 是每个拒绝码对应的反例脚本判定（approve_as:<role> 以前缀判定）。
@@ -45,8 +47,8 @@ var (
 
 // checkApproval：expect.approval 须配 outcome=ADVICE 与 work_order、至少断言一项；denied 取值已知且与反例脚本对应
 // （ROLE_INSUFFICIENT ↔ approve_as:<role>、SAME_APPROVER ↔ approve_same_twice、REJECT_REASON_INVALID ↔ reject_no_reason）；
-// ticket_status / risk_level 取 model 枚举；risk_reasons 为 PESTICIDE / LARGE_AREA / NEAR_THRESHOLD:<rule_id>，
-// 有原因时 risk_level 不得为 LOW（任一原因即 HIGH）。
+// ticket_status / risk_level 取 model 枚举；risk_reasons 为 PESTICIDE / LARGE_AREA / LARGE_AREA:unknown / NEAR_THRESHOLD:<rule_id>，
+// 有原因时 risk_level 不得为 LOW（任一原因即 HIGH）；risk_reasons_exact 且无原因时 risk_level 不得为 HIGH。
 func checkApproval(s *Sample) []string {
 	a := s.Expect.Approval
 	if a == nil {
@@ -56,7 +58,7 @@ func checkApproval(s *Sample) []string {
 	if s.Expect.Outcome != model.OutcomeAdvice || s.Expect.WorkOrder == nil {
 		msgs = append(msgs, "expect.approval requires outcome=ADVICE and expect.work_order")
 	}
-	if a.Denied == "" && a.TicketStatus == "" && a.RiskLevel == "" && len(a.RiskReasons) == 0 {
+	if a.Denied == "" && a.TicketStatus == "" && a.RiskLevel == "" && len(a.RiskReasons) == 0 && !a.RiskReasonsExact {
 		msgs = append(msgs, "expect.approval asserts nothing")
 	}
 	if a.Denied != "" {
@@ -76,12 +78,16 @@ func checkApproval(s *Sample) []string {
 	}
 	for i, r := range a.RiskReasons {
 		rule, near := strings.CutPrefix(r, model.RiskReasonNearThresholdPrefix)
-		if !(r == model.RiskReasonPesticide || r == model.RiskReasonLargeArea || (near && rule != "")) {
+		if !(r == model.RiskReasonPesticide || r == model.RiskReasonLargeArea || r == model.RiskReasonLargeAreaUnknown ||
+			(near && rule != "")) {
 			msgs = append(msgs, fmt.Sprintf("expect.approval.risk_reasons[%d] %q is not allowed", i, r))
 		}
 	}
 	if len(a.RiskReasons) > 0 && a.RiskLevel == string(model.RiskLow) {
 		msgs = append(msgs, "expect.approval.risk_reasons requires risk_level HIGH")
+	}
+	if a.RiskReasonsExact && len(a.RiskReasons) == 0 && a.RiskLevel == string(model.RiskHigh) {
+		msgs = append(msgs, "expect.approval.risk_reasons_exact with no reasons requires risk_level LOW")
 	}
 	return msgs
 }

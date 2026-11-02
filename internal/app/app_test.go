@@ -5,6 +5,8 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -62,13 +64,17 @@ func fullDeps(t *testing.T) Deps {
 	if err != nil {
 		t.Fatal(err)
 	}
+	faults, err := LoadFaults("../..")
+	if err != nil {
+		t.Fatal(err)
+	}
 	texts, err := service.LoadNotifyTexts("../../configs/texts/notify.zh-CN.yaml")
 	if err != nil {
 		t.Fatal(err)
 	}
 	return Deps{Clock: fixedClock{}, Logger: logger, DB: &gorm.DB{}, Redis: rdb, Keys: keys,
 		RawStore: nopRaw{}, Agent: refuseAgent{}, Tools: nopTools{}, Risk: nopRisk{}, Constraints: passReviewer{},
-		Permissions: perms, NotifyTexts: texts}
+		Permissions: perms, Faults: faults, NotifyTexts: texts}
 }
 
 // passReviewer 放行全部作业单（装配测试不关心约束判定）；Registry 供主链路注入约束注册表（P1-L3 审查 15）。
@@ -103,6 +109,42 @@ func TestConstraintRegistry_SharedWithReviewer(t *testing.T) {
 
 type nopRisk struct{}
 
+// TestLoadRiskMatrix_CrossChecksRuleIDs（P1-L5 审查修复 11）：near_threshold 的 rule_id 须在内置约束注册表里，
+// 拼错即启动失败；仓库矩阵通过。
+func TestLoadRiskMatrix_CrossChecksRuleIDs(t *testing.T) {
+	const head = "version: 2\nwork_types:\n  SPRAY: {required_role: [agronomist]}\n" +
+		"levels:\n  HIGH: {confirm_required: true, approval_ttl: 2h}\n  LOW: {approval_ttl: 6h}\n"
+	tests := []struct {
+		name, near, want string // want 为空表示应通过
+	}{
+		{"registered rules", "{wind_speed_max: 0.2, rain_max: 0.2, temp_max: 0.1}", ""},
+		{"typo rule id", "{wind_speed: 0.2}", "rules.near_threshold.wind_speed is not a registered constraint rule"},
+		{"one bad among good", "{wind_speed_max: 0.2, temp: 0.1}", "rules.near_threshold.temp is not"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "risk_matrix.yaml")
+			src := head + "rules:\n  large_area_mu: 50\n  near_threshold: " + tt.near + "\n"
+			if err := os.WriteFile(path, []byte(src), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			_, err := LoadRiskMatrix(path)
+			if tt.want == "" {
+				if err != nil {
+					t.Fatal(err)
+				}
+				return
+			}
+			if !errors.Is(err, policy.ErrBadRiskMatrix) || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("err = %v, want ErrBadRiskMatrix containing %q", err, tt.want)
+			}
+		})
+	}
+	if _, err := LoadRiskMatrix(repoRoot + "/policy/risk_matrix.yaml"); err != nil {
+		t.Fatalf("repo risk_matrix: %v", err)
+	}
+}
+
 func (nopRisk) Assess(policy.RiskInput) (policy.Risk, error) { return policy.Risk{}, nil }
 func (nopRisk) TTL(model.RiskLevel) (time.Duration, error)   { return time.Hour, nil }
 
@@ -124,6 +166,7 @@ func TestBuild(t *testing.T) {
 		{name: "missing risk", mutate: func(d *Deps) { d.Risk = nil }, wantErr: ErrMissingRisk},
 		{name: "missing permissions", mutate: func(d *Deps) { d.Permissions = nil }, wantErr: ErrMissingPermissions},
 		{name: "missing constraints", mutate: func(d *Deps) { d.Constraints = nil }, wantErr: ErrMissingConstraints},
+		{name: "missing faults", mutate: func(d *Deps) { d.Faults = nil }, wantErr: ErrMissingFaults},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -145,7 +188,7 @@ func TestBuild(t *testing.T) {
 func TestBuild_ListsAllMissing(t *testing.T) {
 	_, err := Build(Deps{})
 	for _, want := range []error{ErrMissingAgent, ErrMissingClock, ErrMissingDB, ErrMissingRawStore, ErrMissingTools, ErrMissingRisk, ErrMissingPermissions,
-		ErrMissingConstraints} {
+		ErrMissingConstraints, ErrMissingFaults} {
 		if !errors.Is(err, want) {
 			t.Errorf("err %v does not include %v", err, want)
 		}

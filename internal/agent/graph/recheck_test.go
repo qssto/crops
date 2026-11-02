@@ -7,6 +7,7 @@ import (
 
 	"agri-steward/internal/agent"
 	"agri-steward/internal/agent/llm"
+	"agri-steward/internal/evalkit/env"
 	"agri-steward/internal/evalkit/sample"
 	"agri-steward/internal/model"
 )
@@ -116,6 +117,55 @@ func TestAgentRecheck_HITLSample(t *testing.T) {
 		Recheck(context.Background(), agent.RecheckRequest{Question: q, Card: *ans.Card, Epoch: 2})
 	if err != nil || !got.Changed {
 		t.Fatalf("recheck = %+v, %v; want changed", got, err)
+	}
+}
+
+// withCropTimeout 把样本的 crop.phenology 改为上游超时，缓存为原返回值加 collectedAt（作物 max_staleness 24h 内）。
+func withCropTimeout(s *sample.Sample, collectedAt string) *sample.Sample {
+	c := *s
+	c.Fixtures.MCP = make(map[string][]sample.ToolFixture, len(s.Fixtures.MCP))
+	for tool, fx := range s.Fixtures.MCP {
+		c.Fixtures.MCP[tool] = append([]sample.ToolFixture(nil), fx...)
+	}
+	fx := &c.Fixtures.MCP["crop.phenology"][0]
+	orig, _ := fx.Return.(map[string]any)
+	cached := map[string]any{"collected_at": collectedAt}
+	for k, v := range orig {
+		cached[k] = v
+	}
+	fx.Return, fx.Error, fx.Cache = nil, sample.FaultTimeout, cached
+	return &c
+}
+
+// P1 §6.7：下发前复检不回落缓存。作物工具超时、缓存在 max_staleness 内时，原提问照常回落（degraded 建议），
+// 经 graph.Recheck 的复检必须拿实时数据——仍超时即复检无结论（应失败：复检回落到缓存判"未变"放行下发）。
+func TestAgentRecheck_NoCacheFallback(t *testing.T) {
+	h := newHarness(t)
+	s := withCropTimeout(findSample(t, loadSamples(t), sForecastOp), "2026-07-15T06:00:00+08:00")
+	clk := sampleClock(t, s)
+	tools := fixtureTools(t, s, clk)
+	q, err := questionOf(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ans, err := h.newAgent(t, clk, deps{tools: tools, store: newMemStore()}).Ask(context.Background(), q)
+	if err != nil || ans.Card == nil || ans.Outcome != model.OutcomeAdvice || !ans.Card.Degraded {
+		t.Fatalf("ask: %v outcome=%s card=%+v, want degraded advice from cache fallback", err, ans.Outcome, ans.Card)
+	}
+	q.RunID = ans.RunID
+	got, err := h.newAgent(t, clk, deps{tools: tools, store: newMemStore()}).
+		Recheck(context.Background(), agent.RecheckRequest{Question: q, Card: *ans.Card, Epoch: 2})
+	if !errors.Is(err, agent.ErrRecheckInconclusive) {
+		t.Fatalf("recheck = %+v, %v; want ErrRecheckInconclusive (no cache fallback)", got, err)
+	}
+	var crop []env.ToolCallRecord
+	for _, c := range tools.Calls() {
+		if c.Tool == "crop.phenology" {
+			crop = append(crop, c)
+		}
+	}
+	if len(crop) != 2 || crop[0].Status != env.StatusOK || crop[1].Status != env.StatusTimeout {
+		t.Fatalf("crop.phenology calls = %+v, want ask fallback (OK) then recheck TIMEOUT", crop)
 	}
 }
 

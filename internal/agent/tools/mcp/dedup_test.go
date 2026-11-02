@@ -166,17 +166,19 @@ func TestCall_Cache(t *testing.T) {
 	field := func(run uint64) agent.ToolCall {
 		return agent.ToolCall{RunID: run, StepID: "enrich", Tool: "field.get", Args: fieldArgs}
 	}
+	recheck := func(c agent.ToolCall) agent.ToolCall { c.Recheck = true; return c }
 	tests := []struct {
 		name      string
 		calls     []agent.ToolCall
 		tool      string
 		wantCalls int
-		wantTTL   time.Duration // 0 表示不应有缓存
+		wantTTL   time.Duration // 写入 TTL = max_staleness（L6）；0 表示不应有缓存
 	}{
-		{"weather cached across runs", []agent.ToolCall{weather(1, "enrich", 0), weather(2, "enrich", 0)}, "weather.now", 1, 10 * time.Minute},
+		{"weather cached across runs", []agent.ToolCall{weather(1, "enrich", 0), weather(2, "enrich", 0)}, "weather.now", 1, time.Hour},
 		{"crop cached 24h", []agent.ToolCall{crop(1, "enrich"), crop(2, "enrich")}, "crop.info", 1, 24 * time.Hour},
-		{"time-sensitive epoch>0 bypasses read", []agent.ToolCall{weather(1, "enrich", 0), weather(1, "enrich", 1)}, "weather.now", 2, 10 * time.Minute},
+		{"time-sensitive epoch>0 bypasses read", []agent.ToolCall{weather(1, "enrich", 0), weather(1, "enrich", 1)}, "weather.now", 2, time.Hour},
 		{"pre_dispatch bypasses read", []agent.ToolCall{crop(1, "enrich"), crop(1, mcp.PreDispatchStep)}, "crop.info", 2, 24 * time.Hour},
+		{"recheck bypasses read", []agent.ToolCall{crop(1, "enrich"), recheck(crop(2, "enrich"))}, "crop.info", 2, 24 * time.Hour},
 		{"field not cached", []agent.ToolCall{field(1), field(2)}, "field.get", 2, 0},
 	}
 	for _, tt := range tests {

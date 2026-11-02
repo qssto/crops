@@ -31,6 +31,7 @@ type memOutbox struct {
 	done       []uint64
 	doneVers   []int
 	defers     []outboxRetry
+	offline    []outboxRetry // 设备离线推后（§6.7，next 记调用时的 now）
 	retries    []outboxRetry
 }
 
@@ -80,6 +81,14 @@ func (m *memOutbox) Defer(_ context.Context, _ repository.SystemScope, id uint64
 	defer m.mu.Unlock()
 	m.defers = append(m.defers, outboxRetry{id: id, rowVer: rowVer, next: next})
 	return true, nil
+}
+
+func (m *memOutbox) DeferDeviceOffline(_ context.Context, _ repository.SystemScope, id uint64, rowVer int,
+	now time.Time) (bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.offline = append(m.offline, outboxRetry{id: id, rowVer: rowVer, next: now.Add(OutboxDeviceOfflineDelay)})
+	return !m.renewLost, nil
 }
 
 func (m *memOutbox) MarkRetry(_ context.Context, _ repository.SystemScope, id uint64, rowVer int, next time.Time, lastErr string,
@@ -340,5 +349,56 @@ func TestOutboxHandle_DeadAudit(t *testing.T) {
 			!strings.Contains(string(r.Summary), "order.dispatch:9:3:1") {
 			t.Errorf("dead audit = %+v summary %s", r, r.Summary)
 		}
+	}
+}
+
+// 设备离线：走 §6.7 的 1 分钟推后，不计 attempts、不走 5s 推后与退避；第 4 次失败后的消息也不会转 DEAD
+// （应失败：走了 Defer / MarkRetry）。拿不到 lock:order 仍走 5s 推后（两种推后不合并）。
+func TestOutboxHandle_DeviceOfflineDefersOneMinute(t *testing.T) {
+	offline := fmt.Errorf("service: order 9: %w", ErrOutboxDeviceOffline)
+	if !errors.Is(offline, ErrOutboxDeferred) {
+		t.Fatal("ErrOutboxDeviceOffline must keep the deferred semantics")
+	}
+	store := &memOutbox{msgs: []repository.OutboxMessage{{ID: 4, Topic: repository.TopicOrderDispatch, RowVer: 2, Attempts: 4}},
+		retryOK: true}
+	p, logs := newPoller(store, func(context.Context, repository.OutboxMessage) error { return offline })
+	if _, err := p.RunOnce(context.Background()); err != nil {
+		t.Fatalf("RunOnce: %v", err)
+	}
+	if len(store.retries)+len(store.defers)+len(store.done) != 0 || len(store.offline) != 1 {
+		t.Fatalf("retries=%v defers=%v done=%v offline=%v", store.retries, store.defers, store.done, store.offline)
+	}
+	if o := store.offline[0]; o.id != 4 || o.rowVer != 2 || o.next.Sub(outboxNow) != time.Minute {
+		t.Errorf("offline defer = %+v", o)
+	}
+	if strings.Contains(logs.String(), "outbox message dead") || !strings.Contains(logs.String(), "device offline") {
+		t.Errorf("logs = %s", logs)
+	}
+
+	busy := &memOutbox{msgs: []repository.OutboxMessage{{ID: 5, Topic: repository.TopicOrderDispatch, RowVer: 1}}}
+	p, _ = newPoller(busy, func(context.Context, repository.OutboxMessage) error { return fmt.Errorf("x: %w", ErrOrderBusy) })
+	if _, err := p.RunOnce(context.Background()); err != nil {
+		t.Fatalf("RunOnce busy: %v", err)
+	}
+	if len(busy.offline) != 0 || len(busy.defers) != 1 || busy.defers[0].next.Sub(outboxNow) != outboxDeferDelay {
+		t.Errorf("busy: offline=%v defers=%v", busy.offline, busy.defers)
+	}
+}
+
+// 设备离线推后时租约已丢（影响 0 行）：只告警、不再写其他结果（应失败：回落到 5s 推后 / 退避）。
+func TestOutboxHandle_DeviceOfflineLeaseLost(t *testing.T) {
+	store := &memOutbox{msgs: []repository.OutboxMessage{{ID: 6, Topic: repository.TopicOrderDispatch, RowVer: 3}},
+		renewLost: true, retryOK: true}
+	p, logs := newPoller(store, func(context.Context, repository.OutboxMessage) error {
+		return fmt.Errorf("x: %w", ErrOutboxDeviceOffline)
+	})
+	if _, err := p.RunOnce(context.Background()); err != nil {
+		t.Fatalf("RunOnce: %v", err)
+	}
+	if len(store.offline) != 1 || len(store.defers)+len(store.retries)+len(store.done) != 0 {
+		t.Errorf("offline=%v defers=%v retries=%v done=%v", store.offline, store.defers, store.retries, store.done)
+	}
+	if !strings.Contains(logs.String(), "outbox lease lost before device offline defer") {
+		t.Errorf("logs = %s", logs)
 	}
 }

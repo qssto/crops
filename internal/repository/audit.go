@@ -101,6 +101,7 @@ type auditKeys struct {
 	Task     string `json:"task"`
 	Check    string `json:"check"`
 	AdviceID uint64 `json:"advice_id"`
+	Fault    string `json:"fault"` // P1 L6：DEGRADED
 }
 
 func ref(kind string, id uint64) string { return kind + ":" + strconv.FormatUint(id, 10) }
@@ -120,6 +121,8 @@ var auditTargets = map[model.EventType]func(auditKeys) string{
 	model.EventDispatched:       func(k auditKeys) string { return ref("order", k.OrderID) },
 	// P1 L3
 	model.EventConstraintBlocked: func(k auditKeys) string { return ref("order", k.OrderID) },
+	// P1 L6
+	model.EventDegraded: func(k auditKeys) string { return "fault:" + k.Fault },
 }
 
 // auditResult：VALIDATION_FAILED、CONSTRAINT_BLOCKED → FAILED；TOOL_CALL_END 按 status（REJECTED → DENIED）；LLM_CALL_END 的 ERROR → FAILED；其余 OK。

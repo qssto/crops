@@ -15,13 +15,40 @@ import (
 
 // 设备选定（下发器第 ③ 步，P1 §6.5 技术实现第 3 条；L3 遗留义务①）。
 var (
-	// ErrDeviceUnavailable 表示本农场取不到可用设备（列表为空、全部离线 / 忙、归属校验失败、工具报错），
-	// 下发器不调 Adapter、单状态不变、写 DEVICE_UNAVAILABLE 审计后推后重试。
+	// ErrDeviceUnavailable 表示本农场确实没有可用设备：device.list 返回 OK 但列表为空，或列出的设备 device.status 都返回 OK
+	// 且离线 / 忙。下发器不调 Adapter、单状态不变、写 DEVICE_UNAVAILABLE 审计与离线通知后推后重试（HOLD_AND_NOTIFY）。
 	ErrDeviceUnavailable = errors.New("service: no available device")
 	// ErrDeviceNotBindable 表示该 device_type 没有对应的设备类别（如 manual 人工作业），无设备可绑定。
 	// DRY_RUN 单跳过绑定照常 dry-run；REAL 单按设备不可用处理（失败关闭）。
 	ErrDeviceNotBindable = errors.New("service: device type has no bindable device")
+	// ErrDeviceToolFailed 表示设备工具没给出可判定的结果（TIMEOUT / UPSTREAM / SCOPE_DENIED / REJECTED / 数据非法）：
+	// 无从断定设备离线，下发器按一般错误退避重试，不写 DEVICE_UNAVAILABLE、不发离线通知（审查修复 L6-7）；
+	// 非超时类（归属校验拒绝等配置 / 数据问题）另记 Warn。
+	ErrDeviceToolFailed = errors.New("service: device tool failed")
 )
+
+// deviceToolError 是设备工具的非 OK 结果（errors.Is ErrDeviceToolFailed）。
+type deviceToolError struct {
+	Tool, Status, Code string
+	OrderID            uint64
+	Cause              error // 数据解码错误（MALFORMED）
+}
+
+func (e *deviceToolError) Error() string {
+	msg := fmt.Sprintf("%s: %s order %d: %s %s", ErrDeviceToolFailed, e.Tool, e.OrderID, e.Status, e.Code)
+	if e.Cause != nil {
+		msg += ": " + e.Cause.Error()
+	}
+	return msg
+}
+
+func (e *deviceToolError) Is(target error) bool { return target == ErrDeviceToolFailed }
+func (e *deviceToolError) Unwrap() error        { return e.Cause }
+
+// transient 表示超时 / 上游连接错误（退避即可，不额外告警）。
+func (e *deviceToolError) transient() bool {
+	return e.Status == model.ToolStatusTimeout || e.Code == model.ToolStatusTimeout || e.Code == toolCodeUpstream
+}
 
 // DevicePicker 按作业单 device_type 从本农场设备中选定一台在线空闲设备，返回 device_id。
 // 选不到返回 ErrDeviceUnavailable，类型无设备类别返回 ErrDeviceNotBindable，其余错误为基础设施故障（退避重试）。
@@ -36,6 +63,9 @@ const (
 	// dispatchDeviceStep 是选设备调用的 step_id：与下发前复检同一 step（mcp gateway 对 pre_dispatch 一律不读缓存）。
 	dispatchDeviceStep = "pre_dispatch"
 	deviceStateIdle    = "idle"
+	// toolCodeUpstream / toolCodeMalformed 是 gateway 归一的工具错误码（mcp.ErrUpstream / mcp.ErrMalformed；service 不 import mcp）。
+	toolCodeUpstream  = "UPSTREAM"
+	toolCodeMalformed = "MALFORMED"
 )
 
 // deviceKinds 是 work_order.device_type → mcp-device 设备类别（device.list 的 kind）。
@@ -48,7 +78,8 @@ var deviceKinds = map[string]string{
 }
 
 // ToolDevicePicker 经 mcp-device（gateway 的租户 / 地块 / 设备归属校验）选设备：device.list{field_id, kind} 列本地块该类设备，
-// 已绑定的设备优先，逐台 device.status 取第一台 online 且 idle 的。归属校验拒绝（SCOPE_DENIED 等非 OK）一律按不可用，失败关闭。
+// 已绑定的设备优先，逐台 device.status 取第一台 online 且 idle 的。只有工具返回 OK 且确无可用设备才算离线
+// （ErrDeviceUnavailable）；工具非 OK（超时、归属校验拒绝等）返回 ErrDeviceToolFailed，失败关闭（不下发）但不当离线通知。
 type ToolDevicePicker struct{ Tools agent.ToolProvider }
 
 type deviceListOut struct {
@@ -90,10 +121,15 @@ func (p ToolDevicePicker) PickDevice(ctx context.Context, o model.WorkOrder, epo
 			ids = append(ids, d.DeviceID)
 		}
 	}
+	// 某台设备 device.status 非 OK 时先看其余设备；有可用的照常选中，否则返回首个工具失败（该台状态不明，不算离线）
+	var toolErr error
 	for i, id := range ids {
 		var st deviceStatusOut
 		err := p.call(ctx, scope, o, epoch, toolDeviceStatus, i+1, map[string]any{"device_id": id}, &st)
-		if errors.Is(err, ErrDeviceUnavailable) {
+		if errors.Is(err, ErrDeviceToolFailed) {
+			if toolErr == nil {
+				toolErr = err
+			}
 			continue
 		}
 		if err != nil {
@@ -103,11 +139,14 @@ func (p ToolDevicePicker) PickDevice(ctx context.Context, o model.WorkOrder, epo
 			return id, nil
 		}
 	}
+	if toolErr != nil {
+		return "", toolErr
+	}
 	return "", fmt.Errorf("%w: order %d field %d kind %s (%d listed)", ErrDeviceUnavailable, o.OrderID, o.FieldID, kind,
 		len(list.Devices))
 }
 
-// call 调一次设备工具并解码 data；工具返回非 OK（含归属校验拒绝）→ ErrDeviceUnavailable，传输层错误原样返回。
+// call 调一次设备工具并解码 data；工具返回非 OK 或数据非法 → *deviceToolError（ErrDeviceToolFailed），传输层错误原样返回。
 func (p ToolDevicePicker) call(ctx context.Context, scope model.Scope, o model.WorkOrder, epoch int, tool string, seq int,
 	args map[string]any, out any) error {
 	raw, err := json.Marshal(args)
@@ -120,10 +159,10 @@ func (p ToolDevicePicker) call(ctx context.Context, scope model.Scope, o model.W
 		return fmt.Errorf("service: %s order %d: %w", tool, o.OrderID, err)
 	}
 	if res.Status != model.ToolStatusOK {
-		return fmt.Errorf("%w: %s order %d: %s %s", ErrDeviceUnavailable, tool, o.OrderID, res.Status, res.ErrorCode)
+		return &deviceToolError{Tool: tool, Status: res.Status, Code: res.ErrorCode, OrderID: o.OrderID}
 	}
 	if err := json.Unmarshal(res.Data, out); err != nil {
-		return fmt.Errorf("%w: %s order %d: bad data: %w", ErrDeviceUnavailable, tool, o.OrderID, err)
+		return &deviceToolError{Tool: tool, Status: model.ToolStatusError, Code: toolCodeMalformed, OrderID: o.OrderID, Cause: err}
 	}
 	return nil
 }
@@ -157,12 +196,13 @@ type deviceUnavailable struct {
 
 // bindDevice 是第 ③ 步：选定设备并持 lock:order 同事务写 work_order.payload.device_id（row_ver 守卫），返回绑定后的单。
 // 已绑定同一台设备时不写库。DRY_RUN 单的 device_type 无设备类别时跳过绑定。选不到：
-//   - 未超限 → 审计 DEVICE_UNAVAILABLE（system、DENIED）并返回包装 ErrOutboxDeferred 的错误（outbox 推后 5s、不计 attempts，单状态不变）；
+//   - 未超限 → deferUnavailable：审计 DEVICE_UNAVAILABLE（system、DENIED）+ 离线通知（同票一次），返回包装 ErrOutboxDeviceOffline
+//     的错误（outbox 推后 1 分钟、不计 attempts，单状态不变）；
 //   - 超限（deviceWaitOver）→ giveUpUnavailable 放弃下发，返回 nil（轮询器置 outbox DONE），不再推后。
 //
 // 每次推后重投都会在 Dispatch 里重新分配 resume_epoch（RecheckEpoch），这里有意保留：device.status 是时效工具，
 // call_key 含 epoch，epoch 不变时 gateway 按 call_key 回放上一次的 offline / busy 结果，设备恢复后也永远选不到；
-// ④ 复检同样要求新 epoch。递增次数由等待上限约束（2h / 5s 推后间隔 ≈ 1440 次），不再无界。
+// ④ 复检同样要求新 epoch。递增次数由等待上限约束（2h / 1 分钟推后间隔 ≈ 120 次），不再无界。
 func (s *WorkOrderService) bindDevice(ctx context.Context, msg repository.OutboxMessage, o repository.DispatchOrder,
 	m dispatchMessage, epoch int) (repository.DispatchOrder, error) {
 	d := s.dispatch
@@ -185,6 +225,11 @@ func (s *WorkOrderService) bindDevice(ctx context.Context, msg repository.Outbox
 		return o, s.deferUnavailable(ctx, o, m, err)
 	}
 	if err != nil {
+		var te *deviceToolError
+		if errors.As(err, &te) && !te.transient() {
+			d.Logger.WarnContext(ctx, "dispatch: device tool rejected, retry with backoff", "order_id", o.ID,
+				"tool", te.Tool, "status", te.Status, "code", te.Code)
+		}
 		return o, fmt.Errorf("service: dispatch pick device order %d: %w", o.ID, err)
 	}
 	if payloadDeviceID(o.Payload) == id {
@@ -214,19 +259,69 @@ func (s *WorkOrderService) bindDevice(ctx context.Context, msg repository.Outbox
 	return bound, nil
 }
 
-// deferUnavailable 写 DEVICE_UNAVAILABLE 审计（DENIED）并返回推后错误（离线通知在 L6）。
+// deviceOfflineNotify 是设备离线 notify.send 的 payload：公共信封 + 故障码 / 文案 key / 设备类型。
+type deviceOfflineNotify struct {
+	model.NotifyEnvelope
+	Fault      model.FaultCode `json:"fault"`
+	TextKey    string          `json:"text_key"`
+	DeviceType string          `json:"device_type"`
+}
+
+// deferUnavailable 是设备离线（选不到设备、未超限）：不调 Adapter、单状态不变，同一事务写 DEVICE_UNAVAILABLE 审计（DENIED）、
+// notify.send outbox（dedup_key = notify:DEVICE_OFFLINE:{order}:{ticket}，同票只通知一次）；首次插入通知时再写
+// DEGRADED(DEVICE_OFFLINE, HOLD_AND_NOTIFY) 事件（run_id 取自消息 payload，缺省时用单上的；审计同事务投影）。返回包装 ErrOutboxDeviceOffline
+// 的错误：outbox 按 §6.7 SQL 推后 1 分钟、不计 attempts。
 func (s *WorkOrderService) deferUnavailable(ctx context.Context, o repository.DispatchOrder, m dispatchMessage, cause error) error {
 	d := s.dispatch
 	rec, err := s.unavailableAudit(o, m, cause, model.AuditResultDenied, deviceUnavailable{})
 	if err != nil {
 		return err
 	}
-	if err := d.Tx.InTx(ctx, func(tx *repository.DB) error { return d.Audit.AppendTx(ctx, tx, rec) }); err != nil {
-		return fmt.Errorf("service: dispatch audit device unavailable order %d: %w", o.ID, err)
+	runID := m.RunID
+	if runID == 0 {
+		runID = o.RunID
 	}
-	d.Logger.WarnContext(ctx, "dispatch: device unavailable, deferred", "order_id", o.ID, "device_type", o.DeviceType,
-		"attempt", m.Attempt, "err", cause)
-	return fmt.Errorf("%w: order %d: %w", ErrOutboxDeferred, o.ID, cause)
+	notify, err := json.Marshal(deviceOfflineNotify{
+		NotifyEnvelope: model.NotifyEnvelope{Kind: model.NotifyDeviceOffline, OrderID: o.ID, RunID: runID, TicketID: m.TicketID},
+		Fault:          model.FaultDeviceOffline, TextKey: d.OfflineTextKey, DeviceType: o.DeviceType})
+	if err != nil {
+		return fmt.Errorf("service: encode device offline notify order %d: %w", o.ID, err)
+	}
+	var notified bool
+	err = d.Tx.InTx(ctx, func(tx *repository.DB) error {
+		if err := d.Audit.AppendTx(ctx, tx, rec); err != nil {
+			return err
+		}
+		now := s.clock.Now()
+		inserted, err := d.Notify.InsertTx(ctx, tx, o.Ref(),
+			model.NotifyDedupKey(model.NotifyDeviceOffline, o.ID, m.TicketID), notify, now)
+		if err != nil || !inserted {
+			return err
+		}
+		notified = true
+		return s.appendDegraded(ctx, tx, o, runID, model.DegradedPayload{Fault: model.FaultDeviceOffline,
+			Action: model.DegradeHoldNotify, TextKey: d.OfflineTextKey, OrderID: o.ID, TicketID: m.TicketID})
+	})
+	if err != nil {
+		return fmt.Errorf("service: dispatch device offline order %d: %w", o.ID, err)
+	}
+	d.Logger.WarnContext(ctx, "dispatch: device offline, deferred", "alert", string(model.FaultDeviceOffline),
+		"order_id", o.ID, "device_type", o.DeviceType, "attempt", m.Attempt, "notified", notified, "err", cause)
+	return fmt.Errorf("%w: order %d: %w", ErrOutboxDeviceOffline, o.ID, cause)
+}
+
+// appendDegraded 追加一条 DEGRADED 事件（actor=system）；EventStore.AppendTx 同事务投影 DEGRADED 审计。
+func (s *WorkOrderService) appendDegraded(ctx context.Context, tx *repository.DB, o repository.DispatchOrder, runID uint64,
+	p model.DegradedPayload) error {
+	b, err := json.Marshal(p)
+	if err != nil {
+		return fmt.Errorf("service: encode DEGRADED payload: %w", err)
+	}
+	if _, err := s.events.AppendTx(ctx, tx, model.RunEvent{TenantID: o.TenantID, FarmID: o.FarmID, RunID: runID,
+		Type: model.EventDegraded, Actor: model.ActorSystem, Payload: b, CreatedAt: s.clock.Now()}); err != nil {
+		return fmt.Errorf("service: DEGRADED %s order %d: %w", p.Fault, o.ID, err)
+	}
+	return nil
 }
 
 // errDeviceGaveUp 表示第 ③ 步等待超限、本单已放弃下发并落库；Dispatch 收到后返回 nil（outbox 置 DONE）。

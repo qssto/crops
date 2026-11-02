@@ -24,6 +24,7 @@ import (
 
 	"agri-steward/internal/agent/harness/policy"
 	"agri-steward/internal/agent/knowledge"
+	"agri-steward/internal/app"
 	"agri-steward/internal/clock"
 	"agri-steward/internal/evalkit"
 	"agri-steward/internal/evalkit/grader"
@@ -125,7 +126,12 @@ func (f *sampleFlags) loadValidSamples() (*loadedSamples, error) {
 	if err != nil {
 		return nil, err
 	}
-	graders := code.All(schema, tp.Actuate())
+	// P1 L6：degraded_matrix 取 --repo 下的故障矩阵与文案表（与生产同一份）。
+	faults, err := app.LoadFaults(f.repo)
+	if err != nil {
+		return nil, err
+	}
+	graders := append(code.All(schema, tp.Actuate()), code.NewDegradedMatrix(faults))
 	ref := code.NewReferenceCheck(tx, kb, graders)
 	rules := append(sample.DefaultRules(tx, kb), ref)
 	samples, err := sample.LoadAndValidate(f.dir, sample.NewValidator(rules...))

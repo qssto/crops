@@ -20,14 +20,19 @@ const (
 	readRetries        = 2
 	defaultPendingPoll = 100 * time.Millisecond
 	doneTTL            = 24 * time.Hour
-	// PreDispatchStep 是下发前复检的 step_id：一律不读缓存（结果仍回写）。
+	// PreDispatchStep 是下发前选设备调用的 step_id（service.dispatchDevice）：一律不读缓存、不回落（结果仍回写）。
 	PreDispatchStep = "pre_dispatch"
 )
 
-// DefaultCacheTTL 是 cache:mcp 的默认 TTL（server 名 → TTL）；field / device 不缓存。
+// DefaultCacheTTL 是 cache:mcp 正常读的默认新鲜期（server 名 → 时长）；field / device 不缓存。
 var DefaultCacheTTL = map[string]time.Duration{"weather": 10 * time.Minute, "crop": 24 * time.Hour}
 
-// Options 是 gateway 的依赖与参数。Events、Mask、Levels、Timeouts、CacheTTL、PendingPoll 可省略；
+// DefaultMaxStaleness 是 TIMEOUT / UPSTREAM 后回落到缓存的最大陈旧度（server 名 → 时长，P1 §6.7）：
+// now - collected_at 不超过它才回落；也是 cache:mcp 的写入 TTL。未列出的 server 取其新鲜期（不延长）。
+// 两张默认表经 NewCacheRule 与配置逐 server 合并，网关与评测夹具共用。
+var DefaultMaxStaleness = map[string]time.Duration{"weather": time.Hour, "crop": 24 * time.Hour}
+
+// Options 是 gateway 的依赖与参数。Events、Mask、Levels、Timeouts、CacheTTL、MaxStaleness、PendingPoll 可省略；
 // 给了 Mask 就必须给 RawReader。
 type Options struct {
 	Clock  clock.Clock
@@ -53,8 +58,12 @@ type Options struct {
 	Levels map[string]Level
 	// Timeouts 是 server 名 → 单次调用超时，缺省 DefaultTimeout。
 	Timeouts map[string]time.Duration
-	// CacheTTL 是 server 名 → 缓存 TTL，nil 时用 DefaultCacheTTL；只对 Cacheable 工具生效。
+	// CacheTTL 是 server 名 → 正常读的缓存新鲜期，逐 server 覆盖 DefaultCacheTTL（未列出的 server 保留默认）；
+	// 只对 Cacheable 工具生效。
 	CacheTTL map[string]time.Duration
+	// MaxStaleness 是 server 名 → 超时回落的最大陈旧度（亦为缓存写入 TTL），逐 server 覆盖 DefaultMaxStaleness；
+	// 都没有时取该 server 的新鲜期，小于新鲜期即构造失败（合并规则见 NewCacheRule）。
+	MaxStaleness map[string]time.Duration
 	// PendingPoll 是等待在途同 key 调用时的轮询间隔。
 	PendingPoll time.Duration
 }
@@ -89,7 +98,8 @@ type tool struct {
 	level    Level
 	output   policy.Validator // 出参 data 的 schema；nil 时只要求 JSON 对象
 	timeout  time.Duration
-	cacheTTL time.Duration // 0 表示不缓存
+	cacheTTL time.Duration // 正常读的新鲜期；0 表示不缓存（也不回落）
+	maxStale time.Duration // 超时回落的最大陈旧度与缓存写入 TTL（≥ cacheTTL）
 }
 
 // tries 是总调用次数：read 且幂等的工具多重试 readRetries 次。
@@ -107,6 +117,7 @@ func (t *tool) pendingTTL() time.Duration { return t.timeout * time.Duration(t.t
 // 构造后只读，并发安全。
 type Gateway struct {
 	opt    Options
+	cache  CacheRule
 	tools  map[string]*tool
 	policy *policy.Policy
 	mask   func(json.RawMessage) json.RawMessage
@@ -121,13 +132,14 @@ func NewGateway(servers []Server, opt Options) (*Gateway, error) {
 	if err := opt.validate(); err != nil {
 		return nil, err
 	}
-	if opt.CacheTTL == nil {
-		opt.CacheTTL = DefaultCacheTTL
+	rule, err := NewCacheRule(opt.CacheTTL, opt.MaxStaleness)
+	if err != nil {
+		return nil, fmt.Errorf("mcp gateway: %w", err)
 	}
 	if opt.PendingPoll <= 0 {
 		opt.PendingPoll = defaultPendingPoll
 	}
-	g := &Gateway{opt: opt, tools: map[string]*tool{}, mask: opt.Mask}
+	g := &Gateway{opt: opt, cache: rule, tools: map[string]*tool{}, mask: opt.Mask}
 	if g.mask == nil {
 		g.mask = func(m json.RawMessage) json.RawMessage { return m }
 	}
@@ -171,7 +183,7 @@ func (g *Gateway) register(srv Server, sp ToolSpec) (*tool, policy.Spec, error) 
 		t.timeout = d
 	}
 	if sp.Cacheable {
-		t.cacheTTL = g.opt.CacheTTL[srv.Name()]
+		t.cacheTTL, t.maxStale = g.cache.Window(srv.Name())
 	}
 	if len(sp.OutputSchema) > 0 {
 		if t.output, err = policy.CompileSchema(sp.Name+"#output", sp.OutputSchema); err != nil {

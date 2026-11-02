@@ -2,14 +2,17 @@
 # service.ApprovalService 开票时按规则定 risk_level / risk_reasons / required_role / confirm_required，Activate 按 levels 写 expires_at。
 # 判定（Assess）：下列原因任一命中即 HIGH（需第二审批人确认），都不中为 LOW；命中原因按出现顺序写 approval_ticket.risk_reasons：
 #   1. PESTICIDE：用药类作业（SPRAY）。
-#   2. LARGE_AREA：作业单 payload.area_mu ≥ rules.large_area_mu。
+#   2. LARGE_AREA：作业单 payload.area_mu ≥ rules.large_area_mu；
+#      LARGE_AREA:unknown：payload.area_mu 缺失 / 非正 / 非有限数。下列作业类型都是按亩计的田间作业，面积无从核对即按 HIGH（失败关闭）。
 #   3. NEAR_THRESHOLD:{rule_id}：PRE_APPROVAL 校验通过，但 |阈值 − 实测| ≤ 裕度 × |阈值|（只看 rules.near_threshold 列出的 rule_id，
 #      比较符为 < / <= / > / >=、实测为数值的行；按校验行顺序）。
+# 审批人数（二人确认守卫）：HIGH 票需两名不同审批人（第一人 APPROVE、第二人 CONFIRM），都须持 required_role 之一且都不能是发起人。
+#   SPRAY 只列 agronomist，且 PESTICIDE 恒为 HIGH：农场须有至少 2 名「非发起人」的 agronomist，否则该票只能等到过期（EXPIRED）。
 # 约束（加载时校验，违反即启动失败）：
 #   - 必须列出 SPRAY，且用药类 required_role 必须含 agronomist；required_role 非空、不重复，
 #     取值 farm_manager / agronomist / operator（platform_admin 不审批农场作业单）。
 #   - levels 必须恰好列出 LOW / HIGH，各有正的 approval_ttl；HIGH 必须 confirm_required: true。
-#   - large_area_mu > 0；near_threshold 至少一项，裕度在 (0, 1)。
+#   - large_area_mu > 0；near_threshold 至少一项，裕度在 (0, 1)，rule_id 必须是 policy/constraints.yaml 里的规则（启动时交叉校验）。
 #   - 未列出的作业类型开票失败（不默认放行）。
 # 复检退回（Reopen）的新票沿用旧票定级，不重新判定。
 version: 2

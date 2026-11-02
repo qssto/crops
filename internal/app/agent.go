@@ -65,7 +65,7 @@ func GraphAgent(ctx context.Context, gc GraphConfig) func(*App) (agent.Agent, er
 			Runs: a.Runs, Advice: a.Advice, Drafts: a.Drafts, Locker: a.RunLocker, Clock: a.Clock,
 			KB: gc.KB, Taxonomy: gc.Taxonomy, Crop: m.Crop, Region: m.Region, Logger: a.Logger,
 			Gate: a.Approvals, Events: a.Events, Trace: rec.Handler(), DispatchMode: a.dispatchModeSource(),
-			LocalOrders: local}
+			LocalOrders: local, Faults: a.Faults}
 		a.HITL.withHITL(&cfg, a.Runs)
 		cfg.Constraints = constraintRegistry(a.constraints) // P1-L3：与开票前 Reviewer 同一注册表
 		a.withFarmScope(&cfg)

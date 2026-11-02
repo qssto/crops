@@ -19,7 +19,8 @@ var _ agent.Rechecker = (*Agent)(nil)
 
 // Recheck 下发前复检（agent.Rechecker，P0 §6.7 功能任务 3）：对原 run 以新 epoch 重跑规则层前段
 // （classify → enrich → load_knowledge → candidates）。时效工具（工具注册表 TimeSensitive）的 call_key 含 epoch，
-// 因而重取、不读缓存；非时效工具 call_key 不变，网关命中原结果。不经 runner、不写 run_step / 卡片 / 作业单、不调设备。
+// 因而重取；非时效工具 call_key 不变，网关命中原结果。全部调用带 ToolCall.Recheck：不读缓存、超时不回落，
+// 原结果是缓存回落时也重取（P1 §6.7：复检必须用实时数据，取不到即无结论）。不经 runner、不写 run_step / 卡片 / 作业单、不调设备。
 // 结论与原建议卡比对：仍为同一类作业且原选药剂仍在候选内即未变；模型不可用或时效数据缺失返回 ErrRecheckInconclusive。
 func (a *Agent) Recheck(ctx context.Context, req agent.RecheckRequest) (agent.RecheckResult, error) {
 	runID := req.Question.RunID
@@ -30,7 +31,7 @@ func (a *Agent) Recheck(ctx context.Context, req agent.RecheckRequest) (agent.Re
 	if err != nil {
 		return agent.RecheckResult{}, fmt.Errorf("graph: recheck run %d: %w", runID, err)
 	}
-	ectx := runner.WithEpoch(ctx, req.Epoch)
+	ectx := withRecheck(runner.WithEpoch(ctx, req.Epoch))
 	for _, step := range []node{a.classify, a.enrich, a.loadKnowledge, a.candidates} {
 		if s, err = step(ectx, s); err != nil {
 			return agent.RecheckResult{}, fmt.Errorf("graph: recheck run %d: %w", runID, err)
@@ -84,6 +85,18 @@ func recheckVerdict(s *state, card model.AdviceCard) (agent.RecheckResult, error
 		return changed("product %s no longer admitted", card.SelectedProduct), nil
 	}
 	return agent.RecheckResult{}, nil
+}
+
+// recheckKey 标记 ctx 处于下发前复检（callTool 据此给 ToolCall.Recheck）。
+type recheckKey struct{}
+
+func withRecheck(ctx context.Context) context.Context {
+	return context.WithValue(ctx, recheckKey{}, true)
+}
+
+func rechecking(ctx context.Context) bool {
+	v, _ := ctx.Value(recheckKey{}).(bool)
+	return v
 }
 
 func changed(format string, args ...any) agent.RecheckResult {

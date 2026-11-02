@@ -42,7 +42,7 @@ func newDispatchPoller(t *testing.T, e *itest.Env, slot *env.Slot, dev adapter.D
 	}
 	a, err := app.Build(app.Deps{Clock: slot.Clock, Logger: logger, DB: slot.DB, Redis: e.Redis, Keys: slot.Keys,
 		RawStore: &memRaw{}, Agent: itAgent{}, Tools: itTools{}, Risk: risk, Constraints: constraints,
-		Permissions: itPerms(t), Adapter: dev, NotifyTexts: itNotifyTexts(t)})
+		Permissions: itPerms(t), Adapter: dev, Faults: itFaults(t, e.Root), NotifyTexts: itNotifyTexts(t)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -250,3 +250,13 @@ type itSink struct {
 func (s *itSink) Event(e service.StreamEvent) error { s.seen <- e.Seq; return nil }
 func (s *itSink) Ping() error                       { return nil }
 func (s *itSink) End() error                        { s.ended = true; return nil }
+
+// itFaults 加载仓库内的故障矩阵（P1 L6：app.Build 必填）。
+func itFaults(t *testing.T, root string) *policy.FaultMatrix {
+	t.Helper()
+	m, err := app.LoadFaults(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return m
+}

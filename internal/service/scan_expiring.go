@@ -20,12 +20,12 @@ const ScanApprovalExpiring = "approval_expiring"
 // ExpiringScanStore 是即将过期扫描的仓储能力，repository.DecisionRepo 实现。
 type ExpiringScanStore interface {
 	InTx(ctx context.Context, fn func(tx *repository.DB) error) error
-	ListExpiring(ctx context.Context, sys repository.SystemScope, now time.Time) ([]repository.ExpiringTicket, error)
+	ListExpiring(ctx context.Context, sys repository.SystemScope, now time.Time, limit int) ([]repository.ExpiringTicket, error)
 }
 
 // approvalExpiring 逐张写提醒；单张失败不影响其余，错误汇总返回（下一轮重试，已写的靠 dedup_key 去重）。
 func (s *Scanner) approvalExpiring(ctx context.Context, now time.Time) error {
-	rows, err := s.d.Expiring.ListExpiring(ctx, scanSystem, now)
+	rows, err := s.d.Expiring.ListExpiring(ctx, scanSystem, now, repository.ExpiringBatch)
 	if err != nil {
 		return err
 	}

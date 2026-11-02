@@ -54,7 +54,17 @@ type Fixtures struct {
 	LocalOrders []LocalOrderFixture `yaml:"local_orders,omitempty"`
 	// Dispatch 声明审批脚本之后的下发步骤（P1-L4-A）：声明即跳过 ScriptApprover 的内联复检，改由排空 outbox 走真实下发器。
 	Dispatch *DispatchFixture `yaml:"dispatch,omitempty"`
+	// Model 声明模型桩故障（P1 L6）：列出的任务每次调用都返回错误（重试后判 LLM 不可用）。
+	Model *ModelFixture `yaml:"model,omitempty"`
 }
+
+// ModelFixture 是模型桩故障：Unavailable 取 classify / choose / explain 或 all（全部任务不可用）。
+type ModelFixture struct {
+	Unavailable []string `yaml:"unavailable"`
+}
+
+// ModelTaskAll 表示所有模型任务都不可用。
+const ModelTaskAll = "all"
 
 // DispatchFixture 是下发步骤（按序执行，每步之后都排空 outbox）：
 //  1. 排空 outbox（order.dispatch 走下发器 ①-⑦，notify.send 走占位处理器）；
@@ -63,6 +73,8 @@ type Fixtures struct {
 type DispatchFixture struct {
 	Reapprove string `yaml:"reapprove,omitempty"`
 	Redeliver int    `yaml:"redeliver,omitempty"`
+	// Advance 是 Go 时长（如 3h，P1 L6）：上述步骤之后把冻结时钟拨快该时长再排空一次（设备离线推后越过下发时效 → EXPIRED）。
+	Advance string `yaml:"advance,omitempty"`
 }
 
 // DeviceFixture 是样本声明的设备回执序列：RecordingAdapter 的 Dispatch / QueryStatus / Cancel 按调用次序逐个返回；
@@ -104,6 +116,9 @@ type ToolFixture struct {
 	Return  any            `yaml:"return,omitempty"`
 	Returns []any          `yaml:"returns,omitempty"`
 	Error   string         `yaml:"error,omitempty"`
+	// Cache 是网关缓存里的上一次结果（P1 L6，仅配 error: timeout / upstream，须带 collected_at）：
+	// now - collected_at 不超过该 server 的 max_staleness 时 FixtureMCP 回落返回它（source=cache），否则仍注入故障。
+	Cache any `yaml:"cache,omitempty"`
 }
 
 // 故障注入类型（fixtures.mcp.*.error），FixtureMCP 映射为 ToolResult.Status / ErrorCode。
@@ -111,6 +126,7 @@ const (
 	FaultTimeout   = "timeout"
 	FaultEmpty     = "empty"
 	FaultMalformed = "malformed"
+	FaultUpstream  = "upstream" // P1 L6：上游连接错误（ERROR / UPSTREAM，与 TIMEOUT 同归 MCP_TIMEOUT）
 )
 
 // MatchKeyField 是 match 中的地块合成编码键（field: field-003），FixtureMCP 装配时解析为 field_id。
@@ -131,6 +147,9 @@ func (f ToolFixture) Problem() string {
 		if r == nil {
 			return fmt.Sprintf("returns[%d] is null", i)
 		}
+	}
+	if f.Cache != nil && f.Error != FaultTimeout && f.Error != FaultUpstream {
+		return "cache requires error: timeout or upstream"
 	}
 	return ""
 }
@@ -155,6 +174,15 @@ type Expect struct {
 	WorkDone *WorkDoneExpect `yaml:"work_done,omitempty"`
 	// Approval 断言审批闸门与定级（P1 L5，approval_gate 使用，见 approval.go）；不写表示不检查。
 	Approval *ApprovalExpect `yaml:"approval,omitempty"`
+	// Degraded 断言故障降级（P1 L6，degraded_matrix 使用）：本次运行写出的 DEGRADED 事件 (fault, action) 恰为该集合。
+	// 不写表示不检查。
+	Degraded []DegradedExpect `yaml:"degraded,omitempty"`
+}
+
+// DegradedExpect 是一条期望的 DEGRADED 事件：fault 取故障矩阵 code，action 取 model.DegradeAction。
+type DegradedExpect struct {
+	Fault  string `yaml:"fault"`
+	Action string `yaml:"action"`
 }
 
 // DispatchExpect 是下发侧期望：RecheckReturned 为 true 时断言下发前复检不通过、单退回 PENDING_APPROVAL(RECHECK_FAILED)、

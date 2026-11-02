@@ -13,6 +13,7 @@ import (
 
 	"agri-steward/internal/agent/harness/memory"
 	"agri-steward/internal/agent/harness/policy"
+	"agri-steward/internal/agent/tools/mcp"
 	"agri-steward/internal/agent/tools/mcp/servers/device"
 	"agri-steward/internal/app"
 	"agri-steward/internal/clock"
@@ -38,6 +39,10 @@ type infraFlags struct {
 	permFile   string
 	regFile    string
 	deviceFile string
+	faultFile  string
+	textsFile  string
+	// toolsFile 是 configs/tools.yaml：FixtureMCP 的超时回落时间窗与生产网关同一份（P1 L6）。
+	toolsFile string
 	// notifyTexts 是 notify.send 文案（P1 L5，与生产同一份）。
 	notifyTexts string
 	poolSize    int
@@ -55,6 +60,9 @@ func (f *infraFlags) register(fs *flag.FlagSet) {
 	fs.StringVar(&f.regFile, "regulation", "policy/regulation_map.yaml", "法规对照表（与生产同一份）")
 	fs.StringVar(&f.notifyTexts, "notify-texts", "configs/texts/notify.zh-CN.yaml", "通知文案（与生产同一份）")
 	fs.StringVar(&f.deviceFile, "devices", "configs/mock/device.yaml", "设备 → 农场显式绑定（cross_farm_isolation 判 device_id 归属）")
+	fs.StringVar(&f.faultFile, "fault-matrix", app.DefaultFaultMatrixPath, "故障降级矩阵（与生产同一份，P1 L6）")
+	fs.StringVar(&f.textsFile, "texts", app.DefaultTextsPath, "用户可读文案表（与生产同一份，P1 L6）")
+	fs.StringVar(&f.toolsFile, "tools", defaultToolsFile, "MCP 工具配置（缓存时间窗与生产同一份，P1 L6）")
 	fs.IntVar(&f.poolSize, "pool", 1, "trial schema 槽位数（agri_eval_t_1..n）")
 }
 
@@ -120,7 +128,7 @@ func (f *infraFlags) open(ctx context.Context, logW io.Writer, ls *loadedSamples
 	if err != nil {
 		return nil, err
 	}
-	risk, err := policy.LoadRiskMatrix(f.riskFile)
+	risk, err := app.LoadRiskMatrix(f.riskFile)
 	if err != nil {
 		return nil, err
 	}
@@ -129,6 +137,14 @@ func (f *infraFlags) open(ctx context.Context, logW io.Writer, ls *loadedSamples
 		return nil, err
 	}
 	perms, err := service.LoadPermissionMatrix(f.permFile)
+	if err != nil {
+		return nil, err
+	}
+	faults, err := policy.LoadFaultMatrix(f.faultFile, f.textsFile)
+	if err != nil {
+		return nil, err
+	}
+	cacheRule, err := loadCacheRule(f.toolsFile)
 	if err != nil {
 		return nil, err
 	}
@@ -182,7 +198,7 @@ func (f *infraFlags) open(ctx context.Context, logW io.Writer, ls *loadedSamples
 		resolve := func(ctx context.Context, code string) (uint64, error) {
 			return repository.ProfileRepo{}.FieldIDByCode(ctx, s.DB, tenantID, farmID, code)
 		}
-		tools, err := env.NewFixtureMCP(ctx, smp.Fixtures.MCP, resolve, s.Clock)
+		tools, err := env.NewFixtureMCP(ctx, smp.Fixtures.MCP, resolve, s.Clock, env.WithCacheRule(cacheRule))
 		if err != nil {
 			return app.Deps{}, err
 		}
@@ -200,7 +216,12 @@ func (f *infraFlags) open(ctx context.Context, logW io.Writer, ls *loadedSamples
 		if err != nil {
 			return app.Deps{}, err
 		}
-		gc := app.GraphConfig{Model: mcfg, Chat: chat, KB: ls.kb, Taxonomy: ls.tx}
+		// P1 L6：样本声明 fixtures.model.unavailable 时包装桩模型，列出的任务每次调用都返回错误。
+		sampleChat, err := env.NewFaultModel(chat, smp.Fixtures.Model)
+		if err != nil {
+			return app.Deps{}, err
+		}
+		gc := app.GraphConfig{Model: mcfg, Chat: sampleChat, KB: ls.kb, Taxonomy: ls.tx}
 		// P1 L3：样本声明 local_orders 时替换 trial 库读取（不声明时读 trial 库，新槽位无本地单）。
 		if len(smp.Fixtures.LocalOrders) > 0 {
 			if gc.LocalOrders, err = env.NewFixtureLocalOrders(smp.Fixtures.LocalOrders); err != nil {
@@ -212,13 +233,29 @@ func (f *infraFlags) open(ctx context.Context, logW io.Writer, ls *loadedSamples
 			// 主链路（桩模型）在 Build 内用本 trial 的 Runs / Advice / Drafts / RunLocker 装配；Tools 为每 trial 一个 FixtureMCP。
 			NewAgent: app.GraphAgent(ctx, gc),
 			Tools:    tools, Risk: risk, Constraints: constraints, Permissions: perms, Adapter: dev,
-			ReceiptSecret: in.receiptSecret, NotifyTexts: notifyTexts, Approval: cfg.Approval,
+			Faults: faults, ReceiptSecret: in.receiptSecret, NotifyTexts: notifyTexts, Approval: cfg.Approval,
 			// L6：检查点读回走 MinIO；记忆按配置开关注入样本 fixtures.memory（不读 trial 库 episodic_memory）。
 			HITL: app.HITLDeps{Objects: repository.MinIOGetter{Client: mc}, RawBucket: cfg.MinIO.BucketRaw,
 				Memory: memory.Options{Enabled: cfg.Memory.Enabled, EpisodicLimit: cfg.Memory.EpisodicLimit,
 					RuneBudget: cfg.Memory.RuneBudget}, MemorySource: mem}}, nil
 	}
 	return in, nil
+}
+
+// defaultToolsFile 与服务进程 -tools 缺省值相同。
+const defaultToolsFile = "configs/tools.yaml"
+
+// loadCacheRule 按生产网关的同一合并规则（mcp.NewCacheRule ← config.Tools.CacheWindows）得出评测回落判定。
+func loadCacheRule(path string) (mcp.CacheRule, error) {
+	cfg, err := config.LoadTools(path)
+	if err != nil {
+		return mcp.CacheRule{}, err
+	}
+	r, err := mcp.NewCacheRule(cfg.CacheWindows())
+	if err != nil {
+		return mcp.CacheRule{}, fmt.Errorf("eval: %s: %w", path, err)
+	}
+	return r, nil
 }
 
 func (in *infra) close() error {

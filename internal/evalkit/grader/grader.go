@@ -57,6 +57,17 @@ type Trial struct {
 	// P1-L4-B：WorkDone 是回执步骤（fixtures.device.steps）结束后该 run 各作业单的完成态，partially_done 使用；
 	// 样本未声明回执步骤或 App 无库时为 nil。
 	WorkDone []WorkDoneObs
+	// P1 L6：Events 是该 run 的 run_event 时间线（按 seq），degraded_matrix 使用；
+	// Runner 在 App 有库时从 RunDetail.Timeline 取，未记录为 nil。
+	Events []RunEvent
+}
+
+// RunEvent 是一条 run_event（payload 原样，打分器按事件类型解码）。
+type RunEvent struct {
+	Type    model.EventType `json:"event_type"`
+	Actor   string          `json:"actor"`
+	StepID  string          `json:"step_id,omitempty"`
+	Payload json.RawMessage `json:"payload"`
 }
 
 // OutboxRecord 是一条 outbox 消息的状态（topic 如 order.dispatch / notify.send）。

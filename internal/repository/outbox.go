@@ -124,6 +124,20 @@ func (r OutboxRepo) Defer(ctx context.Context, sys SystemScope, id uint64, rowVe
 		`UPDATE outbox SET next_run_at=?, row_ver=row_ver+1, updated_at=? WHERE id=? AND row_ver=?`, nextRunAt, now, id, rowVer))
 }
 
+// OutboxLastErrorDeviceOffline 是设备离线推后写入 outbox.last_error 的值（§6.7 SQL）。
+const OutboxLastErrorDeviceOffline = "DEVICE_OFFLINE"
+
+// DeferDeviceOffline 照抄 P1 §6.7 设备离线 UPDATE：next_run_at 推到 now+1 分钟、last_error='DEVICE_OFFLINE'、不计 attempts
+// （避免 5 次后误判 DEAD），带认领时的 row_ver 租约条件；影响 0 行返回 false（租约已丢 / 已非 PENDING，不再写结果）。
+func (r OutboxRepo) DeferDeviceOffline(ctx context.Context, sys SystemScope, id uint64, rowVer int, now time.Time) (bool, error) {
+	if err := requireSystem(sys); err != nil {
+		return false, err
+	}
+	return leaseResult(id, "defer device offline", r.DB.WithContext(ctx).Exec(
+		`UPDATE outbox SET next_run_at=? + INTERVAL 1 MINUTE, last_error='DEVICE_OFFLINE', row_ver=row_ver+1, updated_at=?
+ WHERE id=? AND row_ver=? AND status='PENDING'`, now, now, id, rowVer))
+}
+
 func leaseResult(id uint64, op string, res *gorm.DB) (bool, error) {
 	if res.Error != nil {
 		return false, fmt.Errorf("repository: outbox %d %s: %w", id, op, res.Error)

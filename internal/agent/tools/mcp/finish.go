@@ -115,7 +115,7 @@ func (g *Gateway) putRaw(ctx context.Context, c *callState, res Result) *uint64 
 
 // replay 返回去重命中的 OK 行：结果取自 raw 对象（未脱敏的标准化 Result；未配置 Mask 时 result_summary 即原值），
 // 新鲜度按 collected_at 相对当前时钟重算；trace 仍只写脱敏摘要。取不回原值时返回 false，由调用方重做，
-// 不把脱敏后的数据交给模型。
+// 不把脱敏后的数据交给模型；复检调用命中的是缓存回落结果时同样返回 false。
 func (g *Gateway) replay(ctx context.Context, c *callState, hit model.ToolCallHit) (agent.ToolResult, bool) {
 	body, err := g.original(ctx, c, hit)
 	if err != nil {
@@ -127,6 +127,12 @@ func (g *Gateway) replay(ctx context.Context, c *callState, hit model.ToolCallHi
 	if err := json.Unmarshal(body, &r); err != nil {
 		g.opt.Logger.WarnContext(ctx, "mcp dedup result undecodable, invoke again", "tool", c.call.Tool,
 			"tool_call_id", hit.ID, "err", err)
+		return agent.ToolResult{}, false
+	}
+	if c.call.Recheck && r.Source == model.ToolSourceCache {
+		// 下发前复检不得沿用原 run 的回落结果（P1 §6.7）：重调 Server，失败即复检无结论。
+		g.opt.Logger.InfoContext(ctx, "mcp dedup hit is a cache fallback, recheck invokes again", "tool", c.call.Tool,
+			"tool_call_id", hit.ID)
 		return agent.ToolResult{}, false
 	}
 	res := agent.ToolResult{ToolCallID: hit.ID, Status: model.ToolStatusOK, Source: r.Source, Data: r.Data,

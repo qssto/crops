@@ -54,6 +54,20 @@ func TestLoadTools(t *testing.T) {
 		{name: "mock without mock_dir", errSubstr: "tools.mock_dir",
 			file: write("nodir.yaml", strings.Replace(toolsBase, "  mock_dir: configs/mock\n", "", 1))},
 		{name: "missing file", file: filepath.Join(dir, "nope.yaml"), errSubstr: "read"},
+		{name: "cache windows", file: write("cache.yaml", strings.Replace(toolsBase, "crop: {mode: mock, timeout: 3s, level: read}",
+			"crop: {mode: mock, timeout: 3s, level: read, cache: {fresh: 1h, max_staleness: 24h}}", 1)),
+			check: func(t *testing.T, c *Tools) {
+				fresh, stale := c.CacheWindows()
+				if len(fresh) != 1 || fresh["crop"] != time.Hour || stale["crop"] != 24*time.Hour {
+					t.Fatalf("fresh=%v stale=%v", fresh, stale)
+				}
+			}},
+		{name: "device cache rejected", errSubstr: "tools.device.cache",
+			file: write("devcache.yaml", strings.Replace(toolsBase, "device: {mode: mock, timeout: 3s, level: read}",
+				"device: {mode: mock, timeout: 3s, level: read, cache: {fresh: 1m, max_staleness: 1h}}", 1))},
+		{name: "max_staleness below fresh", errSubstr: "max_staleness",
+			file: write("stale.yaml", strings.Replace(toolsBase, "crop: {mode: mock, timeout: 3s, level: read}",
+				"crop: {mode: mock, timeout: 3s, level: read, cache: {fresh: 2h, max_staleness: 1h}}", 1))},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -93,5 +107,10 @@ func TestLoadTools_RepoFile(t *testing.T) {
 		if s.Mode != ToolModeMock || s.Level != "read" {
 			t.Errorf("%s: mode=%s level=%s, want mock/read in P0", s.Name, s.Mode, s.Level)
 		}
+	}
+	fresh, stale := c.CacheWindows() // P1 §6.7：天气新鲜 10min / 回落 1h，作物 24h / 24h
+	if fresh["weather"] != 10*time.Minute || stale["weather"] != time.Hour || fresh["crop"] != 24*time.Hour ||
+		stale["crop"] != 24*time.Hour || len(fresh) != 2 {
+		t.Errorf("cache windows fresh=%v stale=%v", fresh, stale)
 	}
 }

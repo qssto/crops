@@ -44,6 +44,7 @@ expect:
   approval:
     risk_level: HIGH
     risk_reasons: [PESTICIDE, NEAR_THRESHOLD:wind_speed_max]
+    risk_reasons_exact: true
   trajectory:
     must_call: [weather.forecast, field.pest_survey]
     must_not_call: ["device.actuate", "device.dispatch"]

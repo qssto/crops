@@ -31,16 +31,30 @@ func skeleton(f func(kit.RealConfig) *kit.RealServer) realFactory {
 }
 
 type entry struct {
-	mock mockLoader
-	real realFactory
+	mock  mockLoader
+	real  realFactory
+	specs func() []mcp.ToolSpec
 }
 
 // registry 是 server 名 → 实现，名字与 config.Tools.Servers() 一致。
 var registry = map[string]entry{
-	weather.Name: {mock: weather.LoadMock, real: skeleton(weather.NewReal)},
-	crop.Name:    {mock: crop.LoadMock, real: skeleton(crop.NewReal)},
-	field.Name:   {mock: field.LoadMock, real: skeleton(field.NewReal)},
-	device.Name:  {mock: device.LoadMock, real: device.NewReal},
+	weather.Name: {mock: weather.LoadMock, real: skeleton(weather.NewReal), specs: weather.Specs},
+	crop.Name:    {mock: crop.LoadMock, real: skeleton(crop.NewReal), specs: crop.Specs},
+	field.Name:   {mock: field.LoadMock, real: skeleton(field.NewReal), specs: field.Specs},
+	device.Name:  {mock: device.LoadMock, real: device.NewReal, specs: device.Specs},
+}
+
+// Lookup 返回工具名的声明与所属 server（mock / real 共用，与网关注册表同源）；评测夹具与样本校验据此按与网关相同的
+// Cacheable / TimeSensitive 判定超时回落。未注册的工具返回 false。
+func Lookup(tool string) (server string, spec mcp.ToolSpec, ok bool) {
+	for name, e := range registry {
+		for _, sp := range e.specs() {
+			if sp.Name == tool {
+				return name, sp, true
+			}
+		}
+	}
+	return "", mcp.ToolSpec{}, false
 }
 
 // Build 按配置装配全部 Server（顺序同 config.Tools.Servers()）。dir 把 field_id 翻成地块编码，供 mock 查数据。

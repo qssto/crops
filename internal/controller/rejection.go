@@ -7,6 +7,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/gin-gonic/gin"
 
@@ -84,9 +86,19 @@ func rejectionRecord(r model.RejectionReason) []string {
 		csvSafe(text), u(r.OperatorID), csvSafe(string(r.OperatorRole)), r.CreatedAt.UTC().Format(time.RFC3339)}
 }
 
-// csvSafe 防 CSV 公式注入：以 = + - @（及制表符 / 回车）开头的单元格前加 '，表格软件按文本显示；引号与换行由 encoding/csv 转义。
+// csvFormulaLead 是表格软件会当公式起始的字符（含全角 ＝ ＋ － ＠，部分软件按半角处理）。
+const csvFormulaLead = "=+-@＝＋－＠"
+
+// csvSafe 防 CSV 公式注入：以制表符 / 回车开头，或去掉前导空白（含全角空格）后以 csvFormulaLead 开头的单元格前加 '，
+// 表格软件按文本显示；引号与换行由 encoding/csv 转义。
 func csvSafe(s string) string {
-	if s != "" && strings.ContainsRune("=+-@\t\r", rune(s[0])) {
+	if s == "" {
+		return s
+	}
+	if s[0] == '\t' || s[0] == '\r' {
+		return "'" + s
+	}
+	if r, _ := utf8.DecodeRuneInString(strings.TrimLeftFunc(s, unicode.IsSpace)); strings.ContainsRune(csvFormulaLead, r) {
 		return "'" + s
 	}
 	return s

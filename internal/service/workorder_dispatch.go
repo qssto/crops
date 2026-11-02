@@ -80,6 +80,7 @@ type LiveFlagReader interface {
 //   - Recheck 为 nil 时 DRY_RUN 单跳过 ④ 并告警，REAL 单失败关闭；非 nil 时须有 Cards 与 Reopener（④ 不通过退回）。
 //   - MaxAttempts：order.dispatch 的 attempt 上限（config dispatch.max_attempts）；ReceiptTimeout：回执时限，写 receipt_due_at；
 //     DeviceWaitMax：选不到设备的最长等待（config dispatch.device_wait_max，单无 dispatch_deadline_at 时生效）。
+//   - Notify / OfflineTextKey：设备离线通知（P1 L6，经 L5 / L6 共用接缝写 notify.send outbox；文案 key 取自 fault_matrix）。
 type DispatchDeps struct {
 	Adapter        adapter.DryRunner
 	Devices        DeviceRegistry
@@ -100,6 +101,8 @@ type DispatchDeps struct {
 	MaxAttempts    int
 	ReceiptTimeout time.Duration
 	DeviceWaitMax  time.Duration
+	Notify         NotifyOutboxWriter
+	OfflineTextKey string
 }
 
 func (d DispatchDeps) validate() error {
@@ -112,6 +115,8 @@ func (d DispatchDeps) validate() error {
 		return fmt.Errorf("%w: recheck needs cards and reopener", ErrDispatchNotConfigured)
 	case d.MaxAttempts < 1 || d.ReceiptTimeout <= 0 || d.DeviceWaitMax <= 0:
 		return fmt.Errorf("%w: max_attempts >= 1, receipt_timeout > 0 and device_wait_max > 0 required", ErrDispatchNotConfigured)
+	case d.Notify == nil || d.OfflineTextKey == "":
+		return fmt.Errorf("%w: notify and offline text key required", ErrDispatchNotConfigured)
 	}
 	return nil
 }

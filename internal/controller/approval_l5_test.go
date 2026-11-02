@@ -178,3 +178,36 @@ func TestRejectionExportCSV(t *testing.T) {
 		t.Fatalf("comma/newline text not quoted: %s", body)
 	}
 }
+
+// P1-L5 审查修复 13：前导空白（含全角空格）后的公式字符、全角 ＝＋－＠ 也要加 '（应失败：只看首字节时
+// " =1"、"＝1" 原样输出，表格软件仍可能当公式执行）。
+func TestCSVSafe(t *testing.T) {
+	tests := []struct{ in, want string }{
+		{"", ""},
+		{"正常文本", "正常文本"},
+		{"a=b", "a=b"},
+		{"=1+1", "'=1+1"},
+		{"+1", "'+1"},
+		{"-2", "'-2"},
+		{"@cmd", "'@cmd"},
+		{"\t=1", "'\t=1"},
+		{"\r=1", "'\r=1"},
+		{"\tplain", "'\tplain"},
+		{" =1", "' =1"},
+		{"   +1", "'   +1"},
+		{"\n-2", "'\n-2"},
+		{"　@cmd", "'　@cmd"},
+		{"＝1", "'＝1"},
+		{"＋1", "'＋1"},
+		{"－2", "'－2"},
+		{"＠cmd", "'＠cmd"},
+		{" ＝HYPERLINK()", "' ＝HYPERLINK()"},
+		{"   ", "   "},
+		{" 正常", " 正常"},
+	}
+	for _, tt := range tests {
+		if got := csvSafe(tt.in); got != tt.want {
+			t.Errorf("csvSafe(%q) = %q, want %q", tt.in, got, tt.want)
+		}
+	}
+}

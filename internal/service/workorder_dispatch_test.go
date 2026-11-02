@@ -166,6 +166,7 @@ type dispatchFixture struct {
 	idem     *memIdem
 	flags    *fakeLiveFlags
 	audit    *memAudit
+	notify   *memNotify
 	svc      *WorkOrderService
 	deps     DispatchDeps
 }
@@ -212,7 +213,7 @@ func newDispatchFixture(t *testing.T, status model.WorkOrderStatus, lockHeld boo
 		TimeWindowFrom: dispatchNow, TimeWindowTo: dispatchNow.Add(4 * time.Hour), Status: string(status),
 		DispatchMode: string(model.DispatchDryRun), DispatchDeadlineAt: &deadline, RowVer: 2}}
 	f := &dispatchFixture{store: store, events: &fakeEvents{}, dev: &countingAdapter{}, flags: &fakeLiveFlags{},
-		audit: &memAudit{}, picker: &fakePicker{id: "uav-1"}, idem: &memIdem{m: map[string]string{}},
+		audit: &memAudit{}, notify: &memNotify{}, picker: &fakePicker{id: "uav-1"}, idem: &memIdem{m: map[string]string{}},
 		reopener: &fakeReopener{store: store},
 		real: &fakeDevice{caps: adapter.Capabilities{Cancel: true, IdemKey: true},
 			rc: model.DeviceReceipt{Status: model.AttemptAccepted, DeviceJobID: "job-1"}}}
@@ -223,7 +224,7 @@ func newDispatchFixture(t *testing.T, status model.WorkOrderStatus, lockHeld boo
 		Picker: f.picker, Recheck: f.pre, Reopener: f.reopener, Store: store, Tx: store, Cards: fakeCards{},
 		Epochs: fakeEpochs{}, Locks: memLocks{held: lockHeld}, Keys: keys, Flags: f.flags, Audit: f.audit,
 		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)), MaxAttempts: 2, ReceiptTimeout: 30 * time.Minute,
-		DeviceWaitMax: 2 * time.Hour}
+		DeviceWaitMax: 2 * time.Hour, Notify: f.notify, OfflineTextKey: testOfflineTextKey}
 	if err := f.svc.SetDispatch(f.deps); err != nil {
 		t.Fatal(err)
 	}
@@ -539,6 +540,8 @@ func TestDispatch_NotConfigured(t *testing.T) {
 		"recheck needs reopen": func(d *DispatchDeps) { d.Reopener = nil },
 		"zero max attempts":    func(d *DispatchDeps) { d.MaxAttempts = 0 },
 		"zero receipt timeout": func(d *DispatchDeps) { d.ReceiptTimeout = 0 },
+		"no notify":            func(d *DispatchDeps) { d.Notify = nil },
+		"no offline text key":  func(d *DispatchDeps) { d.OfflineTextKey = "" },
 	} {
 		d := full
 		mutate(&d)

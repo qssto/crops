@@ -17,7 +17,7 @@ fixtures:
       - match: {field: field-003}
         returns:
           - {wind_speed_ms: 2.5, rain_mm_24h: 0, temp_c: 30, collected_at: "2026-07-16T17:00:00+08:00", source: mock-station}
-          - {wind_speed_ms: 2.5, rain_mm_24h: 12, temp_c: 27, collected_at: "2026-07-16T20:00:00+08:00", source: mock-station}
+          - {wind_speed_ms: 2.5, rain_mm_24h: 12, temp_c: 27, collected_at: "2026-07-16T17:50:00+08:00", source: mock-station}
     crop.phenology:
       - match: {field: field-003}
         return: {stage: 分蘖期, sub_stage: 分蘖末期}

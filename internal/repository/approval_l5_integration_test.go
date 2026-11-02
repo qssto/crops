@@ -115,37 +115,74 @@ func TestRejectionInsertAndExport_Integration(t *testing.T) {
 }
 
 // P1 L5 第 5 条：即将过期扫描只取 expires_at ∈ [now, now+1h] 的 OPEN 票；已过期 / 1h 之外 / 非 OPEN 不取。
+// 审查修复 10（红线）：窗口内票数超过 limit 时按 expires_at, id 升序分批取，已写过 EXPIRING_SOON 提醒的票（outbox.dedup_key
+// 与 model.NotifyDedupKey 同格式）不再取出，后面的票才轮得到；别的通知类型的同票 dedup_key 不影响；limit ≤ 0 报错。
 func TestListExpiring_Integration(t *testing.T) {
 	e := itest.Setup(t, "repol5")
 	slot := e.Fresh(t, t0)
 	ctx := t.Context()
 	repo := repository.NewDecisionRepo(slot.DB, slot.Clock)
-	ticket := func(status string, expires time.Time) uint64 {
+	type ticketRef struct{ id, order uint64 }
+	ticket := func(status string, expires time.Time) ticketRef {
 		runID := itest.InsertRun(t, slot.DB, t0)
 		orderID := itest.InsertOrder(t, slot.DB, runID, "PENDING_APPROVAL", t0)
 		l6Exec(t, slot.DB, `INSERT INTO approval_ticket (tenant_id, farm_id, run_id, order_id, ticket_seq, risk_level, required_role,
   initiator_id, snapshot_digest, snapshot_raw_id, status, expires_at, created_at, updated_at)
   VALUES (?, ?, ?, ?, 1, 'LOW', '["agronomist"]', 1001, ?, 1, ?, ?, ?, ?)`,
 			itest.TenantID, itest.FarmID, runID, orderID, fmt.Sprintf("%064d", 0), status, expires, t0, t0)
-		return uint64(itest.Count(t, slot.DB, `SELECT MAX(id) FROM approval_ticket WHERE order_id=?`, orderID))
+		return ticketRef{uint64(itest.Count(t, slot.DB, `SELECT MAX(id) FROM approval_ticket WHERE order_id=?`, orderID)), orderID}
 	}
-	soon := ticket("OPEN", t0.Add(30*time.Minute))
+	// 插入顺序与到期顺序相反：只靠 id 顺序 / 无 ORDER BY 取不出 [a, b]
+	c := ticket("OPEN", t0.Add(40*time.Minute))
+	b := ticket("OPEN", t0.Add(20*time.Minute))
+	a := ticket("OPEN", t0.Add(10*time.Minute))
 	ticket("OPEN", t0.Add(-time.Minute))       // 已过期：归 approval_expire
 	ticket("OPEN", t0.Add(2*time.Hour))        // 1h 之外
 	ticket("APPROVED", t0.Add(30*time.Minute)) // 已决策
-	if _, err := repo.ListExpiring(ctx, repository.SystemScope{}, t0); err == nil {
+	sys := repository.NewSystemScope("approval_expiring")
+	list := func(limit int) []uint64 {
+		t.Helper()
+		rows, err := repo.ListExpiring(ctx, sys, t0, limit)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ids := make([]uint64, 0, len(rows))
+		for _, r := range rows {
+			ids = append(ids, r.ID)
+		}
+		return ids
+	}
+	notify := func(kind model.NotifyKind, tk ticketRef) {
+		t.Helper()
+		ref := model.OrderRef{TenantID: itest.TenantID, FarmID: itest.FarmID, OrderID: tk.order}
+		if err := repo.InTx(ctx, func(tx *repository.DB) error {
+			_, err := repository.NotifyOutboxRepo{}.InsertTx(ctx, tx, ref, model.NotifyDedupKey(kind, tk.order, tk.id), []byte(`{}`), t0)
+			return err
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := repo.ListExpiring(ctx, repository.SystemScope{}, t0, repository.ExpiringBatch); err == nil {
 		t.Fatal("ListExpiring with zero SystemScope succeeded, want error")
 	}
-	rows, err := repo.ListExpiring(ctx, repository.NewSystemScope("approval_expiring"), t0)
-	if err != nil {
-		t.Fatal(err)
+	if _, err := repo.ListExpiring(ctx, sys, t0, 0); err == nil {
+		t.Fatal("ListExpiring with limit 0 succeeded, want error")
 	}
-	ids := make([]uint64, 0, len(rows))
-	for _, r := range rows {
-		ids = append(ids, r.ID)
+	if got := list(repository.ExpiringBatch); !slices.Equal(got, []uint64{a.id, b.id, c.id}) {
+		t.Fatalf("expiring tickets = %v, want [%d %d %d]", got, a.id, b.id, c.id)
 	}
-	if !slices.Equal(ids, []uint64{soon}) {
-		t.Fatalf("expiring tickets = %v, want [%d]", ids, soon)
+	if got := list(2); !slices.Equal(got, []uint64{a.id, b.id}) {
+		t.Fatalf("first batch = %v, want [%d %d]", got, a.id, b.id)
+	}
+	notify(model.NotifyPendingApproval, c) // 别的通知类型不算已提醒
+	notify(model.NotifyExpiringSoon, a)
+	notify(model.NotifyExpiringSoon, b)
+	if got := list(2); !slices.Equal(got, []uint64{c.id}) {
+		t.Fatalf("second batch after a, b notified = %v, want [%d]", got, c.id)
+	}
+	notify(model.NotifyExpiringSoon, c)
+	if got := list(2); len(got) != 0 {
+		t.Fatalf("third batch = %v, want none", got)
 	}
 }
 

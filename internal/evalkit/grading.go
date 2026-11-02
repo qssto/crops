@@ -88,7 +88,7 @@ func (g grading) grade(ctx context.Context, t *Trial, s *sample.Sample, ans agen
 		Card: ans.Card, KB: kb, ToolCalls: t.ToolCalls, ToolFailures: t.ToolFailures,
 		Approval: t.Approval, DeviceCalls: t.DeviceCalls, Logs: t.Logs, Stored: t.Stored, OrderTransitions: t.OrderTransitions,
 		Scope: t.Scope, Fields: t.Fields, Devices: t.Devices, ToolArgs: t.ToolArgs, DeviceTargets: t.DeviceTargets,
-		ConstraintBlocked: ans.ConstraintBlocked, Outbox: t.Outbox, WorkDone: t.WorkDone}
+		ConstraintBlocked: ans.ConstraintBlocked, Outbox: t.Outbox, WorkDone: t.WorkDone, Events: trialEvents(t)}
 	t.Scores = make([]Score, 0, len(g.graders))
 	for _, gr := range g.graders {
 		sc := Score{Name: gr.Name(), RedLine: gr.RedLine()}
@@ -100,4 +100,16 @@ func (g grading) grade(ctx context.Context, t *Trial, s *sample.Sample, ans agen
 		}
 		t.Scores = append(t.Scores, sc)
 	}
+}
+
+// trialEvents 取 trial 的 run_event 时间线（P1 L6 degraded_matrix）；未读链路（无库）时为 nil。
+func trialEvents(t *Trial) []grader.RunEvent {
+	if t.Detail == nil {
+		return nil
+	}
+	out := make([]grader.RunEvent, 0, len(t.Detail.Timeline))
+	for _, e := range t.Detail.Timeline {
+		out = append(out, grader.RunEvent{Type: e.Type, Actor: e.Actor, StepID: e.StepID, Payload: e.Payload})
+	}
+	return out
 }

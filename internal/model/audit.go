@@ -26,7 +26,7 @@ const (
 	AuditResultDenied = "DENIED"
 )
 
-// eventAudit 是 event_type → audit_log.action 的投影表（P0 L7 流程 6）；未列出的（STEP_*、DEGRADED、
+// eventAudit 是 event_type → audit_log.action 的投影表（P0 L7 流程 6）；未列出的（STEP_*、
 // RUN_INTERRUPTED / RUN_RESUMED / RUN_COMPLETED / RUN_FAILED）不投影。
 var eventAudit = map[EventType]AuditAction{
 	EventRunStarted:       AuditAsk,
@@ -42,6 +42,8 @@ var eventAudit = map[EventType]AuditAction{
 	EventDispatched:       AuditDispatch,
 	// P1 L3：约束拦截按审批类审计，result=FAILED（repository.auditResult）。
 	EventConstraintBlocked: AuditApproval,
+	// P1 L6：降级事件（target fault:{fault}，result=OK）。
+	EventDegraded: AuditDegraded,
 }
 
 // AuditAction 返回该事件投影到 audit_log 的 action；ok=false 表示不投影。

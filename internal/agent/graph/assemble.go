@@ -27,23 +27,27 @@ const (
 // claim_path 取值（与 citation_valid 打分器一致）。
 const claimConclusion = "conclusion"
 
-// refusedConclusion 是拒答卡结论（不含数字）。
+// refusedConclusion 是非故障类拒答的卡片结论（不含数字）；DATA_MISSING / KB_MISS / LLM_UNAVAILABLE
+// 是故障矩阵的 refuse_reason，文案取 configs/texts/zh-CN.yaml（refusedText）。
 var refusedConclusion = map[string]string{
-	RefuseOutOfScope:     "该问题超出本农场水稻业务范围，无法给出建议",
-	RefuseDataMissing:    "所需田块数据缺失或已过期，暂无法给出建议，请补充数据后再问",
-	RefuseKBMiss:         "知识库未覆盖该问题，不凭经验作答，请咨询农技专家",
-	RefuseLLMUnavailable: "模型暂不可用且规则层无明确结论，请稍后再问",
-	RefuseValidation:     "建议未通过校验，已拦截，请农技专家人工处理",
+	RefuseOutOfScope: "该问题超出本农场水稻业务范围，无法给出建议",
+	RefuseValidation: "建议未通过校验，已拦截，请农技专家人工处理",
 }
 
+// refusedFallback 是未登记拒答原因的结论。
+const refusedFallback = "暂无法给出建议"
+
 // assemble：把规则层结论、模型结论与数值组装为建议卡（含逐字段引用）；已拒答则组装拒答卡。
-func (a *Agent) assemble(_ context.Context, s *state) (*state, error) {
+func (a *Agent) assemble(ctx context.Context, s *state) (*state, error) {
 	if s.stopped() {
 		s.card = a.refusedCard(s)
+		if err := a.emitRefusalFault(ctx, s); err != nil {
+			return s, fmt.Errorf("assemble: %w", err)
+		}
 		return s, nil
 	}
 	c := a.baseCard(s)
-	c.Outcome, c.AdviceType, c.Degraded = model.OutcomeAdvice, s.dec.AdviceType, s.degraded
+	c.Outcome, c.AdviceType, c.Degraded = model.OutcomeAdvice, s.dec.AdviceType, s.degraded || s.staleData
 	c.Conclusion = fill(s.conclusion, s.numbers)
 	c.ProductCandidates = append([]string(nil), s.candidates...)
 	if s.selected != "" {
@@ -87,10 +91,7 @@ func (a *Agent) baseCard(s *state) *model.AdviceCard {
 func (a *Agent) refusedCard(s *state) *model.AdviceCard {
 	c := a.baseCard(s)
 	c.Outcome, c.RefuseReason, c.NextAction = model.OutcomeRefused, s.refuse, model.NextNone
-	c.Conclusion = refusedConclusion[s.refuse]
-	if c.Conclusion == "" {
-		c.Conclusion = "暂无法给出建议"
-	}
+	c.Conclusion = a.refusedText(s.refuse)
 	return c
 }
 

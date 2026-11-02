@@ -31,7 +31,19 @@ type ToolServer struct {
 	Timeout time.Duration `mapstructure:"timeout"` // 单次调用超时（gateway 与 real HTTP 客户端共用）
 	Level   string        `mapstructure:"level"`   // 策略等级 read / write / actuate；P0 四个 Server 均为 read
 	Real    RealUpstream  `mapstructure:"real"`
+	// Cache 是 cache:mcp 时间窗（P1 L6，仅 weather / crop；field / device 不缓存）。
+	Cache ToolCache `mapstructure:"cache"`
 }
+
+// ToolCache 是一个 Server 的缓存窗：正常读只认 Fresh 内的值；TIMEOUT / UPSTREAM 时 now - collected_at ≤ MaxStaleness
+// 的缓存可回落（source=cache），MaxStaleness 同时是缓存写入 TTL。两者都为 0 表示未配置（该 Server 用默认值，其余 Server 的配置不影响它）。
+type ToolCache struct {
+	Fresh        time.Duration `mapstructure:"fresh"`
+	MaxStaleness time.Duration `mapstructure:"max_staleness"`
+}
+
+// configured 表示该 Server 声明了缓存窗。
+func (c ToolCache) configured() bool { return c.Fresh != 0 || c.MaxStaleness != 0 }
 
 // RealUpstream 是 real 实现的上游参数。APIKey 是密钥，只从环境变量 AS_TOOLS_{SERVER}_REAL_API_KEY 读取。
 type RealUpstream struct {
@@ -43,6 +55,8 @@ var (
 	toolServerNames = []string{"weather", "crop", "field", "device"}
 	toolModes       = map[string]bool{ToolModeMock: true, ToolModeReal: true}
 	toolLevels      = map[string]bool{"read": true, "write": true, "actuate": true}
+	// uncachedServers 不得配置缓存（地块档案按需读，设备状态必须实时）。
+	uncachedServers = map[string]bool{"field": true, "device": true}
 )
 
 // LoadTools 经 Viper 读取工具配置并校验，环境变量（前缀 AS_，如 AS_TOOLS_WEATHER_MODE=real）覆盖 yaml。
@@ -106,9 +120,39 @@ func (t Tools) validate() error {
 			errs = append(errs, fmt.Errorf("tools.%s.level %q not in [read write actuate]", s.Name, s.Level))
 		}
 		needMockDir = needMockDir || s.Mode == ToolModeMock
+		errs = append(errs, s.Cache.validate(s.Name))
 	}
 	if needMockDir && t.MockDir == "" {
 		errs = append(errs, errors.New("tools.mock_dir is required when any server runs in mock mode"))
 	}
 	return errors.Join(errs...)
+}
+
+func (c ToolCache) validate(server string) error {
+	switch {
+	case !c.configured():
+		return nil
+	case uncachedServers[server]:
+		return fmt.Errorf("tools.%s.cache: %s is never cached", server, server)
+	case c.Fresh <= 0 || c.MaxStaleness <= 0:
+		return fmt.Errorf("tools.%s.cache: fresh and max_staleness must both be > 0", server)
+	case c.MaxStaleness < c.Fresh:
+		return fmt.Errorf("tools.%s.cache: max_staleness %s < fresh %s", server, c.MaxStaleness, c.Fresh)
+	}
+	return nil
+}
+
+// CacheWindows 返回声明了缓存窗的 Server 的新鲜期与最大陈旧度（server 名 → 时长），只含声明了的 Server；
+// 未声明的 Server 由 mcp.NewCacheRule 逐 server 合并默认值（网关与评测夹具同一合并）。
+func (t Tools) CacheWindows() (fresh, maxStale map[string]time.Duration) {
+	for _, s := range t.Servers() {
+		if !s.Cache.configured() {
+			continue
+		}
+		if fresh == nil {
+			fresh, maxStale = map[string]time.Duration{}, map[string]time.Duration{}
+		}
+		fresh[s.Name], maxStale[s.Name] = s.Cache.Fresh, s.Cache.MaxStaleness
+	}
+	return fresh, maxStale
 }
