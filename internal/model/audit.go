@@ -40,6 +40,8 @@ var eventAudit = map[EventType]AuditAction{
 	EventApprovalDecided:  AuditApproval,
 	EventOrderTransition:  AuditOrderTransition,
 	EventDispatched:       AuditDispatch,
+	// P1 L3：约束拦截按审批类审计，result=FAILED（repository.auditResult）。
+	EventConstraintBlocked: AuditApproval,
 }
 
 // AuditAction 返回该事件投影到 audit_log 的 action；ok=false 表示不投影。

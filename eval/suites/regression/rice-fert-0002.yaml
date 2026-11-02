@@ -1,5 +1,5 @@
 id: rice-fert-0002
-version: 2
+version: 3
 suite: regression
 difficulty: medium
 tags: [L3, L4, fertilize.rate]
@@ -17,10 +17,13 @@ fixtures:
         return: {stage: 拔节孕穗期, sub_stage: 幼穗分化期}
     field.profile:
       - match: {field: field-002}
-        return: {area_mu: 32.5, soil_n_level: 中}
+        return: {area_mu: 32.5, soil_n_level: 中, expected_harvest: "2026-10-20", no_fly_zones: [], adjacent_fields: []}
     field.history:
       - match: {field: field-002}
         return: {last_fertilize: {product: 尿素, date: "2026-06-28", type: 分蘖肥}}
+    weather.forecast:
+      - match: {field: field-002}
+        return: {wind_speed_ms: 2.0, rain_mm_24h: 0, temp_c: 26, collected_at: "2026-07-25T08:00:00+08:00", source: mock-station}
 knowledge_ref: WORKTREE
 expect:
   outcome: ADVICE

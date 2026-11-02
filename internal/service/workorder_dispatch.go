@@ -254,7 +254,10 @@ func (s *WorkOrderService) precheck(ctx context.Context, o repository.DispatchOr
 	}
 	scope.UserID = src.UserID
 	q := agent.Question{Text: src.Question, Scope: scope, FieldID: src.FieldID, RunID: o.RunID}
-	res, err := d.Recheck.PreDispatch(ctx, PreDispatchInput{Order: ref, Question: q, Card: card, Epoch: epoch})
+	work := model.WorkOrder{OrderID: o.ID, TenantID: o.TenantID, FarmID: o.FarmID, FieldID: o.FieldID,
+		WorkType: model.WorkType(o.WorkType), DeviceType: o.DeviceType, Payload: o.Payload,
+		DispatchMode: model.DispatchMode(o.DispatchMode)}
+	res, err := d.Recheck.PreDispatch(ctx, PreDispatchInput{Order: ref, Question: q, Card: card, Epoch: epoch, Work: work})
 	if err != nil {
 		return false, fmt.Errorf("service: dispatch: %w", err)
 	}

@@ -31,6 +31,15 @@ const observationSchema = `{"type":"object","additionalProperties":false,"requir
 "target":{"type":"string","description":"防治对象编码，如 planthopper"},"name":{"type":"string"},
 "metric":{"type":"string","description":"与 crop.threshold 指标同名"},"value":{"type":"number","minimum":0},"unit":{"type":"string"}}}`
 
+// noFlyZoneSchema / adjacentFieldSchema 是地块档案的空域与相邻地块条目（P1 L3）；距离为地块边界到对方边界的最近距离。
+const noFlyZoneSchema = `{"type":"object","additionalProperties":false,"required":["kind","distance_m"],"properties":{
+"name":{"type":"string"},"kind":{"type":"string","enum":["no_fly","sensitive"]},"distance_m":{"type":"number","minimum":0}}}`
+
+const adjacentFieldSchema = `{"type":"object","additionalProperties":false,"required":["sensitive","bearing_deg","distance_m"],"properties":{
+"label":{"type":"string"},"crop":{"type":"string"},"sensitive":{"type":"boolean","description":"对漂移敏感（桑园 / 鱼塘 / 有机田等）"},
+"bearing_deg":{"type":"number","minimum":0,"maximum":360,"description":"相对本地块的方位（度，0 为正北）"},
+"distance_m":{"type":"number","minimum":0}}}`
+
 // Specs 返回 field 的工具声明（mock / real 共用）。
 func Specs() []mcp.ToolSpec {
 	return []mcp.ToolSpec{
@@ -42,7 +51,10 @@ func Specs() []mcp.ToolSpec {
 "required":["field_id","field_code","area_mu","crop","variety","sowing_date","soil_texture","irrigation"],"properties":{` +
 				kit.FieldIDOut + `,"field_code":{"type":"string"},"area_mu":{"type":"number","exclusiveMinimum":0,"description":"面积（亩）"},
 "crop":{"type":"string"},"variety":{"type":"string"},"sowing_date":` + kit.DateType + `,"transplant_date":` + kit.DateType + `,
-"soil_texture":{"type":"string"},"irrigation":{"type":"string"}}}`),
+"soil_texture":{"type":"string"},"irrigation":{"type":"string"},
+"expected_harvest":` + kit.DateType + `,"no_fly_zones":{"type":"array","items":` + noFlyZoneSchema + `,
+"description":"周边禁飞区 / 敏感区（P1 L3 约束校验；缺失即不放行无人机作业）"},
+"adjacent_fields":{"type":"array","items":` + adjacentFieldSchema + `,"description":"相邻地块（P1 L3 漂移校验）"}}}`),
 			Level: mcp.LevelRead, Idempotent: true,
 		},
 		{

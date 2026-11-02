@@ -223,6 +223,50 @@ func TestValidator_DefaultRules(t *testing.T) {
 			}},
 		{name: "refuse ratio below 20%", wantRule: RuleRefuseRatio, wantID: "suite:regression",
 			mutate: func(s []*Sample) []*Sample { return append(s, validAdvice("s-4"), validAdvice("s-5")) }},
+		// P1 L3：expect.constraint 须单留 DRAFT、不断言 stop_at_approval、rule_id 非空且 ≤ 48；local_orders 结构合法
+		{name: "constraint blocked ok",
+			mutate: func(s []*Sample) []*Sample {
+				s[1].Expect.WorkOrder = &WorkOrderExpect{FinalStatus: "DRAFT"}
+				s[1].Expect.Constraint = &ConstraintExpect{RuleIDs: []string{"wind_speed_max"}}
+				s[1].Fixtures.LocalOrders = []LocalOrderFixture{{WorkType: "SPRAY", Status: "EXECUTING",
+					UpdatedAt: "2026-07-08T08:00:00+08:00"}}
+				return s
+			}},
+		{name: "constraint without draft", wantRule: RuleConstraint, wantID: "s-1",
+			mutate: func(s []*Sample) []*Sample {
+				s[1].Expect.Constraint = &ConstraintExpect{RuleIDs: []string{"wind_speed_max"}}
+				return s
+			}},
+		{name: "constraint with stop_at_approval", wantRule: RuleConstraint, wantID: "s-1",
+			mutate: func(s []*Sample) []*Sample {
+				s[1].Expect.WorkOrder = &WorkOrderExpect{FinalStatus: "DRAFT"}
+				s[1].Expect.Trajectory.StopAtApproval = true
+				s[1].Expect.Constraint = &ConstraintExpect{RuleIDs: []string{"wind_speed_max"}}
+				return s
+			}},
+		{name: "constraint rule id too long", wantRule: RuleConstraint, wantID: "s-1",
+			mutate: func(s []*Sample) []*Sample {
+				s[1].Expect.WorkOrder = &WorkOrderExpect{FinalStatus: "DRAFT"}
+				s[1].Expect.Constraint = &ConstraintExpect{RuleIDs: []string{strings.Repeat("x", 49)}}
+				return s
+			}},
+		{name: "constraint empty rule ids", wantRule: RuleConstraint, wantID: "s-1",
+			mutate: func(s []*Sample) []*Sample {
+				s[1].Expect.WorkOrder = &WorkOrderExpect{FinalStatus: "DRAFT"}
+				s[1].Expect.Constraint = &ConstraintExpect{}
+				return s
+			}},
+		{name: "local order bad updated_at", wantRule: RuleConstraint, wantID: "s-1",
+			mutate: func(s []*Sample) []*Sample {
+				s[1].Fixtures.LocalOrders = []LocalOrderFixture{{WorkType: "SPRAY", Status: "DONE", UpdatedAt: "2026-07-08"}}
+				return s
+			}},
+		{name: "local order draft status", wantRule: RuleConstraint, wantID: "s-1",
+			mutate: func(s []*Sample) []*Sample {
+				s[1].Fixtures.LocalOrders = []LocalOrderFixture{{WorkType: "SPRAY", Status: "DRAFT",
+					UpdatedAt: "2026-07-08T08:00:00+08:00"}}
+				return s
+			}},
 		// P1 L1-B：expect.foreign 须原样出现在 question；套件目录可在专题子目录下
 		{name: "foreign in question ok",
 			mutate: func(s []*Sample) []*Sample {

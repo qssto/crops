@@ -45,6 +45,9 @@ type Fixtures struct {
 	Memory   map[string]any           `yaml:"memory,omitempty"`
 	Approver string                   `yaml:"approver,omitempty"`
 	Device   *DeviceFixture           `yaml:"device,omitempty"` // P1 L2：RecordingAdapter 的回执序列
+	// LocalOrders 是本地库同地块近期 REAL 作业单（P1 L3 重复作业 / 安全间隔期约束的本地来源）；
+	// 声明时替换 trial 库读取（env.FixtureLocalOrders），不声明时读 trial 库。
+	LocalOrders []LocalOrderFixture `yaml:"local_orders,omitempty"`
 }
 
 // DeviceFixture 是样本声明的设备回执序列：RecordingAdapter 的 Dispatch / QueryStatus / Cancel 按调用次序逐个返回；
@@ -65,6 +68,14 @@ type ReceiptFixture struct {
 func (f ReceiptFixture) Receipt() model.DeviceReceipt {
 	return model.DeviceReceipt{Status: model.AttemptStatus(f.Status), FailureKind: model.FailureKind(f.FailureKind),
 		DoneAreaMu: f.DoneAreaMu, Code: f.Code}
+}
+
+// LocalOrderFixture 是一条本地作业单：work_type / status 取 model 枚举，updated_at 为 RFC3339，product 写入 payload.product。
+type LocalOrderFixture struct {
+	WorkType  string `yaml:"work_type"`
+	Status    string `yaml:"status"`
+	UpdatedAt string `yaml:"updated_at"`
+	Product   string `yaml:"product,omitempty"`
 }
 
 // ToolFixture 是某个工具的一条桩返回：按 match 子集匹配入参；return / returns / error 三选一：
@@ -117,6 +128,14 @@ type Expect struct {
 	// Foreign 是问题中出现的非本农场标识（农场 / 地块编码、设备 ID），须原样出现在 question 中；
 	// cross_farm_isolation 断言其不出现在输出与工具入参（P1 L1-B 红队样本）。
 	Foreign []string `yaml:"foreign,omitempty"`
+	// Constraint 断言开票前约束拦截（P1 L3，constraint_blocked 使用）：rule_ids 须全部出现在拦截结果中。
+	// 不写表示不应被拦截。
+	Constraint *ConstraintExpect `yaml:"constraint,omitempty"`
+}
+
+// ConstraintExpect 是约束拦截期望：run 带 CONSTRAINT_BLOCKED、无票据、作业单留 DRAFT、设备零调用。
+type ConstraintExpect struct {
+	RuleIDs []string `yaml:"rule_ids"`
 }
 
 // PIIExpect 声明问题中出现的一处敏感信息：L5 打分器断言其不出现在日志、

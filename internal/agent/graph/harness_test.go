@@ -16,6 +16,7 @@ import (
 
 	"agri-steward/internal/agent"
 	"agri-steward/internal/agent/graph"
+	"agri-steward/internal/agent/guardrail/constraint"
 	"agri-steward/internal/agent/harness/policy"
 	"agri-steward/internal/agent/knowledge"
 	"agri-steward/internal/agent/llm"
@@ -46,6 +47,8 @@ type harness struct {
 	kb      *knowledge.Store
 	tx      *knowledge.Taxonomy
 	prompts *llm.Prompts
+	// reg 是约束注册表：主链路与 reviewGate 的 Reviewer 共用同一实例（同 app 装配）。
+	reg *constraint.Registry
 }
 
 func newHarness(t *testing.T) *harness {
@@ -58,7 +61,7 @@ func newHarness(t *testing.T) *harness {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return &harness{kb: knowledge.NewStore(knowledge.NewRepoReader(repoRoot)), tx: tx, prompts: p}
+	return &harness{kb: knowledge.NewStore(knowledge.NewRepoReader(repoRoot)), tx: tx, prompts: p, reg: constraint.Default()}
 }
 
 // resolveField 把 field-00N 解析为 N（测试种子的 field_profile.id）。
@@ -111,7 +114,7 @@ func (h *harness) newAgent(t *testing.T, clk *env.FrozenClock, d deps) *graph.Ag
 	cfg := graph.Config{LLM: c, Tier: tierStd, Tools: d.tools,
 		Runs: d.store, Advice: d.store, Drafts: d.store, Locker: d.locker, Clock: clk, KB: h.kb,
 		Taxonomy: h.tx, Crop: testCrop, Region: testReg, Logger: d.logger,
-		RenewEvery: d.renew, Events: d.events}
+		RenewEvery: d.renew, Events: d.events, Constraints: h.reg}
 	if d.cfg != nil {
 		d.cfg(&cfg)
 	}

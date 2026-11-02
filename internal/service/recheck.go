@@ -47,6 +47,8 @@ type PreDispatchInput struct {
 	Question agent.Question
 	Card     model.AdviceCard
 	Epoch    int
+	// Work 是作业单要素（order_id / field_id / 作业类型 / 设备 / 下发方式 / payload），P1 L3 复检约束取必检集合用。
+	Work model.WorkOrder
 }
 
 // PreDispatchResult 是复检结论：Changed 时原单已取消，NewRunID 为新建的 run（本农场 enable_advice 关时为 0）；Checks 为复检判定的 PRE_DISPATCH 约束。
@@ -61,7 +63,8 @@ type PreDispatchResult struct {
 // 复检无结论（agent.ErrRecheckInconclusive）原样返回，作业单不动，由调用方稍后重试。
 // 取消与新建 run 不在同一事务：取消提交后新建失败只返回错误（单已终态，重试 PreDispatch 会因非法迁移失败），由人工重新提问。
 func (s *RecheckService) PreDispatch(ctx context.Context, in PreDispatchInput) (PreDispatchResult, error) {
-	res, err := s.d.Rechecker.Recheck(ctx, agent.RecheckRequest{Question: in.Question, Card: in.Card, Epoch: in.Epoch})
+	res, err := s.d.Rechecker.Recheck(ctx, agent.RecheckRequest{Question: in.Question, Card: in.Card, Epoch: in.Epoch,
+		Order: in.Work})
 	if err != nil {
 		return PreDispatchResult{}, fmt.Errorf("service: recheck order %d: %w", in.Order.OrderID, err)
 	}

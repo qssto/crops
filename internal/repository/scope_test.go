@@ -43,6 +43,10 @@ func scopeRequiredCalls() map[string]func(model.Scope) error {
 		"DispatchRepo.RecheckSource": func(s model.Scope) error { _, err := DispatchRepo{}.RecheckSource(ctx, s, 1); return err },
 		"DispatchRepo.SupersedeRun":  func(s model.Scope) error { _, err := DispatchRepo{}.SupersedeRun(ctx, s, 1, 2, now); return err },
 		"FieldScope.Owns":            func(s model.Scope) error { _, err := FieldScope{}.Owns(ctx, s, 1); return err },
+		"LocalOrderRepo.RecentOrders": func(s model.Scope) error {
+			_, err := LocalOrderRepo{}.RecentOrders(ctx, s, 1, 0, now)
+			return err
+		},
 		"FieldScopeGuard.CheckField": func(s model.Scope) error { return FieldScopeGuard{}.CheckField(ctx, s, 1, 1) },
 		"FieldScopeGuard.Deny":       func(s model.Scope) error { return FieldScopeGuard{}.Deny(ctx, s, 1, "device:x") },
 		"FarmRegions.FarmRegion":     func(s model.Scope) error { _, err := FarmRegions{}.FarmRegion(ctx, s); return err },
@@ -103,8 +107,15 @@ func scopeRequiredCalls() map[string]func(model.Scope) error {
 			return err
 		},
 		"OutboxRepo.MarkDoneTx": func(s model.Scope) error { _, err := OutboxRepo{}.MarkDoneTx(ctx, nil, s, 1, now); return err },
-		"ApprovalRepo.InsertChecksTx": func(model.Scope) error {
-			return ApprovalRepo{}.InsertChecksTx(ctx, nil, noFarm, 1, nil, now)
+		"ApprovalRepo.UpsertChecksTx": func(model.Scope) error {
+			return ApprovalRepo{}.UpsertChecksTx(ctx, nil, noFarm, 1, nil, now)
+		},
+		"ApprovalRepo.LockTicketByOrderSeqTx": func(model.Scope) error {
+			_, _, err := ApprovalRepo{}.LockTicketByOrderSeqTx(ctx, nil, noFarm, 1)
+			return err
+		},
+		"ApprovalRepo.LockOrderTx": func(model.Scope) error {
+			return ApprovalRepo{}.LockOrderTx(ctx, nil, noFarm)
 		},
 		"DecisionRepo.DecideTicketTx": func(model.Scope) error {
 			return (&DecisionRepo{}).DecideTicketTx(ctx, nil, noFarmTicket, model.TicketApproved, 1, now)

@@ -13,6 +13,7 @@ import (
 	"gorm.io/gorm"
 
 	"agri-steward/internal/agent"
+	"agri-steward/internal/agent/guardrail/constraint"
 	"agri-steward/internal/agent/harness/policy"
 	"agri-steward/internal/model"
 	"agri-steward/internal/repository/rediskey"
@@ -62,7 +63,38 @@ func fullDeps(t *testing.T) Deps {
 		t.Fatal(err)
 	}
 	return Deps{Clock: fixedClock{}, Logger: logger, DB: &gorm.DB{}, Redis: rdb, Keys: keys,
-		RawStore: nopRaw{}, Agent: refuseAgent{}, Tools: nopTools{}, Risk: nopRisk{}, Permissions: perms}
+		RawStore: nopRaw{}, Agent: refuseAgent{}, Tools: nopTools{}, Risk: nopRisk{}, Constraints: passReviewer{},
+		Permissions: perms}
+}
+
+// passReviewer 放行全部作业单（装配测试不关心约束判定）；Registry 供主链路注入约束注册表（P1-L3 审查 15）。
+type passReviewer struct{}
+
+var passRegistry = constraint.Default()
+
+func (passReviewer) Review(o model.WorkOrder) ([]model.ConstraintCheck, []string) {
+	return o.ConstraintChecks, nil
+}
+
+func (passReviewer) Registry() *constraint.Registry { return passRegistry }
+
+// bareReviewer 不提供注册表（只实现 service.ConstraintReviewer）。
+type bareReviewer struct{}
+
+func (bareReviewer) Review(o model.WorkOrder) ([]model.ConstraintCheck, []string) {
+	return o.ConstraintChecks, nil
+}
+
+// TestConstraintRegistry_SharedWithReviewer（P1-L3 审查 15）：主链路取开票前 Reviewer 的同一注册表实例；
+// 拿不到注册表时为 nil（graph.New 报缺依赖），不另建一份。
+func TestConstraintRegistry_SharedWithReviewer(t *testing.T) {
+	reg := constraint.Default()
+	if got := constraintRegistry(constraint.NewReviewer(reg, nil)); got != reg {
+		t.Fatalf("registry %p, want reviewer's %p", got, reg)
+	}
+	if got := constraintRegistry(bareReviewer{}); got != nil {
+		t.Fatalf("bare reviewer registry = %p, want nil", got)
+	}
 }
 
 type nopRisk struct{}
@@ -87,6 +119,7 @@ func TestBuild(t *testing.T) {
 		{name: "missing tools", mutate: func(d *Deps) { d.Tools = nil }, wantErr: ErrMissingTools},
 		{name: "missing risk", mutate: func(d *Deps) { d.Risk = nil }, wantErr: ErrMissingRisk},
 		{name: "missing permissions", mutate: func(d *Deps) { d.Permissions = nil }, wantErr: ErrMissingPermissions},
+		{name: "missing constraints", mutate: func(d *Deps) { d.Constraints = nil }, wantErr: ErrMissingConstraints},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -107,7 +140,8 @@ func TestBuild(t *testing.T) {
 
 func TestBuild_ListsAllMissing(t *testing.T) {
 	_, err := Build(Deps{})
-	for _, want := range []error{ErrMissingAgent, ErrMissingClock, ErrMissingDB, ErrMissingRawStore, ErrMissingTools, ErrMissingRisk, ErrMissingPermissions} {
+	for _, want := range []error{ErrMissingAgent, ErrMissingClock, ErrMissingDB, ErrMissingRawStore, ErrMissingTools, ErrMissingRisk, ErrMissingPermissions,
+		ErrMissingConstraints} {
 		if !errors.Is(err, want) {
 			t.Errorf("err %v does not include %v", err, want)
 		}

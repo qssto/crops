@@ -16,6 +16,7 @@ import (
 
 	"agri-steward/internal/agent"
 	"agri-steward/internal/agent/calc"
+	"agri-steward/internal/agent/guardrail/constraint"
 	harnesscb "agri-steward/internal/agent/harness/callbacks"
 	"agri-steward/internal/agent/harness/checkpoint"
 	"agri-steward/internal/agent/harness/runner"
@@ -66,6 +67,11 @@ type Config struct {
 	// P1 L0 接缝，可空（空时 dispatch_mode 固定 DRY_RUN，同 P0）。P1-L2 起按设备类型判定（app 组合开关与 Registry）。
 	DispatchMode agent.DeviceDispatchModeSource
 
+	// P1 L3 约束校验：LocalOrders 可空（空时重复作业 / 安全间隔期判失败，失败关闭）；Constraints 必填，
+	// 须与开票前 Reviewer 同一注册表实例（app 由 Reviewer.Registry() 注入）。
+	LocalOrders agent.LocalOrderSource
+	Constraints *constraint.Registry
+
 	RenewEvery  time.Duration // 租约续期间隔，0 取 runner 默认
 	OrderWindow time.Duration // 建议作业窗口长度，0 取 24h
 }
@@ -94,6 +100,7 @@ func New(ctx context.Context, cfg Config) (*Agent, error) {
 		"LLM": cfg.LLM == nil, "Tools": cfg.Tools == nil, "Runs": cfg.Runs == nil, "Advice": cfg.Advice == nil,
 		"Drafts": cfg.Drafts == nil, "Locker": cfg.Locker == nil, "Clock": cfg.Clock == nil, "KB": cfg.KB == nil,
 		"Taxonomy": cfg.Taxonomy == nil, "Crop": cfg.Crop == "", "Region": cfg.Region == "",
+		"Constraints": cfg.Constraints == nil,
 	} {
 		if nilDep {
 			missing = append(missing, name)
@@ -282,7 +289,7 @@ func answerOf(runID uint64, final *state) (agent.Answer, error) {
 		return agent.Answer{RunID: runID}, errors.New("graph: run finished without card")
 	}
 	return agent.Answer{Outcome: final.card.Outcome, RefuseReason: final.card.RefuseReason, RunID: runID,
-		Card: final.card, Order: final.order, Ticket: final.ticket}, nil
+		Card: final.card, Order: final.order, Ticket: final.ticket, ConstraintBlocked: final.blocked}, nil
 }
 
 // ErrFarmRegionUnset 是农场 farm_profile.region 为空：知识按区域隔离，不能回落默认区域。

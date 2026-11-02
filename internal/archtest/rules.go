@@ -143,6 +143,13 @@ var Rules = []Rule{
 	// RawPutter / CallRecorder 接口落库，台账由下发器写，避免设备层反向依赖持久化与编排。
 	{Name: "adapter must not import repository/agent",
 		Applies: in("internal/adapter"), Bad: importsAny("internal/repository", "internal/agent")},
+	// P1-L3：约束校验器是纯函数（入参即全部观测），取数在 graph / service，便于单测与 L4 下发前复用（P1 手册 §6.4）。
+	{Name: "guardrail/constraint must not import repository/service/tools/adapter or do I/O",
+		Applies: in("internal/agent/guardrail/constraint"),
+		Bad: func(imp string) bool {
+			return importsAny("internal/repository", "internal/service", "internal/agent/tools", "internal/adapter")(imp) ||
+				hasPrefix("os", "net", "database/sql", "io/fs")(imp)
+		}},
 }
 
 // systemScopeCallers 是可构造 repository.SystemScope 的文件白名单（server 内扫描与 outbox 轮询）。

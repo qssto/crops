@@ -1,5 +1,5 @@
 id: rice-pest-0001
-version: 2
+version: 3
 suite: regression
 difficulty: medium
 tags: [L2, L4, protect.timing]
@@ -23,7 +23,10 @@ fixtures:
         return: {pest: 稻飞虱, density_per_100_hills: 1800, collected_at: "2026-07-14"}
     field.history:
       - match: {field: field-003}
-        return: {last_spray: {product: 吡虫啉, date: "2026-07-01"}}
+        return: {last_spray: {product: 井冈霉素, date: "2026-07-01"}}
+    field.profile:
+      - match: {field: field-003}
+        return: {expected_harvest: "2026-10-20", no_fly_zones: [], adjacent_fields: []}
 knowledge_ref: WORKTREE
 expect:
   outcome: ADVICE

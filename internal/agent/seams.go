@@ -223,6 +223,9 @@ type RecheckRequest struct {
 	Question Question
 	Card     model.AdviceCard
 	Epoch    int
+	// Order 是被复检的作业单（P1 L3：约束按其作业类型 / 设备 / 下发方式取必检集合，本地在途单查询排除自身）；
+	// 零值表示无作业单（不排除、按复检结论推断作业类型与设备）。
+	Order model.WorkOrder
 }
 
 // RecheckResult 是复检结论：Changed 为 true 时原作业单须 CANCELED(CONDITION_CHANGED) 并新建 run；Detail 为变化说明。

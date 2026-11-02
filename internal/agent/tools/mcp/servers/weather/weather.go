@@ -35,6 +35,7 @@ const recordSchema = `{"type":"object","additionalProperties":false,
 "temp_c":{"type":"number","description":"气温（℃，日数据为日均）"},
 "humidity_pct":{"type":"number","minimum":0,"maximum":100,"description":"相对湿度（%）"},
 "wind_speed_ms":{"type":"number","minimum":0,"description":"风速（m/s）"},
+"wind_dir_deg":{"type":"number","minimum":0,"maximum":360,"description":"风的来向（度，0 为正北，顺时针；P1 L3 漂移校验）"},
 "rain_mm":{"type":"number","minimum":0,"description":"降雨量（mm，日数据为日累计）"},
 "rain_prob_pct":{"type":"number","minimum":0,"maximum":100,"description":"降雨概率（%，仅预报）"},
 ` + kit.SourceOut + `}}`

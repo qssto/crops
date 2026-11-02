@@ -87,7 +87,8 @@ func (g grading) grade(ctx context.Context, t *Trial, s *sample.Sample, ans agen
 	gt := &grader.Trial{Sample: s, Index: t.TrialIndex, Outcome: ans.Outcome, RefuseReason: ans.RefuseReason,
 		Card: ans.Card, KB: kb, ToolCalls: t.ToolCalls, ToolFailures: t.ToolFailures,
 		Approval: t.Approval, DeviceCalls: t.DeviceCalls, Logs: t.Logs, Stored: t.Stored, OrderTransitions: t.OrderTransitions,
-		Scope: t.Scope, Fields: t.Fields, Devices: t.Devices, ToolArgs: t.ToolArgs, DeviceTargets: t.DeviceTargets}
+		Scope: t.Scope, Fields: t.Fields, Devices: t.Devices, ToolArgs: t.ToolArgs, DeviceTargets: t.DeviceTargets,
+		ConstraintBlocked: ans.ConstraintBlocked}
 	t.Scores = make([]Score, 0, len(g.graders))
 	for _, gr := range g.graders {
 		sc := Score{Name: gr.Name(), RedLine: gr.RedLine()}

@@ -1,11 +1,13 @@
 package service
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"testing"
 	"time"
 
@@ -28,12 +30,14 @@ func (f *fakeTx) InTx(_ context.Context, fn func(*repository.DB) error) error {
 }
 
 // fakeTickets 是内存票据仓储：existing 为事务外读到的票，dupInTx 模拟事务内命中 uk_order_seq，
-// raceWinner 是命中后重读到的库中票；byRunAfter 是 ActivateTx 之后（并发激活已提交）重读到的票。
+// raceWinner 是命中后重读到的库中票；byRunAfter 是 ActivateTx 之后（并发激活已提交）重读到的票；
+// lockedInTx 是拦截事务内带锁读到的票（并发开票已建票）。checks 为最近一次 UpsertChecksTx 写入的行（覆盖语义）。
 type fakeTickets struct {
 	existing   *model.ApprovalTicket
 	raceWinner *model.ApprovalTicket
 	byRun      *model.ApprovalTicket
 	byRunAfter *model.ApprovalTicket
+	lockedInTx *model.ApprovalTicket
 	readErr    error
 	dupInTx    bool
 	insertErr  error
@@ -43,9 +47,17 @@ type fakeTickets struct {
 
 	checks       []model.ConstraintCheck
 	checkAttempt int
+	upserts      int
 	inserted     []model.ApprovalTicket
 	expires      time.Time
 	activations  int
+	// trace 记录事务内写操作顺序（复核第 21 条：work_order 行锁须是第一条）。
+	trace []string
+}
+
+func (f *fakeTickets) LockOrderTx(context.Context, *repository.DB, model.OrderRef) error {
+	f.trace = append(f.trace, "lock_order")
+	return nil
 }
 
 func (f *fakeTickets) TicketByOrderSeq(context.Context, *repository.DB, model.OrderRef, int) (model.ApprovalTicket, bool, error) {
@@ -68,13 +80,24 @@ func (f *fakeTickets) TicketByRun(context.Context, *repository.DB, model.Scope, 
 	return *f.byRun, true, f.readErr
 }
 
-func (f *fakeTickets) InsertChecksTx(_ context.Context, _ *repository.DB, _ model.OrderRef, attempt int, cs []model.ConstraintCheck, _ time.Time) error {
+func (f *fakeTickets) UpsertChecksTx(_ context.Context, _ *repository.DB, _ model.OrderRef, attempt int, cs []model.ConstraintCheck, _ time.Time) error {
 	f.checkAttempt = attempt
-	f.checks = append(f.checks, cs...)
+	f.checks = append([]model.ConstraintCheck(nil), cs...)
+	f.upserts++
+	f.trace = append(f.trace, "upsert_checks")
 	return nil
 }
 
+func (f *fakeTickets) LockTicketByOrderSeqTx(context.Context, *repository.DB, model.OrderRef, int) (model.ApprovalTicket, bool, error) {
+	f.trace = append(f.trace, "lock_ticket")
+	if f.lockedInTx == nil {
+		return model.ApprovalTicket{}, false, f.readErr
+	}
+	return *f.lockedInTx, true, f.readErr
+}
+
 func (f *fakeTickets) InsertTicketTx(_ context.Context, _ *repository.DB, t model.ApprovalTicket, _ time.Time) (uint64, bool, error) {
+	f.trace = append(f.trace, "insert_ticket")
 	if f.insertErr != nil {
 		return 0, false, f.insertErr
 	}
@@ -116,24 +139,46 @@ func (f fakeRisk) For(model.WorkType) (policy.Risk, error) {
 
 func (f fakeRisk) TTL(model.RiskLevel) (time.Duration, error) { return f.ttl, f.err }
 
+// fakeReviewer 记录复核调用；blocked 非空即拦截，否则原样放行请求中的校验行。
+type fakeReviewer struct {
+	blocked []string
+	seen    []model.WorkOrder
+}
+
+func (f *fakeReviewer) Review(o model.WorkOrder) ([]model.ConstraintCheck, []string) {
+	f.seen = append(f.seen, o)
+	return o.ConstraintChecks, f.blocked
+}
+
 type approvalFixture struct {
-	svc     *ApprovalService
-	tx      *fakeTx
-	tickets *fakeTickets
-	orders  *fakeOrders
-	events  *fakeEvents
-	raw     *fakeRaw
+	svc      *ApprovalService
+	tx       *fakeTx
+	tickets  *fakeTickets
+	orders   *fakeOrders
+	events   *fakeEvents
+	raw      *fakeRaw
+	reviewer ConstraintReviewer
+	logs     *bytes.Buffer
 }
 
 var approvalNow = time.Date(2026, 7, 15, 1, 0, 0, 0, time.UTC)
 
 func newApprovalFixture(t *testing.T, tickets *fakeTickets, orderStatus model.WorkOrderStatus, risk fakeRisk) approvalFixture {
 	t.Helper()
-	f := approvalFixture{tx: &fakeTx{}, tickets: tickets, events: &fakeEvents{}, raw: &fakeRaw{},
-		orders: &fakeOrders{state: model.OrderState{Status: orderStatus, RowVer: 3, RunID: 5, WorkType: model.WorkSpray}}}
+	return newApprovalFixtureWith(t, tickets, orderStatus, risk, &fakeReviewer{})
+}
+
+// newApprovalFixtureWith 同 newApprovalFixture，但指定约束复核（P1 L3）。
+func newApprovalFixtureWith(t *testing.T, tickets *fakeTickets, orderStatus model.WorkOrderStatus, risk fakeRisk,
+	reviewer ConstraintReviewer) approvalFixture {
+	t.Helper()
+	f := approvalFixture{tx: &fakeTx{}, tickets: tickets, events: &fakeEvents{}, raw: &fakeRaw{}, reviewer: reviewer, logs: &bytes.Buffer{},
+		orders: &fakeOrders{state: model.OrderState{Status: orderStatus, RowVer: 3, RunID: 5, WorkType: model.WorkSpray,
+			DeviceType: "knapsack", DispatchMode: model.DispatchDryRun}}}
 	clk := fixedClock{approvalNow}
 	svc, err := NewApprovalService(ApprovalDeps{Clock: clk, DB: &repository.DB{}, Tx: f.tx, Tickets: tickets,
-		Orders: f.orders, WorkOrders: NewWorkOrderService(clk, f.orders, f.events), Events: f.events, Raw: f.raw, Risk: risk})
+		Orders: f.orders, WorkOrders: NewWorkOrderService(clk, f.orders, f.events), Events: f.events, Raw: f.raw, Risk: risk,
+		Constraints: reviewer, Logger: slog.New(slog.NewTextHandler(f.logs, nil))})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -146,7 +191,7 @@ var approvalScope = model.Scope{TenantID: 1, FarmID: 2, UserID: 1002}
 func openRequest() agent.ApprovalRequest {
 	return agent.ApprovalRequest{InitiatorID: 1002,
 		Order: model.WorkOrder{OrderID: 9, AdviceID: 4, RunID: 5, TenantID: 1, FarmID: 2, WorkType: model.WorkSpray,
-			Status: model.OrderDraft, ConstraintChecks: []model.ConstraintCheck{{Phase: model.PhasePreApproval, RuleID: "kb#t1", Passed: true}}},
+			DeviceType: "knapsack", Status: model.OrderDraft, ConstraintChecks: []model.ConstraintCheck{{Phase: model.PhasePreApproval, RuleID: "kb#t1", Passed: true}}},
 		Card: model.AdviceCard{AdviceID: 4, RunID: 5, TenantID: 1, FarmID: 2}}
 }
 
@@ -283,6 +328,10 @@ func TestApprovalOpen_Errors(t *testing.T) {
 		// 定级与归属以库中作业单为准：请求里的 run_id / work_type 与库不符直接拒绝，不写快照。
 		{name: "run of another order", mutate: func(r *agent.ApprovalRequest) { r.Order.RunID, r.Card.RunID = 6, 6 }, want: ErrBadApproval},
 		{name: "work type differs from db", mutate: func(r *agent.ApprovalRequest) { r.Order.WorkType = model.WorkIrrigate }, want: ErrBadApproval},
+		// P1-L3 审查 3：约束复核按库中 device_type / dispatch_mode，请求与库不符同样拒绝。
+		{name: "device type differs from db", mutate: func(r *agent.ApprovalRequest) { r.Order.DeviceType = "uav" }, want: ErrBadApproval},
+		{name: "dispatch mode differs from db", mutate: func(r *agent.ApprovalRequest) { r.Order.DispatchMode = model.DispatchReal },
+			want: ErrBadApproval},
 		{name: "order read error", orderErr: boom, want: boom},
 		{name: "read error", tickets: fakeTickets{readErr: boom}, want: boom},
 		{name: "no risk", risk: fakeRisk{err: policy.ErrNoRisk}, want: policy.ErrNoRisk},

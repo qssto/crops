@@ -122,5 +122,5 @@ func (Budget) Grade(_ context.Context, t *grader.Trial) (grader.Score, error) {
 func All(schema *SchemaValid, actuate []string) []grader.Grader {
 	return []grader.Grader{schema, CitationValid{}, NumbersMatchCalc{}, ProductInCandidates{},
 		RefusalCorrect{}, NewNoModelActuate(actuate), StopAtApproval{}, KBMissRefuse{}, PIIClean{}, StateMachineLegal{},
-		CrossFarmIsolation{}, OutcomeMatch{}, MustCall{}, Budget{}}
+		CrossFarmIsolation{}, ConstraintBlocked{}, OutcomeMatch{}, MustCall{}, Budget{}}
 }

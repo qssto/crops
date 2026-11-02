@@ -10,6 +10,7 @@ import (
 
 	"agri-steward/internal/agent"
 	"agri-steward/internal/agent/graph"
+	"agri-steward/internal/agent/guardrail/constraint"
 	"agri-steward/internal/agent/harness/runner"
 	"agri-steward/internal/agent/llm"
 	"agri-steward/internal/evalkit/sample"
@@ -133,12 +134,14 @@ func checkOrder(t *testing.T, ans agent.Answer) {
 	wantNext(t, ans, model.NextCreateOrder)
 }
 
-// checkConstraints：审批前约束校验来自规则层阈值判定，rule_id 唯一且 ≤ 48，observed 带 tool_call_id，threshold 带 kb@version。
+// checkConstraints：审批前约束校验来自约束注册表，rule_id 唯一且 ≤ 48；通过的行 observed 带 source 与 tool_call_id
+// （法规前置条件取登记表、无 tool_call_id），threshold 带 kb@version。
 func checkConstraints(t *testing.T, cs []model.ConstraintCheck) {
 	t.Helper()
 	if len(cs) == 0 {
 		t.Fatal("no constraint checks")
 	}
+	reg := constraint.Default()
 	seen := map[string]bool{}
 	for _, c := range cs {
 		var obs struct {
@@ -151,9 +154,12 @@ func checkConstraints(t *testing.T, cs []model.ConstraintCheck) {
 		if json.Unmarshal(c.Observed, &obs) != nil || json.Unmarshal(c.Threshold, &th) != nil {
 			t.Fatalf("check %+v not decodable", c)
 		}
-		if c.Phase != model.PhasePreApproval || c.RuleID == "" || len(c.RuleID) > 48 || seen[c.RuleID] ||
-			obs.ToolCallID == 0 || obs.Source == "" || !strings.Contains(th.KB, "@") {
-			t.Errorf("check %s phase %s observed %s threshold %s", c.RuleID, c.Phase, c.Observed, c.Threshold)
+		if c.Phase != model.PhasePreApproval || c.RuleID == "" || len(c.RuleID) > 48 || seen[c.RuleID] {
+			t.Errorf("check %s phase %s", c.RuleID, c.Phase)
+		}
+		vouched := obs.Source != "" && strings.Contains(th.KB, "@") && (obs.ToolCallID != 0 || reg.IsPrecondition(c.RuleID))
+		if c.Passed && !vouched {
+			t.Errorf("passed check %s observed %s threshold %s", c.RuleID, c.Observed, c.Threshold)
 		}
 		seen[c.RuleID] = true
 	}

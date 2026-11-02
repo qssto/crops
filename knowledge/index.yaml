@@ -352,3 +352,39 @@ entries:
     category: [fertilize, protect, irrigate]
     topics: [fertilize.timing, protect.timing, irrigate.timing]
     authority_level: 专家经验
+  - kb_id: common/work_constraint/interval
+    file: common/work_constraint.md
+    version: v1
+    crop: '*'
+    stage: ['*']
+    region: '*'
+    category: [protect, fertilize, irrigate]
+    topics: [protect.timing, fertilize.timing, irrigate.timing]
+    authority_level: 专家经验
+  - kb_id: common/work_constraint/airspace
+    file: common/work_constraint.md
+    version: v1
+    crop: '*'
+    stage: ['*']
+    region: '*'
+    category: [protect]
+    topics: [protect.timing]
+    authority_level: 专家经验
+  - kb_id: common/work_constraint/drift
+    file: common/work_constraint.md
+    version: v1
+    crop: '*'
+    stage: ['*']
+    region: '*'
+    category: [protect]
+    topics: [protect.timing]
+    authority_level: 专家经验
+  - kb_id: common/work_constraint/uav-device
+    file: common/work_constraint.md
+    version: v2
+    crop: '*'
+    stage: ['*']
+    region: '*'
+    category: [protect]
+    topics: [protect.dosage]
+    authority_level: 专家经验

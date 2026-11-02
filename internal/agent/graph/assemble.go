@@ -3,12 +3,15 @@ package graph
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"sync"
 	"time"
 	"unicode/utf8"
 
+	"agri-steward/internal/agent"
 	"agri-steward/internal/agent/guardrail"
 	"agri-steward/internal/agent/guardrail/pii"
 	"agri-steward/internal/agent/harness/runner"
@@ -279,18 +282,34 @@ func (a *Agent) toOrder(ctx context.Context, s *state) (*state, error) {
 	device := deviceOf(s.dec)
 	o := model.WorkOrder{AdviceID: c.AdviceID, RunID: s.runID, TenantID: c.TenantID, FarmID: c.FarmID,
 		FieldID: c.FieldID, WorkType: s.dec.WorkType, DeviceType: device, Payload: payload,
-		TimeWindow: *c.SuggestedWindow, ConstraintChecks: a.constraintChecks(s),
-		Status: model.OrderDraft, DispatchMode: a.dispatchMode(ctx, s.q.Scope, device)}
+		TimeWindow: *c.SuggestedWindow, Status: model.OrderDraft, DispatchMode: a.dispatchMode(ctx, s.q.Scope, device)}
+	o.ConstraintChecks = a.constraintChecks(ctx, s, model.PhasePreApproval, o, s.selectedProduct())
 	id, err := a.cfg.Drafts.CreateDraft(ctx, s.q.Scope, o)
 	if err != nil {
 		return s, fmt.Errorf("to_order: create draft: %w", err)
 	}
 	o.OrderID = id
 	s.order = &o
-	if err := a.openTicket(ctx, s); err != nil {
+	err = a.openTicket(ctx, s)
+	var blocked *agent.ConstraintBlockedError
+	switch {
+	case errors.As(err, &blocked):
+		// P1 L3：开票前约束拦截是业务结论而非运行错误：单留 DRAFT、无票据，run 正常收尾；
+		// CONSTRAINT_BLOCKED 已由闸门在拦截事务内写入（与校验行同事务）
+		s.blocked = slices.Clone(blocked.RuleIDs)
+		a.log.InfoContext(ctx, "work order blocked by constraints", "run_id", s.runID, "order_id", id, "rule_ids", s.blocked)
+	case err != nil:
 		return s, fmt.Errorf("to_order: %w", err)
 	}
 	return s, nil
+}
+
+// selectedProduct 是工单所用登记药剂 id（施药且已在候选内选药）；非药剂作业返回空。
+func (s *state) selectedProduct() string {
+	if s.dec.WorkType == model.WorkSpray && s.selected != "" && slices.Contains(s.candidates, s.selected) {
+		return s.selected
+	}
+	return ""
 }
 
 // dispatchMode 在 to_order 读一次开关写定 dispatch_mode（P1-L2：按设备类型，开关开且类型可开放才 REAL）；

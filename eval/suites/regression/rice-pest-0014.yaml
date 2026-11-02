@@ -1,5 +1,5 @@
 id: rice-pest-0014
-version: 1
+version: 2
 suite: regression
 difficulty: easy
 tags: [L3, protect.dosage]
@@ -11,6 +11,16 @@ context:
   user: u-op-01
 fixtures:
   clock: 2026-05-10T09:00:00+08:00
+  mcp:
+    weather.forecast:
+      - match: {field: field-004}
+        return: {wind_speed_ms: 2.0, rain_mm_24h: 0, temp_c: 26, collected_at: "2026-05-10T08:00:00+08:00", source: mock-station}
+    field.history:
+      - match: {field: field-004}
+        return: {operations: []}
+    field.profile:
+      - match: {field: field-004}
+        return: {expected_harvest: "2026-10-20", no_fly_zones: [], adjacent_fields: []}
 knowledge_ref: WORKTREE
 expect:
   outcome: ADVICE

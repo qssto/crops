@@ -32,6 +32,8 @@ type Answer struct {
 	Card         *model.AdviceCard
 	Order        *model.WorkOrder
 	Ticket       *model.ApprovalTicket
+	// ConstraintBlocked 是开票被约束拦截时未通过的 rule_id（P1 L3）；为空表示未拦截。拦截时 Order 留 DRAFT、Ticket 为空。
+	ConstraintBlocked []string
 }
 
 // Agent 是建议主链路的最小接口：L0 为只拒答的空实现桩，L4 替换为 compose Graph 主链路。

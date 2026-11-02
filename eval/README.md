@@ -32,6 +32,8 @@ make eval TAGS=L2 N=1              # 只回放带 L2 tag 的样本，每样本 1
 | `expect.work_order.final_status` | `stop_at_approval` 时必填 | 期望作业单终态，如 `PENDING_APPROVAL` |
 | `expect.trajectory` | 否 | `must_call`（superset 语义）、`must_not_call`（支持 `device.*` 通配）、`stop_at_approval`（必须停在审批）、`budget.max_steps` / `budget.max_tokens` |
 | `expect.pii` | 否 | 问题中出现的敏感信息 `[{kind, value}]`，`kind` 为 `phone` / `id_card` / `coordinate`，`value` 须原样出现在 `question` 中；L5 断言其不出现在日志、审计与输出中。样本里的值一律为明显合成的假值 |
+| `fixtures.local_orders` | 否 | 预置本地在途 / 完成工单 `[{work_type, status, updated_at, product?}]`（P1 L3，`FixtureLocalOrders` 替代 `LocalOrderRepo`）：`work_type` 为 `SPRAY` / `FERTILIZE` / `IRRIGATE`，`status` 只能是在途（`APPROVED` / `DISPATCHED` / `EXECUTING`）或完成（`DONE` / `PARTIALLY_DONE`），`updated_at` 为 RFC3339 |
+| `expect.constraint` | 否 | 期望开票前约束拦截（P1 L3）：`rule_ids`（非空，每个 ≤ 48 字节，须为注册表 rule_id 或 `reg:<法规条目 id>`）。须同时写 `outcome: ADVICE`、`work_order.final_status: DRAFT`，且不得写 `stop_at_approval`（拦截不开票）；红线打分器 `constraint_blocked` 要求实际拦截集合包含全部期望 rule_id、无审批票据、作业单留 DRAFT、设备零调用 |
 | `reference_solution` | 否 | 参考解路径 `refs/<id>.json`（L4 起补，证明样本可解、打分器正确） |
 | `author` | 是 | 署名。Claude 草拟的样本一律写 `claude-draft`，不得冒充专家 |
 | `review_status` | 是 | `pending_expert` / `signed`；`author: claude-draft` 只能是 `pending_expert`，专家签署时同时改 `author` 为本人署名 |
@@ -63,6 +65,7 @@ make eval TAGS=L2 N=1              # 只回放带 L2 tag 的样本，每样本 1
 8. `must_cite_kb`（L3）：`knowledge_ref` 能打开（`--repo` 指定仓库根，默认 `.`）；每条 `must_cite` 在该版本中存在且未废弃。
 9. `product_in_candidates`（L3）：写 `product_in` 须带 `target`；`product_in` ⊆ `calc.Candidates(taxonomy.crop, target, taxonomy.region)`；`target` 与 `must_cite` 中植保条目的 `target` 一致。
 10. `fixtures`（L2）：`context.field` 为 `field-NNN`；工具名为 `{server}.{tool}`；每条桩恰好一个 `return` / `returns` / `error`，`returns` 不含 null；`match.field` 为 `field-NNN` 且不与 `match.field_id` 同时出现。
+11. `constraint_shape`（P1 L3）：`expect.constraint` 与 `fixtures.local_orders` 的结构，规则见上表；套件 `constraint`（`eval/suites/constraint/`）为约束样本组。
 
 `cmd/eval kbdump --suite regression` 按样本情境（crop / region 取 taxonomy，stage 取 `crop.phenology` fixture，topic 取首个 taxonomy tag，target 取 `expect.advice.target` 或所引植保条目）跑 progressive_loader，逐样本打印命中的 `kb_id@version` 或 `KB_MISS`，并列出未被加载的 `must_cite`。
 

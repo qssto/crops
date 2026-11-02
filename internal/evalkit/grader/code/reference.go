@@ -53,8 +53,16 @@ func Reference(s *sample.Sample, tx *knowledge.Taxonomy, kb grader.KnowledgeInde
 	return &grader.Trial{Sample: s, Outcome: exp.Outcome, RefuseReason: exp.RefuseReason,
 		Card: card, KB: kb, ToolCalls: calls, ToolFailures: referenceFailures(s),
 		Approval: referenceApproval(exp), DeviceCalls: []string{}, Logs: []byte{},
-		OrderTransitions: referenceTransitions(exp.WorkOrder),
-		Scope:            model.Scope{TenantID: refID, FarmID: refID}, Fields: []uint64{refID}, Devices: []string{}}, skip, notes
+		OrderTransitions: referenceTransitions(exp.WorkOrder), ConstraintBlocked: referenceBlocked(exp),
+		Scope: model.Scope{TenantID: refID, FarmID: refID}, Fields: []uint64{refID}, Devices: []string{}}, skip, notes
+}
+
+// referenceBlocked 是理想约束拦截观测（P1 L3）：断言 expect.constraint 时即其 rule_ids，否则为空。
+func referenceBlocked(exp sample.Expect) []string {
+	if exp.Constraint == nil {
+		return nil
+	}
+	return exp.Constraint.RuleIDs
 }
 
 // referenceFailures 把 fixtures.mcp 中注入的故障记为 "tool:fault"（按工具名排序；无故障为空切片）。

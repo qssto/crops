@@ -40,6 +40,8 @@ type Deps struct {
 	RunMeta agent.RunMeta
 	// Risk 是审批风险矩阵（policy/risk_matrix.yaml，policy.LoadRiskMatrix），开票定级与票据 TTL 用。
 	Risk service.RiskPolicy
+	// Constraints 是开票前约束拦截（P1 L3：constraint.NewReviewer(注册表, policy/regulation_map.yaml)）。
+	Constraints service.ConstraintReviewer
 	// Adapter 是设备下发接缝（可选）：评测注入 env.RecordingAdapter 记录调用；为空取 adapter.MockAdapter（L8，dry-run）。
 	// 只允许 service/workorder_dispatch.go 在作业单 APPROVED 后调用（archtest 守卫）。
 	Adapter adapter.DryRunner
@@ -109,6 +111,10 @@ type App struct {
 	Denials *service.DenialAuditor
 	// P1-L2：设备 Adapter 注册表（可开放集合决定 to_order 能否写 REAL；L4 下发器按 device_type 取 Adapter）。
 	Devices *adapter.Registry
+	// P1-L3：本地同地块 REAL 单（重复作业 / 安全间隔期约束），供主链路注入 graph.Config.LocalOrders。
+	LocalOrders repository.LocalOrderRepo
+	// constraints 即 Deps.Constraints：GraphAgent 由它取约束注册表注入 graph.Config.Constraints（见 constraint.go）。
+	constraints service.ConstraintReviewer
 	// eventRepo 是唯一的 run_event 写入口（同事务 audit_log 投影 + 提交后 PUBLISH sse:run:{run_id}）。
 	eventRepo repository.EventRepo
 }
@@ -124,6 +130,8 @@ var (
 	ErrMissingRawStore = errors.New("app: deps.RawStore is required")
 	ErrMissingTools    = errors.New("app: deps.Tools is required")
 	ErrMissingRisk     = errors.New("app: deps.Risk is required (policy.LoadRiskMatrix)")
+	// ErrMissingConstraints：P1 L3 起开票前必须经约束拦截。
+	ErrMissingConstraints = errors.New("app: deps.Constraints is required (constraint.NewReviewer)")
 )
 
 // Build 校验依赖并装配 App；缺多个依赖时一次列全。
@@ -143,6 +151,7 @@ func Build(deps Deps) (*App, error) {
 	check(deps.RawStore == nil, ErrMissingRawStore)
 	check(deps.Tools == nil, ErrMissingTools)
 	check(deps.Risk == nil, ErrMissingRisk)
+	check(deps.Constraints == nil, ErrMissingConstraints)
 	check(deps.Permissions == nil, ErrMissingPermissions)
 	if err := errors.Join(errs...); err != nil {
 		return nil, err
@@ -158,29 +167,32 @@ func Build(deps Deps) (*App, error) {
 	workOrders := service.NewWorkOrderService(deps.Clock, orders, events)
 	approvals, err := service.NewApprovalService(service.ApprovalDeps{Clock: deps.Clock, DB: deps.DB,
 		Tx: repository.Transactor{DB: deps.DB}, Tickets: repository.ApprovalRepo{}, Orders: orders,
-		WorkOrders: workOrders, Events: events, Raw: deps.RawStore, Risk: deps.Risk})
+		WorkOrders: workOrders, Events: events, Raw: deps.RawStore, Risk: deps.Risk,
+		Constraints: deps.Constraints, Logger: deps.Logger})
 	if err != nil {
 		return nil, fmt.Errorf("app: build approvals: %w", err)
 	}
 	a := &App{
 		Clock: deps.Clock, Logger: deps.Logger, DB: deps.DB, Redis: deps.Redis, Keys: deps.Keys,
 		RawStore: deps.RawStore, Agent: deps.Agent, Tools: deps.Tools,
-		Locker:     locker,
-		WorkOrders: workOrders,
-		Runs:       runs,
-		Advice:     advice,
-		Drafts:     repository.NewOrderDraftRepo(deps.DB, deps.Clock),
-		RunLocker:  repository.NewRunLocker(locker, deps.Keys),
-		Approvals:  approvals,
-		Events:     repository.EventSink{DB: deps.DB, Events: events},
-		Adapter:    deps.Adapter,
-		HITL:       buildHITLStores(deps),
-		RunDetail:  service.NewRunDetailService(repository.NewRunDetailRepo(deps.DB, runs, advice)),
-		Metrics:    service.NewMetricsService(repository.NewMetricsRepo(deps.DB), deps.Clock),
-		eventRepo:  events,
+		Locker:      locker,
+		WorkOrders:  workOrders,
+		Runs:        runs,
+		Advice:      advice,
+		Drafts:      repository.NewOrderDraftRepo(deps.DB, deps.Clock),
+		LocalOrders: repository.LocalOrderRepo{DB: deps.DB},
+		RunLocker:   repository.NewRunLocker(locker, deps.Keys),
+		Approvals:   approvals,
+		Events:      repository.EventSink{DB: deps.DB, Events: events},
+		Adapter:     deps.Adapter,
+		HITL:        buildHITLStores(deps),
+		RunDetail:   service.NewRunDetailService(repository.NewRunDetailRepo(deps.DB, runs, advice)),
+		Metrics:     service.NewMetricsService(repository.NewMetricsRepo(deps.DB), deps.Clock),
+		eventRepo:   events,
 
 		DashboardDir: deps.DashboardDir,
 	}
+	a.constraints = deps.Constraints
 	if err := a.buildAccess(deps); err != nil {
 		return nil, err
 	}

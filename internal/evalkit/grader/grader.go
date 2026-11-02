@@ -49,6 +49,8 @@ type Trial struct {
 	Devices       []string
 	ToolArgs      []ToolArg
 	DeviceTargets []DeviceTarget
+	// P1 L3：ConstraintBlocked 取自 agent.Answer，开票前约束拦截的 rule_id（未拦截为空），constraint_blocked 使用。
+	ConstraintBlocked []string
 }
 
 // DeviceTarget 是一次设备调用作用的作业单归属（RecordingAdapter 从 WorkOrder 取），cross_farm_isolation 按结构判归属。

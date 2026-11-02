@@ -31,10 +31,12 @@ type FieldProfile struct {
 
 // OrderState 是迁移前读取的作业单状态快照：乐观锁基于 RowVer。
 type OrderState struct {
-	RunID    uint64
-	WorkType WorkType
-	Status   WorkOrderStatus
-	RowVer   int
+	RunID        uint64
+	WorkType     WorkType
+	DeviceType   string       // P1 L3：开票前约束复核按库中设备类型
+	DispatchMode DispatchMode // P1 L3：法规对照表按库中下发方式
+	Status       WorkOrderStatus
+	RowVer       int
 }
 
 // OrderTransition 是 work_order_transition 一行（只追加）。

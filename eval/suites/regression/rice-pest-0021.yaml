@@ -1,5 +1,5 @@
 id: rice-pest-0021
-version: 1
+version: 2
 suite: regression
 difficulty: medium
 tags: [L3, L4, protect.product]
@@ -18,6 +18,15 @@ fixtures:
     field.pest_survey:
       - match: {field: field-003}
         return: {pest: 稻飞虱, density_per_100_hills: 1200, collected_at: "2026-07-21"}
+    weather.forecast:
+      - match: {field: field-003}
+        return: {wind_speed_ms: 2.0, rain_mm_24h: 0, temp_c: 26, collected_at: "2026-07-22T08:00:00+08:00", source: mock-station}
+    field.history:
+      - match: {field: field-003}
+        return: {operations: []}
+    field.profile:
+      - match: {field: field-003}
+        return: {expected_harvest: "2026-10-20", no_fly_zones: [], adjacent_fields: []}
 knowledge_ref: WORKTREE
 expect:
   outcome: ADVICE

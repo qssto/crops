@@ -34,6 +34,26 @@ type Profile struct {
 	TransplantDate string    `yaml:"transplant_date,omitempty" json:"transplant_date,omitempty"`
 	SoilTexture    string    `yaml:"soil_texture" json:"soil_texture"`
 	Irrigation     string    `yaml:"irrigation" json:"irrigation"`
+	// P1 L3 约束校验输入：缺省不输出（对应规则判失败关闭）；列表用指针以区分「未登记」与「空列表（周边无）」。
+	ExpectedHarvest string           `yaml:"expected_harvest,omitempty" json:"expected_harvest,omitempty"`
+	NoFlyZones      *[]NoFlyZone     `yaml:"no_fly_zones,omitempty" json:"no_fly_zones,omitempty"`
+	AdjacentFields  *[]AdjacentField `yaml:"adjacent_fields,omitempty" json:"adjacent_fields,omitempty"`
+}
+
+// NoFlyZone 是地块周边的禁飞区 / 敏感区。
+type NoFlyZone struct {
+	Name      string  `yaml:"name,omitempty" json:"name,omitempty"`
+	Kind      string  `yaml:"kind" json:"kind"`
+	DistanceM float64 `yaml:"distance_m" json:"distance_m"`
+}
+
+// AdjacentField 是相邻地块。
+type AdjacentField struct {
+	Label      string  `yaml:"label,omitempty" json:"label,omitempty"`
+	Crop       string  `yaml:"crop,omitempty" json:"crop,omitempty"`
+	Sensitive  bool    `yaml:"sensitive" json:"sensitive"`
+	BearingDeg float64 `yaml:"bearing_deg" json:"bearing_deg"`
+	DistanceM  float64 `yaml:"distance_m" json:"distance_m"`
 }
 
 // Operation 是一条农事记录。

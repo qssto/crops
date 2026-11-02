@@ -2,7 +2,7 @@
 # 警告：Claude 草拟，待农艺专家逐条核对，不得作为真实用药依据。
 # 用量、PHI、每季次数按常见登记标签整理，登记证号未填；专家须对照中国农药信息网核实后再改 review_status。
 # 格式见 knowledge/README.md §7。calc.Candidates(crop, target, region) 只从这里取候选药剂。
-version: v1
+version: v3
 author: claude-draft
 review_status: pending_expert
 effective_from: 2026-10-28
@@ -19,6 +19,10 @@ targets:
   # 以下两项只被 out_of_set_test 产品引用，非水稻防治对象
   gray_mold: 灰霉病（黄瓜）
   leafhopper: 小绿叶蝉（茶树）
+
+# 药名归一时从结尾剥掉的剂型名（与各产品 aliases 同属药名写法，见 README §7）；加载时按字数从长到短匹配。
+formulations: [种子处理悬浮剂, 可分散油悬浮剂, 悬浮种衣剂, 可湿性粉剂, 水分散粒剂, 可溶液剂, 可溶粒剂,
+  悬浮剂, 悬乳剂, 水乳剂, 微乳剂, 颗粒剂, 乳油, 水剂, 粉剂]
 
 products:
   # ---------- 杀虫剂 ----------
@@ -57,6 +61,7 @@ products:
     formulation: 悬浮剂
     content: 200 g/L
     registration_no: null
+    aliases: [康宽]  # 商品名，Claude 草拟待核对
     registrations:
       - {crop: rice, target: leaf_roller, dose: {min: 5, max: 10, unit: mL/亩}, method: 喷雾,
          dilution_note: 常规喷雾每亩兑水 30–45 L，无人机每亩药液量不少于 1 L；低龄幼虫高峰期施药,
@@ -70,6 +75,7 @@ products:
     formulation: 悬浮剂
     content: 150 g/L
     registration_no: null
+    aliases: [安打]  # 商品名，Claude 草拟待核对
     registrations:
       - {crop: rice, target: leaf_roller, dose: {min: 12, max: 16, unit: mL/亩}, method: 喷雾,
          dilution_note: 常规喷雾每亩兑水 30–45 L，无人机每亩药液量不少于 1 L,
@@ -117,6 +123,7 @@ products:
     formulation: 悬浮剂
     content: 240 g/L
     registration_no: null
+    aliases: [满穗]  # 商品名，Claude 草拟待核对
     registrations:
       - {crop: rice, target: sheath_blight, dose: {min: 15, max: 20, unit: mL/亩}, method: 喷雾,
          dilution_note: 每亩兑水 30–45 L，重点喷稻株中下部,
@@ -137,6 +144,7 @@ products:
     formulation: 可湿性粉剂
     content: 75%
     registration_no: null
+    aliases: [比艳]  # 商品名，Claude 草拟待核对
     registrations:
       - {crop: rice, target: blast, dose: {min: 20, max: 30, unit: g/亩}, method: 喷雾,
          dilution_note: 每亩兑水 30–45 L；穗瘟预防在破口期和齐穗期各施一次,
@@ -147,6 +155,7 @@ products:
     formulation: 乳油
     content: 40%
     registration_no: null
+    aliases: [富士一号]  # 商品名，Claude 草拟待核对
     registrations:
       - {crop: rice, target: blast, dose: {min: 75, max: 100, unit: mL/亩}, method: 喷雾,
          dilution_note: 每亩兑水 30–45 L,
@@ -157,6 +166,7 @@ products:
     formulation: 水剂
     content: 2%
     registration_no: null
+    aliases: [加收米]  # 商品名，Claude 草拟待核对
     registrations:
       - {crop: rice, target: blast, dose: {min: 80, max: 100, unit: mL/亩}, method: 喷雾,
          dilution_note: 每亩兑水 30–45 L,
@@ -167,6 +177,7 @@ products:
     formulation: 水分散粒剂
     content: 75%
     registration_no: null
+    aliases: [拿敌稳, 肟菌酯·戊唑醇]  # 商品名，Claude 草拟待核对
     registrations:
       - {crop: rice, target: false_smut, dose: {min: 10, max: 15, unit: g/亩}, method: 喷雾,
          dilution_note: 破口前 7–10 天施药，每亩兑水 30–45 L，无人机每亩药液量不少于 1 L,

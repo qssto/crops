@@ -1,5 +1,5 @@
 id: rice-pest-0037
-version: 1
+version: 2
 suite: regression
 difficulty: medium
 tags: [L2, L5, protect.timing]
@@ -21,6 +21,12 @@ fixtures:
     field.pest_survey:
       - match: {field: field-004}
         return: {pest: 稻纵卷叶螟, larvae_per_100_hills: 45, collected_at: "2026-08-07"}
+    field.history:
+      - match: {field: field-004}
+        return: {operations: []}
+    field.profile:
+      - match: {field: field-004}
+        return: {expected_harvest: "2026-10-20", no_fly_zones: [], adjacent_fields: []}
 knowledge_ref: WORKTREE
 expect:
   outcome: ADVICE

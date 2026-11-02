@@ -7,6 +7,7 @@ import (
 	"slices"
 
 	"agri-steward/internal/agent"
+	"agri-steward/internal/agent/calc"
 	"agri-steward/internal/agent/harness/runner"
 	"agri-steward/internal/model"
 )
@@ -39,9 +40,29 @@ func (a *Agent) Recheck(ctx context.Context, req agent.RecheckRequest) (agent.Re
 	if err != nil {
 		return res, fmt.Errorf("graph: recheck run %d: %w", runID, err)
 	}
-	res.Checks = preDispatchChecks(a.constraintChecks(s))
+	order := recheckOrder(s, req)
+	if order.DeviceType == string(calc.SprayerUAV) {
+		if err := a.deviceSources(ectx, s, order); err != nil {
+			return agent.RecheckResult{}, fmt.Errorf("graph: recheck run %d: device sources: %w", runID, err)
+		}
+	}
+	product := req.Card.SelectedProduct
+	if order.WorkType != model.WorkSpray {
+		product = ""
+	}
+	res.Checks = a.constraintChecks(ectx, s, model.PhasePreDispatch, order, product)
 	a.log.InfoContext(ctx, "pre-dispatch recheck", "run_id", runID, "epoch", req.Epoch, "changed", res.Changed, "detail", res.Detail)
 	return res, nil
+}
+
+// recheckOrder 是复检所校验的作业单：调用方给出时用之，否则按复检的规则层结论推断作业类型与设备。
+func recheckOrder(s *state, req agent.RecheckRequest) model.WorkOrder {
+	o := req.Order
+	if o.OrderID == 0 && o.WorkType == "" {
+		o.WorkType, o.DeviceType, o.FieldID = s.dec.WorkType, deviceOf(s.dec), s.q.FieldID
+		o.TenantID, o.FarmID = s.q.Scope.TenantID, s.q.Scope.FarmID
+	}
+	return o
 }
 
 // recheckVerdict 比对复检状态与原建议卡。拒答为 LLM_UNAVAILABLE / DATA_MISSING 时无结论；其余拒答、转观察类、
@@ -67,12 +88,4 @@ func recheckVerdict(s *state, card model.AdviceCard) (agent.RecheckResult, error
 
 func changed(format string, args ...any) agent.RecheckResult {
 	return agent.RecheckResult{Changed: true, Detail: fmt.Sprintf(format, args...)}
-}
-
-// preDispatchChecks 把规则层判定的约束标为下发前复检阶段（同一判定逻辑，阶段不同）。
-func preDispatchChecks(checks []model.ConstraintCheck) []model.ConstraintCheck {
-	for i := range checks {
-		checks[i].Phase = model.PhasePreDispatch
-	}
-	return checks
 }

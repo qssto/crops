@@ -27,6 +27,8 @@ const (
 	EventRunResumed       EventType = "RUN_RESUMED"
 	EventRunCompleted     EventType = "RUN_COMPLETED"
 	EventRunFailed        EventType = "RUN_FAILED"
+	// P1 L3：开票前约束 / 法规前置条件未通过，作业单留 DRAFT、不建票（payload 见 ConstraintBlockedPayload）。
+	EventConstraintBlocked EventType = "CONSTRAINT_BLOCKED"
 )
 
 var eventTypes = map[EventType]struct{}{
@@ -34,7 +36,7 @@ var eventTypes = map[EventType]struct{}{
 	EventKBLoaded: {}, EventLLMCallEnd: {}, EventValidationFailed: {}, EventDegraded: {},
 	EventAdviceReady: {}, EventApprovalOpen: {}, EventApprovalPending: {}, EventApprovalDecided: {},
 	EventOrderTransition: {}, EventDispatched: {}, EventRunInterrupted: {}, EventRunResumed: {},
-	EventRunCompleted: {}, EventRunFailed: {},
+	EventRunCompleted: {}, EventRunFailed: {}, EventConstraintBlocked: {},
 }
 
 // Valid 判断事件类型是否已登记。

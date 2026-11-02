@@ -1,5 +1,5 @@
 id: rice-fert-0007
-version: 1
+version: 2
 suite: regression
 difficulty: hard
 tags: [L3, L4, fertilize.rate]
@@ -17,7 +17,13 @@ fixtures:
         return: {stage: 秧苗期, sub_stage: 移栽前}
     field.profile:
       - match: {field: field-005}
-        return: {area_mu: 35.0, soil_n_level: 高}
+        return: {area_mu: 35.0, soil_n_level: 高, expected_harvest: "2026-10-20", no_fly_zones: [], adjacent_fields: []}
+    weather.forecast:
+      - match: {field: field-005}
+        return: {wind_speed_ms: 2.0, rain_mm_24h: 0, temp_c: 26, collected_at: "2026-06-10T08:00:00+08:00", source: mock-station}
+    field.history:
+      - match: {field: field-005}
+        return: {operations: []}
 knowledge_ref: WORKTREE
 expect:
   outcome: ADVICE

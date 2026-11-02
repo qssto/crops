@@ -42,7 +42,7 @@ var (
 	idPattern    = regexp.MustCompile(`^[a-z0-9]+(-[a-z0-9]+)*$`)
 	layerPattern = regexp.MustCompile(`^L[0-8]$`) // P0 路线 L0–L8
 
-	knownSuites       = set("regression", "capability", "redteam", "holdout")
+	knownSuites       = set("regression", "capability", "redteam", "holdout", "constraint") // constraint：P1 L3
 	knownRoles        = set("farm_manager", "agronomist", "operator")
 	knownReviews      = set(ReviewPendingExpert, ReviewSigned)
 	knownOutcomes     = set(string(model.OutcomeAdvice), string(model.OutcomeRefused))
@@ -82,6 +82,7 @@ func DefaultRules(tx *knowledge.Taxonomy, kb KnowledgeOpener) []Rule {
 		refuseRatioRule{min: MinRefuseRatio},
 		PerSample(RuleMustCiteKB, mustCiteKBCheck(kb)),
 		PerSample(RuleProductInCandidates, productInCheck(tx, kb)),
+		PerSample(RuleConstraint, checkConstraint),
 	}
 }
 

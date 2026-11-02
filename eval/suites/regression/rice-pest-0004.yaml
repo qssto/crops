@@ -1,5 +1,5 @@
 id: rice-pest-0004
-version: 2
+version: 3
 suite: regression
 difficulty: hard
 tags: [L3, L4, protect.dosage]
@@ -17,10 +17,16 @@ fixtures:
         return: {stage: 拔节孕穗期, sub_stage: 孕穗期, expected_harvest: "2026-10-15"}
     field.profile:
       - match: {field: field-003}
-        return: {area_mu: 40.0}
+        return: {area_mu: 40.0, no_fly_zones: [], adjacent_fields: []}
     field.pest_survey:
       - match: {field: field-003}
         return: {pest: 稻纵卷叶螟, larvae_per_100_hills: 60, collected_at: "2026-08-11"}
+    weather.forecast:
+      - match: {field: field-003}
+        return: {wind_speed_ms: 2.0, rain_mm_24h: 0, temp_c: 26, collected_at: "2026-08-12T06:30:00+08:00", source: mock-station}
+    field.history:
+      - match: {field: field-003}
+        return: {operations: []}
 knowledge_ref: WORKTREE
 expect:
   outcome: ADVICE

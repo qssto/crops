@@ -34,6 +34,7 @@ type infraFlags struct {
 	promptsDir string
 	riskFile   string
 	permFile   string
+	regFile    string
 	deviceFile string
 	poolSize   int
 }
@@ -47,6 +48,7 @@ func (f *infraFlags) register(fs *flag.FlagSet) {
 	fs.StringVar(&f.promptsDir, "prompts", "", "提示词根目录（空则取模型配置的 prompts_dir）")
 	fs.StringVar(&f.riskFile, "risk", "policy/risk_matrix.yaml", "审批风险矩阵（与生产同一份）")
 	fs.StringVar(&f.permFile, "permissions", "policy/permission_matrix.yaml", "权限矩阵（与生产同一份）")
+	fs.StringVar(&f.regFile, "regulation", "policy/regulation_map.yaml", "法规对照表（与生产同一份）")
 	fs.StringVar(&f.deviceFile, "devices", "configs/mock/device.yaml", "设备 → 农场显式绑定（cross_farm_isolation 判 device_id 归属）")
 	fs.IntVar(&f.poolSize, "pool", 1, "trial schema 槽位数（agri_eval_t_1..n）")
 }
@@ -97,6 +99,10 @@ func (f *infraFlags) open(ctx context.Context, logW io.Writer, ls *loadedSamples
 		return nil, err
 	}
 	risk, err := policy.LoadRiskMatrix(f.riskFile)
+	if err != nil {
+		return nil, err
+	}
+	constraints, err := app.LoadConstraintReviewer(f.regFile)
 	if err != nil {
 		return nil, err
 	}
@@ -165,11 +171,18 @@ func (f *infraFlags) open(ctx context.Context, logW io.Writer, ls *loadedSamples
 		if err != nil {
 			return app.Deps{}, err
 		}
+		gc := app.GraphConfig{Model: mcfg, Chat: chat, KB: ls.kb, Taxonomy: ls.tx}
+		// P1 L3：样本声明 local_orders 时替换 trial 库读取（不声明时读 trial 库，新槽位无本地单）。
+		if len(smp.Fixtures.LocalOrders) > 0 {
+			if gc.LocalOrders, err = env.NewFixtureLocalOrders(smp.Fixtures.LocalOrders); err != nil {
+				return app.Deps{}, err
+			}
+		}
 		return app.Deps{Clock: s.Clock, Logger: trialLog, DB: s.DB, Redis: in.rdb, Keys: s.Keys,
 			RawStore: repository.NewRawStore(s.DB, putter, cfg.MinIO.BucketRaw),
 			// 主链路（桩模型）在 Build 内用本 trial 的 Runs / Advice / Drafts / RunLocker 装配；Tools 为每 trial 一个 FixtureMCP。
-			NewAgent: app.GraphAgent(ctx, app.GraphConfig{Model: mcfg, Chat: chat, KB: ls.kb, Taxonomy: ls.tx}),
-			Tools:    tools, Risk: risk, Permissions: perms, Adapter: dev,
+			NewAgent: app.GraphAgent(ctx, gc),
+			Tools:    tools, Risk: risk, Constraints: constraints, Permissions: perms, Adapter: dev,
 			// L6：检查点读回走 MinIO；记忆按配置开关注入样本 fixtures.memory（不读 trial 库 episodic_memory）。
 			HITL: app.HITLDeps{Objects: repository.MinIOGetter{Client: mc}, RawBucket: cfg.MinIO.BucketRaw,
 				Memory: memory.Options{Enabled: cfg.Memory.Enabled, EpisodicLimit: cfg.Memory.EpisodicLimit,

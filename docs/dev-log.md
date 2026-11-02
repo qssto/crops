@@ -422,3 +422,66 @@
 - devicesim 生产保护（两者都做）：`config.Devicesim.CheckDeploy(env)`，env=prod 拒绝、base_url 必须回环（LoadDevices 也校验）；`app.Deps.Env` 新增（cmd/server 传 `cfg.Env`），devicesim 开启而 Env 为空同样失败关闭。
 - 留给 L4：RecordingAdapter 按方法与工单分队列；错误 / 超时回执脚本。
 - 验证：`go build / vet / test ./...` 全绿，`go vet -tags integration ./...` 通过；集成测试待调度方在主仓执行。
+
+## P1-L3 · 约束校验注册表、审批前拦截、法规映射（2026-10-29）
+
+- 交付：
+  - 新包 `internal/agent/guardrail/constraint`：`Checker{RuleID() string; Check(*Input) Result}` 纯函数，`Default()` 注册风速 / 降雨 / 气温 / PHI / 重复作业 / 禁飞与敏感区 / 飘移 / 电量 / 载药量与药剂登记前置条件；阈值全部按 `kb_id@version` 从 `knowledge/common/work_constraint.md` 等读取（新条目 `pending_expert`，threshold.signoff「待农艺专家签字」）。缺失、过期、无 tool_call_id 一律 `passed=false`；必检集合由 `Registry.Required(phase, work_type, device)` 决定，缺项、空集合（`no_constraint_plan`）都按不通过。
+  - 法规映射 `policy/regulation_map.yaml`（checker / precondition / unmapped，启动期校验 rule_id）与 `docs/p1/法规对照表.md`（待签字）；`cmd/server`、`cmd/eval` 新增 `-regulation` 参数。
+  - `ApprovalService.Open` 改为拦截：`constraint.Reviewer.Review` 按「前置条件 → unmapped 条目 → 约束」复核 graph 写入的 checks，不通过则同事务只写 `constraint_check(PRE_APPROVAL, attempt=ticket_seq)`，不建票不迁移，工单留 DRAFT，返回 `*agent.ConstraintBlockedError`。graph 收到后 run 正常收尾，发 `CONSTRAINT_BLOCKED` 事件，`Answer.ConstraintBlocked` 带 rule_id。
+  - `agent.LocalOrderSource` + `repository.LocalOrderRepo`（只取 REAL 在途 / since 后完成单）与 `field.history` 合并去重，供 PHI 与重复作业；迁移 `migrations/0008_order_field_status`（`idx_field_status`，未入库）。
+  - field / weather mock 补预计收获日、禁飞区、相邻地块、风向；eval：`constraint` 套件 36 条（9 条拒答）、`fixtures.local_orders`、`expect.constraint`、`constraint_shape` 校验规则、红线打分器 `constraint_blocked`、参考解带拦截观测；archtest 新增 guardrail/constraint 不得 import repository/service/tools/adapter/os/net/database/sql/io/fs。
+- 对外接口（给 L4）：
+  - `Registry.Evaluate(*Input) []model.ConstraintCheck`；`graph/recheck.go` 的 PRE_DISPATCH checks 改走同一注册表（无人机另加电量 / 载药量），`agent.RecheckRequest.Order` / `service.PreDispatchInput.Work` 传被复检工单；本层仍只记录不拦截。
+  - `agent.ErrConstraintBlocked`（码 `CONSTRAINT_BLOCKED`）；`*agent.ConstraintBlockedError{OrderID, RuleIDs}` 满足 `errors.Is`。
+- 偏离：
+  - 超阈值的天气（风 / 雨 / 温）先被规则层作业窗口判为观察类、不出单，到不了约束层；这几组样本写成观察类，超阈值分支由 checker 单测覆盖。天气预报缺失或过期按规则层拒答（DATA_MISSING）。
+  - 13 条 regression 样本原本会被新拦截翻转（缺 expected_harvest / no_fly_zones / adjacent_fields / history 数据），已补 profile 与 history fixture 并升 version：rice-disaster-0012、rice-fert-0021、rice-hitl-0001/0002、rice-pest-0005、0031–0036、0038、0039。另有 26 条 regression 被拦截但不断言审批 / 工单，结论不变（列表见 `TestConstraint_Samples -v` 日志）。
+  - `cmd/auditctl reg-report` 未做，留给 L7。`service/workorder_dispatch.go` 只改了一处：把工单传给复检。
+- TODO：
+  - worktree 无 deploy/.env：`make test-integration GO=go`（含 LocalOrderRepo 集成测试、Open 拦截集成测试）与 `make eval GO=go SUITE=constraint N=3` 未跑，由调度方在主仓执行；需先执行迁移 0008。
+  - 下发前电量 / 载药不通过后的退回，以及「审批后天气恶化」打分器，在 L4。
+
+### P1-L3 审查修复（2026-10-30）
+
+- P0-1 PHI 未识别药剂放行：施药类历史 / 本地单只要药剂名为空或查不到 PHI，`phi_interval` 即 passed=false，Note 列出未识别药剂（`"名称"@来源`）。`knowledge.Registry.Resolve` 按 id、通用名、`aliases`、`NormalizeProductName`（去含量与剂型，如「24%噻呋酰胺悬浮剂」→「噻呋酰胺」）归一；graph `maxPHI` 取本作物各登记的最长 PHI。登记表 v1 → v2（`aliases` 字段，商品名为 Claude 草拟待核对）。
+- P1-2 拦截后再开票：选 upsert 留痕，不加计数、无新迁移。`ApprovalRepo.UpsertChecksTx` 对 (order, PRE_APPROVAL, attempt=ticket_seq) 逐行 `AS new ON DUPLICATE KEY UPDATE`，并删掉本次未出现的 rule_id，使库中校验行等于最近一次复核结果。历次拦截的 rule_id 由 CONSTRAINT_BLOCKED 事件（run_event + audit_log）追溯。理由：attempt 仍与 ticket_seq 一一对应，下游按 attempt 读取不变；单独计数需改 uk_check 或加列。
+- P1-3：Reviewer 用行内 Threshold.Op/Value 与 Observed.Value 重算，与 passed 不一致即判失败。`OrderState` 增 DeviceType / DispatchMode（`GetState` 读出）；Open 用库中 work_type / device_type / dispatch_mode 复核，请求与库不一致返回 ErrBadApproval（请求 dispatch_mode 为空按 DRY_RUN）。
+- P1-4：CONSTRAINT_BLOCKED 从 graph 移到 `ApprovalService.block`，与校验行同事务写入（payload {order_id, rule_ids}，审计投影 APPROVAL / FAILED，target order:{id}）。事务内 `LockTicketByOrderSeqTx` 若读到并发开出的票，回滚本次写入并返回该票。graph 不再发此事件。
+- P1-5：`sensitive` 缺失或非布尔，`drift_risk` 判失败。
+- P1-6：部分修复。下发前复检只按作业单 payload.device_id 取 `device.status`；payload 无 device_id 或状态里的 device_id 不符，电量 / 载药判失败。延期：to_order 时不绑定设备（开票前调 device.* 会破坏 constraint_blocked 与 must_not_call 的「设备零调用」断言），设备绑定交给 L4 派单。
+- P1-7：`constraint_blocked` 打分器对未声明 expect.constraint 却被拦截的样本判失败；`TestConstraint_Samples` 对全部样本打分并统计意外拦截。26 条误拦样本都缺 fixture（无违规），已补 `weather.forecast` / `field.history` / `field.profile`（expected_harvest、no_fly_zones、adjacent_fields）。「吡虫啉」不在登记表、PHI 失败关闭，4 条样本的前次施药改为井冈霉素（与防治对象无关，不影响候选与抗性轮换）。新增逐日预报样本 rice-cons-0037 / 0038 / 0039：今日达标、规则层出单，24 h 窗口覆盖的明日风 4.2 m/s / 雨 12 mm / 36 ℃，分别由 wind_speed_max / rain_max / temp_max 拦截。上文「超阈值天气到不了约束层」的偏离由这 3 条补上。结果：`constraint samples=39 unexpected blocks=0`。
+- P2/P3 8–18：物理量为负判失败（`physical`，气温不限）；时效检查判超前 > `maxClockSkew`（5 min）与阈值单位不符；天气按 TimeWindow 覆盖的逐日记录取最不利值，气温优先 `temp_max_c`；`days()` 按日历日相减；PHI 不吞 source 错误、本地单未载入即失败；历史与本地单按 order_id 去重；电量 / 载药 / 区域比较符取自 KB（uav-device v1 → v2，新增 battery-margin / payload-margin，值 0）；app 把开票前 Reviewer 的同一 Registry 注入 `graph.Config.Constraints`（必填，graph 不再自建 Default）；`mustJSON` 编码失败时落固定字面量；必检集合为空、只有法规条目时补 no_constraint_plan 行。
+- 样本版本与 samples_hash（`id@version` 排序 sha256）：
+  - 升版：regression rice-disaster-0006、0011 → v2；rice-fert-0001、0002 → v3；rice-fert-0003、0006、0007、0008、0012 → v2；rice-pest-0001、0003、0004 → v3；rice-pest-0008、0010–0017、0021、0037、0041 → v2；redteam xf-pest-0001、0002 → v2；constraint rice-cons-0015、0016 → v2。新增 rice-cons-0037–0039 v1。
+  - 全量 150 → 153 条：`f3c51d66…651f5f` → `aaf17f60…97cdff`；regression 108 条 `1e0606bb…aec38a` → `f372c25d…ffcbeedb`；constraint 36 → 39 条 `7819ca2f…88443cf` → `cdce6b32…95c63a3`；redteam 6 条 `b2dfb28d…3816e1a` → `d01d0e5b…0cc8201`。`cmd/eval` validate 期望数改为 153。
+- 已知限制：真实 weather.forecast 逐日只有日均温 `temp_c`，无最高温时以日均温判 temp_max（偏乐观）；逐日记录无小时粒度，窗口按本地日历日覆盖。
+- 待确认：真实 field 服务契约。若生产 field.profile 不返回 expected_harvest、no_fly_zones、adjacent_fields（含 sensitive 布尔），全部 SPRAY 单都会被 phi_interval / no_fly_zone / drift_risk 拦截。本层不改代码，须与 field 服务对齐字段。
+- 测试：TestNormalizeProductName、TestRegistry_Resolve、TestReviewer_Recompute、TestDaysCalendar、TestWeatherWindow、TestPhysicalAndFreshness、TestConstraintRegistry_SharedWithReviewer、TestApprovalOpen_BlockedThenPasses、TestApprovalOpen_BlockedLosesToConcurrentTicket、TestApprovalOpen_ReviewUsesStoredOrderAndSkipsExisting（改名）、TestApprovalBlockedThenPasses_Integration；另有 PHI / 漂移 / 设备 / 打分器表驱动新增用例。`TestApprovalBlocked_Integration` 改为断言每次拦截各一条 CONSTRAINT_BLOCKED 及其审计行。
+- TODO：集成测试（含上述两条 Open 集成测试）只过 `go vet -tags integration`，由调度方在主仓跑。
+
+### P1-L3 复核修复（2026-10-30）
+
+- 19（P1）PHI 为空的已登记药误拦：`Input.PHIOf` 改为返回 `(days *int, known bool)`，graph `maxPHI` 按本作物各登记取最长 PHI。查不到药，或该药没有本作物登记，返回 known=false，`phi_interval` 判失败。查到了但本作物登记的 `phi_days` 全为 null（五氟磺草胺、氰氟草酯）返回 days=nil，不计入最早收获日，Note 追加 `phi not applicable: 药名@来源`。
+- 20（P2）本药 PHI 为空不再短路：最早收获日以今日为起点（本药有 PHI 则加上），历史照常检查，未识别药剂、历史或本地单未载入照常判失败。补复核实测用例：本药 PHI 为空、5 天前用过噻呋酰胺（PHI 30）、20 天后收获，判失败（余量 −5）。
+- 7 遗留（P1）吡虫啉：
+  - 登记表新增 `candidate: false`：只作 PHI 来源，不进 calc 候选，`Registration` 不认；这类产品必须写 `phi_days`，`dose` 可省。机制有单测（TestRegistry_PHIOnlyProduct、TestCandidates_SkipsPHIOnly）。
+  - **吡虫啉未加入登记表。** KB 里找不到它的水稻 PHI：planthopper.md:41、safety.md:108 只写「吡虫啉对褐飞虱抗性高，不作推荐 / 不推荐」，没有给出 PHI 数值；safety.md 对 PHI 的总则是「以登记标签为准（待核对）」。按「无可靠来源不编」，吡虫啉保持失败关闭，用过吡虫啉的田的施药单会被 `phi_interval` 拦截，直到专家补上带来源的 PHI（届时以 `candidate: false` 加入即可）。
+  - 因此 5 条样本保持井冈霉素、不改回：rice-cons-0015、rice-cons-0016、redteam xf-pest-0001、xf-pest-0002、regression rice-pest-0001。**更正**：上节写的「4 条样本」漏了 regression rice-pest-0001，实为 5 条。
+  - 新增约束样本 rice-cons-0040：7 天前施过吡虫啉（历史施药无法识别），断言 `phi_interval` 拦截、作业单留 DRAFT。
+- 2 遗留（P1）拦截证据被覆盖：不加迁移。`ApprovalService.block` 把未通过行的 rule_id、observed、threshold（含 `kb:<kb_id>@<version>`）、note 写进 CONSTRAINT_BLOCKED payload（`model.ConstraintBlockedPayload.Checks`）。payload ≤ 8KB，超出时先从 checks 末尾截、再截 rule_ids，并置 `truncated: true`。**偏离 §6.4（INSERT IGNORE）：PRE_APPROVAL 行为最近一次复核结果，历次拦截证据见 CONSTRAINT_BLOCKED payload**，已登记到 docs/contracts.md「开票前约束拦截留痕」。路线文档未改。
+- 21（P2）拦截与开票并发：两边都先 upsert 不同 rule_id、再删旧行，会在 uk_check 的 next-key 锁上互等（1213）。选调整锁顺序而不是重试：新增 `ApprovalRepo.LockOrderTx`（`SELECT id FROM work_order WHERE tenant_id=? AND farm_id=? AND id=? FOR UPDATE`），作为开票与拦截事务的第一条语句，同一张单的写入串行。新增集成测试 `TestApprovalBlockVsOpenConcurrent_Integration`（10 张单，两个 goroutine 同时开票 / 拦截，须 -race），本地只过 `go vet -tags integration`，由调度方在主仓跑。
+- MySQL 版本：`UpsertChecksTx` 用 `INSERT … AS new ON DUPLICATE KEY UPDATE`，需要 MySQL ≥ 8.0.19。deploy/docker-compose.yml 的 `mysql:8.0` 拉到的是 8.0 最新版，满足要求；未改 compose，如需固定版本由部署方处理。
+- 22（P3）拦截输给并发开票：事务外记 Warn 日志 `approval: constraint block lost to concurrent ticket, blocked checks rolled back`，带 order_id、run_id、rule_ids、ticket_id。`ApprovalDeps.Logger` 改为必填，app 注入 `deps.Logger`。
+- 23（P3）空值通过行：`nilValueOK` 改为「规则 → 固定不适用说明集合」：repeat_operation「no previous spray / fertilize / irrigate」，no_fly_zone「no zone nearby」，drift_risk「no sensitive adjacent field / no sensitive field downwind」。说明文字是 checker 与 Reviewer 共用的常量。空值通过行还须带 `threshold.op`，note 也得在集合内，否则改判失败。phi_interval 通过时总带天数裕量，已移出 nilValueOK。
+- 25（P3）剂型后缀进 KB：登记表新增顶层 `formulations`（v2 → v3），与 aliases 一起说明在 knowledge/README.md §7。加载时按字数从长到短排序，空表、空串、首尾空白或重复即加载失败。`NormalizeProductName` 改为 `*Registry` 的方法，代码里不再有剂型表。
+- 样本与 samples_hash（`id@version` 排序 sha256）：
+  - 全量 153 → 154 条：`aaf17f60…97cdff` → `1169ee57…43b4df98`；
+  - constraint 39 → 40 条：`cdce6b32…95c63a3` → `28739561…13e73b47`；
+  - regression 108 条、redteam 6 条不变。
+  - `cmd/eval` validate 期望数改为 154；`TestConstraint_Samples`：`constraint samples=40 unexpected blocks=0`。
+- 测试：
+  - 新增 TestEnvMaxPHI、TestRegistry_FormulationsFromKB、TestRegistry_PHIOnlyProduct、TestCandidates_SkipsPHIOnly、TestReviewer_NilValueNoFly、TestApprovalOpen_BlockedPayloadCarriesEvidence、TestBlockedPayload_Truncates、TestApprovalOpen_LocksOrderFirst、TestApprovalOpen_BlockedRaceLogsWarn、TestApprovalBlockVsOpenConcurrent_Integration。
+  - 表驱动新增用例：PHI（PHI 不适用仍查历史、历史未识别 / 未载入、历史 PHI 不适用忽略）、TestReviewer_Recompute（空值说明集合与 threshold.op）、TestStore_OpenRejects（formulations 缺失 / 重复、PHI-only 产品）。
+  - TestApprovalBlockedThenPasses_Integration 增加对 CONSTRAINT_BLOCKED payload 证据的断言。
+- TODO：调度方在主仓跑集成测试 TestApproval_Integration、TestApprovalBlocked_Integration、TestApprovalBlockedThenPasses_Integration、TestApprovalBlockVsOpenConcurrent_Integration（加 -race）。

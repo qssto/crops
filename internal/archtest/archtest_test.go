@@ -80,6 +80,16 @@ func TestDetectsViolations(t *testing.T) {
 			src: `import _ "agri-steward/internal/agent/tools/mcp"`, wantRule: "adapter must not import repository/agent"},
 		{name: "adapter may import model", path: "internal/adapter/x.go",
 			src: `import _ "agri-steward/internal/model"`},
+		{name: "constraint imports repository", path: "internal/agent/guardrail/constraint/x.go",
+			src: `import _ "agri-steward/internal/repository"`, wantRule: "guardrail/constraint must not import"},
+		{name: "constraint imports mcp tools", path: "internal/agent/guardrail/constraint/x.go",
+			src: `import _ "agri-steward/internal/agent/tools/mcp"`, wantRule: "guardrail/constraint must not import"},
+		{name: "constraint imports net/http", path: "internal/agent/guardrail/constraint/x.go",
+			src: `import _ "net/http"`, wantRule: "guardrail/constraint must not import"},
+		{name: "constraint imports os", path: "internal/agent/guardrail/constraint/x.go",
+			src: `import _ "os"`, wantRule: "guardrail/constraint must not import"},
+		{name: "constraint may import knowledge and model", path: "internal/agent/guardrail/constraint/x.go",
+			src: "import (\n_ \"agri-steward/internal/agent/knowledge\"\n_ \"agri-steward/internal/model\"\n_ \"encoding/json\"\n)"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

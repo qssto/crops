@@ -42,8 +42,8 @@ func repoSnapshot(t *testing.T) *Snapshot {
 // 仓库内知识库必须能完整加载，且与 taxonomy 一致。
 func TestStore_OpenRepoWorktree(t *testing.T) {
 	snap := repoSnapshot(t)
-	if got := len(snap.Entries()); got != 38 {
-		t.Errorf("entries = %d, want 38", got)
+	if got := len(snap.Entries()); got != 42 { // P1-L3 新增 common/work_constraint 四条
+		t.Errorf("entries = %d, want 42", got)
 	}
 	if got := len(snap.Registry().Products); got != 21 {
 		t.Errorf("products = %d, want 21", got)
@@ -109,6 +109,7 @@ author: claude-draft
 review_status: pending_expert
 effective_from: 2026-10-28
 targets: {planthopper: 稻飞虱}
+formulations: [悬浮剂, 可分散油悬浮剂, 水分散粒剂]
 products:
   - id: pymetrozine-50wg
     common_name: 吡蚜酮
@@ -120,6 +121,18 @@ products:
          dilution_note: x, phi_days: 14, max_times_per_season: 2, regions: ["*"], confidence: medium}
 `
 )
+
+// regPHIOnly 是仅作 PHI 来源的产品（candidate:false）：可不写用量，但必须有 phi_days。数值仅供测试。
+const regPHIOnly = `  - id: phi-only-test
+    common_name: 测试药
+    formulation: 悬浮剂
+    content: 10%
+    registration_no: null
+    candidate: false
+    registrations:
+      - {crop: rice, target: planthopper, method: 喷雾, dilution_note: x, phi_days: 7, max_times_per_season: 1,
+         regions: ["*"], confidence: medium}
+`
 
 func fsWith(files map[string]string) FSReader {
 	m := fstest.MapFS{}
@@ -205,6 +218,23 @@ func TestStore_OpenRejects(t *testing.T) {
 			}},
 		{name: "registry dose min > max", wantErr: "min <= max",
 			mutate: func(m map[string]string) { m[RegistryFile] = strings.Replace(regMinimal, "min: 8", "min: 80", 1) }},
+		{name: "registry formulations missing", wantErr: "formulations required",
+			mutate: func(m map[string]string) {
+				m[RegistryFile] = strings.Replace(regMinimal, "formulations: [悬浮剂, 可分散油悬浮剂, 水分散粒剂]\n", "", 1)
+			}},
+		{name: "registry formulation duplicate", wantErr: "formulations[1]",
+			mutate: func(m map[string]string) {
+				m[RegistryFile] = strings.Replace(regMinimal, "[悬浮剂, 可分散油悬浮剂,", "[悬浮剂, 悬浮剂,", 1)
+			}},
+		{name: "phi-only product", mutate: func(m map[string]string) { m[RegistryFile] = regMinimal + regPHIOnly }},
+		{name: "phi-only product without phi", wantErr: "candidate:false product is a PHI source",
+			mutate: func(m map[string]string) {
+				m[RegistryFile] = regMinimal + strings.Replace(regPHIOnly, "phi_days: 7", "phi_days: null", 1)
+			}},
+		{name: "phi-only product with bad dose", wantErr: "min <= max",
+			mutate: func(m map[string]string) {
+				m[RegistryFile] = regMinimal + strings.Replace(regPHIOnly, "{crop: rice,", "{crop: rice, dose: {min: 9, max: 1, unit: g/亩},", 1)
+			}},
 		{name: "missing index", wantErr: "index.yaml",
 			mutate: func(m map[string]string) { delete(m, "index.yaml") }},
 	}

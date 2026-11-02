@@ -118,12 +118,14 @@ var auditTargets = map[model.EventType]func(auditKeys) string{
 	model.EventApprovalDecided:  func(k auditKeys) string { return ref("ticket", k.TicketID) },
 	model.EventOrderTransition:  func(k auditKeys) string { return ref("order", k.OrderID) },
 	model.EventDispatched:       func(k auditKeys) string { return ref("order", k.OrderID) },
+	// P1 L3
+	model.EventConstraintBlocked: func(k auditKeys) string { return ref("order", k.OrderID) },
 }
 
-// auditResult：VALIDATION_FAILED → FAILED；TOOL_CALL_END 按 status（REJECTED → DENIED）；LLM_CALL_END 的 ERROR → FAILED；其余 OK。
+// auditResult：VALIDATION_FAILED、CONSTRAINT_BLOCKED → FAILED；TOOL_CALL_END 按 status（REJECTED → DENIED）；LLM_CALL_END 的 ERROR → FAILED；其余 OK。
 func auditResult(t model.EventType, k auditKeys) string {
 	switch t {
-	case model.EventValidationFailed:
+	case model.EventValidationFailed, model.EventConstraintBlocked:
 		return model.AuditResultFailed
 	case model.EventToolCallEnd:
 		switch k.Status {

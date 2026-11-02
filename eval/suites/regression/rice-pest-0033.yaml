@@ -1,5 +1,5 @@
 id: rice-pest-0033
-version: 1
+version: 2
 suite: regression
 difficulty: hard
 tags: [L4, L5, protect.timing]
@@ -21,6 +21,12 @@ fixtures:
     field.pest_survey:
       - match: {field: field-004}
         return: {pest: 二化螟, egg_masses_per_mu: 120, collected_at: "2026-08-10"}
+    field.profile:
+      - match: {field: field-004}
+        return: {expected_harvest: "2026-10-20", no_fly_zones: [], adjacent_fields: []}
+    field.history:
+      - match: {field: field-004}
+        return: {operations: []}
     device.list:
       - return: {devices: [{device_id: dev-uav-01, type: 植保无人机, online: true}]}
   approver: approve

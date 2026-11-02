@@ -1,0 +1,49 @@
+# 法规对照表（P1 · L3）：法规条款 → 工程判定（constraint 注册表 rule_id）。
+# 警告：条款引用由法务填写（legal_basis「待法务填写」）；工程建议（note）均「待法务确认」。全表「待签字」，见 docs/p1/法规对照表.md。
+# kind：checker = 约束校验器判定；precondition = 法规前置条件（开票前最先判定）；unmapped = 尚无工程判定，适用即拦截（失败关闭）。
+# 启动时校验：checker / precondition 引用的 rule_id 必须已注册且种类一致；unmapped 的 rule_id 为 reg:<id>（≤ 48 字符）。
+# applies_to 空列表表示不限；取值：work_types SPRAY / FERTILIZE / IRRIGATE，device_types knapsack / uav / manual / valve，
+# dispatch_modes DRY_RUN / REAL。
+version: 1
+entries:
+  # 一、民用无人驾驶航空器飞行管理
+  - id: uav-no-fly-zone
+    title: 无人机不得在禁飞区、敏感区内作业
+    section: 一、民用无人驾驶航空器飞行管理
+    kind: checker
+    rule_id: no_fly_zone
+    applies_to: {device_types: [uav]}
+    legal_basis: 待法务填写
+    note: 工程建议：以地块档案 no_fly_zones 最近距离判定，边界按区内处理（待法务确认）
+  - id: uav-flight-plan
+    title: 无人机飞行活动申请与空域审批
+    section: 一、民用无人驾驶航空器飞行管理
+    kind: unmapped
+    applies_to: {device_types: [uav], dispatch_modes: [REAL]}
+    legal_basis: 待法务填写
+    note: 工程建议：接入空域申请回执后改为 checker（待法务确认）
+  # 二、作业人员资质
+  - id: uav-operator-license
+    title: 无人机操控员资质
+    section: 二、作业人员资质
+    kind: unmapped
+    applies_to: {device_types: [uav], dispatch_modes: [REAL]}
+    legal_basis: 待法务填写
+    note: 工程建议：设备绑定时登记操控员证照并在下发前核验（待法务确认）
+  # 三、农药使用
+  - id: pesticide-registered-use
+    title: 按农药登记的作物、防治对象与区域使用
+    section: 三、农药使用
+    kind: precondition
+    rule_id: reg_pesticide_registered
+    applies_to: {work_types: [SPRAY]}
+    legal_basis: 待法务填写
+    note: 工程建议：以 common/pesticide_registry 登记记录判定（待法务确认）
+  - id: pesticide-phi
+    title: 遵守农药安全间隔期
+    section: 三、农药使用
+    kind: checker
+    rule_id: phi_interval
+    applies_to: {work_types: [SPRAY]}
+    legal_basis: 待法务填写
+    note: 工程建议：预计收获日须不早于最早可收获日（含同地块历史与在途施药）（待法务确认）

@@ -99,9 +99,14 @@ func TestCrossFarmDenied_Integration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	constraints, err := app.LoadConstraintReviewer(filepath.Join(e.Root, "policy/regulation_map.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	a, err := app.Build(app.Deps{Clock: slot.Clock, Logger: logger, DB: slot.DB, Redis: e.Redis, Keys: slot.Keys,
-		RawStore: nopRaw{}, Agent: refuseAgent{}, Tools: nopTools{}, Risk: risk, Presign: itPresign{}, Permissions: perms})
+		RawStore: nopRaw{}, Agent: refuseAgent{}, Tools: nopTools{}, Risk: risk, Constraints: constraints, Presign: itPresign{},
+		Permissions: perms})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -110,6 +110,8 @@ type state struct {
 	card   *model.AdviceCard
 	order  *model.WorkOrder
 	ticket *model.ApprovalTicket // L5：to_order 开票结果（PREPARING）；非空即须以 WAIT_APPROVAL 中断（L6）
+	// blocked 是开票前约束拦截的 rule_id（P1 L3）：非空时作业单留 DRAFT、无票据，run 正常收尾。
+	blocked []string
 }
 
 // stopped 表示已拒答（后续节点直通到 assemble / persist）。

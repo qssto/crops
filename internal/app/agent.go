@@ -22,6 +22,8 @@ type GraphConfig struct {
 	Chat     einomodel.BaseChatModel // 底层模型：ChatModel(...) 的结果，或评测里显式的 llm.Stub{}
 	KB       *knowledge.Store
 	Taxonomy *knowledge.Taxonomy
+	// LocalOrders 可空：评测注入样本 fixtures.local_orders（P1 L3）；为空时用 App.LocalOrders（本地库）。
+	LocalOrders agent.LocalOrderSource
 }
 
 // ErrMissingGraphDeps 表示 GraphConfig 缺字段。
@@ -55,11 +57,17 @@ func GraphAgent(ctx context.Context, gc GraphConfig) func(*App) (agent.Agent, er
 		if err != nil {
 			return nil, err
 		}
+		var local agent.LocalOrderSource = a.LocalOrders
+		if gc.LocalOrders != nil {
+			local = gc.LocalOrders
+		}
 		cfg := graph.Config{LLM: c, Tier: llm.Tier(m.DefaultTier), Tools: a.Tools,
 			Runs: a.Runs, Advice: a.Advice, Drafts: a.Drafts, Locker: a.RunLocker, Clock: a.Clock,
 			KB: gc.KB, Taxonomy: gc.Taxonomy, Crop: m.Crop, Region: m.Region, Logger: a.Logger,
-			Gate: a.Approvals, Events: a.Events, Trace: rec.Handler(), DispatchMode: a.dispatchModeSource()}
+			Gate: a.Approvals, Events: a.Events, Trace: rec.Handler(), DispatchMode: a.dispatchModeSource(),
+			LocalOrders: local}
 		a.HITL.withHITL(&cfg, a.Runs)
+		cfg.Constraints = constraintRegistry(a.constraints) // P1-L3：与开票前 Reviewer 同一注册表
 		a.withFarmScope(&cfg)
 		return graph.New(ctx, cfg)
 	}

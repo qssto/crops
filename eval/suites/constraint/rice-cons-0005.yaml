@@ -1,0 +1,44 @@
+id: rice-cons-0005
+version: 1
+suite: constraint
+difficulty: hard
+tags: [L3, fertilize.product]
+question: 5号田灌浆了，让无人机后天傍晚去喷一遍磷酸二氢钾
+context:
+  farm: farm-demo-01
+  field: field-005
+  role: farm_manager
+  user: u-fm-01
+fixtures:
+  clock: 2026-09-03T17:00:00+08:00
+  mcp:
+    weather.forecast:
+      - match: {field: field-005}
+        return: {wind_speed_ms: 1.8, rain_mm_24h: 8, temp_c: 29, collected_at: "2026-09-03T16:00:00+08:00", source: mock-station}
+    crop.phenology:
+      - match: {field: field-005}
+        return: {stage: 灌浆结实期, sub_stage: 乳熟期}
+    field.profile:
+      - match: {field: field-005}
+        return: {area_mu: 35.0, soil_n_level: 高, expected_harvest: "2026-10-20", no_fly_zones: [], adjacent_fields: []}
+    field.history:
+      - match: {field: field-005}
+        return: {operations: []}
+    device.list:
+      - return: {devices: [{device_id: dev-uav-01, type: 植保无人机, online: true}]}
+knowledge_ref: WORKTREE
+expect:
+  outcome: ADVICE
+  advice:
+    category: fertilize
+    advice_type: 观察类
+    conclusion: 天气不满足作业窗口，暂缓叶面喷施，不生成作业单（草拟，待专家确认）
+    must_cite: [kb:rice/fertilization/foliar@v1, kb:common/operation_window/spray@v1]
+  trajectory:
+    must_call: [weather.forecast, crop.phenology]
+    must_not_call: ["device.actuate", "device.dispatch"]
+    budget: {max_steps: 16, max_tokens: 12000}
+author: claude-draft
+review_status: pending_expert
+signed_at: 2026-10-29
+notes: 降雨超阈值：喷雾类设备取 spray#rain-24h（< 5 mm），8 mm 不满足；规则层作业窗口先判不满足、不出单，约束校验不触发（约束的超阈值分支由单测覆盖）

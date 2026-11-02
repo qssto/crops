@@ -166,5 +166,9 @@ entries:
 - `targets`：防治对象 id → 中文名。
 - `products[]`：`id`（稳定英文 id：`<有效成分英文>-<含量><剂型代码>`，如 `chlorantraniliprole-200sc`）、`common_name`、`formulation`、`content`、`registration_no`（待核对，未填）、`registrations[]`。
 - `registrations[]`：`crop`、`target`、`dose{min,max,unit}`（`unit` 为 `g/亩`、`mL/亩` 或 `倍`）、`method`、`dilution_note`、`phi_days`（不适用写 `null`，如浸种、播后封闭）、`max_times_per_season`、`regions`（`"*"` 表示全国登记）、`confidence`（草拟时自评 `high` / `medium`，供专家排核对优先级）。
+- `aliases`（可选）：农事记录 / 作业单里可能出现的商品名、俗称（如 `康宽`）。含量 + 剂型的写法（如 `24%噻呋酰胺悬浮剂`、`200 g/L 氯虫苯甲酰胺悬浮剂`）由 `Registry.NormalizeProductName` 去掉开头含量与结尾剂型后与通用名比较，不必逐一列出。约束校验（安全间隔期）按 id → 通用名 → 别名 → 归一名查药，查不到即失败关闭。别名为 Claude 草拟，随本表 pending_expert 待专家核对。
+- `formulations`（必填，表顶层）：药名归一时从结尾剥掉的剂型名，与 `aliases` 同属药名写法，代码里不再硬编码。加载时按字数从长到短匹配（「可分散油悬浮剂」先于「悬浮剂」）；空表、空串、首尾空白或重复即加载失败。新剂型直接加在这里。
+- `candidate: false`（可选，缺省为 true）：该产品只作「PHI 来源」，用于识别农事记录里的历史施药、计算最早收获日，不进 calc 候选集合，`Registration` 也不认它。这类产品每条登记必须写 `phi_days`（数值来自 KB 已有条目，不得编造）；`dose` 可省略，写了仍按常规校验。
+- 安全间隔期按本作物的登记取：查不到药或无本作物登记即失败关闭；查到了但所有本作物登记的 `phi_days` 都是 `null`（如五氟磺草胺、氰氟草酯）视为 PHI 不适用，不计入最早收获日，并在校验说明里写明。
 - `out_of_set_test: true` 的产品刻意**没有**水稻登记，只供「集合外药剂」测试；calc 按 `crop × target × region` 过滤后自然不会出现在候选集合中。
 - 候选集合 `product_candidates(crop, target, region)` = 存在一条 `registrations` 满足三者匹配的产品 id。

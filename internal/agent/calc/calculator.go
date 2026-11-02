@@ -115,10 +115,13 @@ func (c *Calculator) paramRange(kbID, id string, when map[string]any) (knowledge
 }
 
 // Candidates 返回 crop × target × region 的登记药剂 id（登记表顺序）；空集返回 ErrNoCandidates。
-// out_of_set_test 产品没有水稻登记，按三者过滤后自然不会出现。
+// out_of_set_test 产品没有水稻登记，按三者过滤后自然不会出现；candidate:false（仅 PHI 来源）的产品跳过。
 func (c *Calculator) Candidates(crop, target, region string) ([]string, error) {
 	var out []string
 	for _, p := range c.reg.Products {
+		if !p.IsCandidate() {
+			continue
+		}
 		for _, g := range p.Registrations {
 			if g.Matches(crop, target, region) {
 				out = append(out, p.ID)
@@ -144,10 +147,10 @@ func (u Use) inputs() map[string]any {
 	return map[string]any{"product_id": u.ProductID, "crop": u.Crop, "target": u.Target, "region": u.Region}
 }
 
-// Registration 返回药剂在该适用范围下的登记；无登记返回 ErrNotRegistered。
+// Registration 返回药剂在该适用范围下的登记；无登记或 candidate:false（仅 PHI 来源，不得作为所用药剂）返回 ErrNotRegistered。
 func (c *Calculator) Registration(u Use) (knowledge.Registration, error) {
 	p, ok := c.reg.Product(u.ProductID)
-	if ok {
+	if ok && p.IsCandidate() {
 		for _, g := range p.Registrations {
 			if g.Matches(u.Crop, u.Target, u.Region) {
 				return g, nil

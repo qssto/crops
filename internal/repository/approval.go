@@ -106,8 +106,30 @@ func (ApprovalRepo) TicketByRun(ctx context.Context, db *gorm.DB, scope model.Sc
 	return t, ok, nil
 }
 
-// InsertChecksTx 写审批前约束校验（§6.6：INSERT IGNORE，uk_check 幂等）；attempt 取 ticket_seq。
-func (ApprovalRepo) InsertChecksTx(ctx context.Context, tx *gorm.DB, ref model.OrderRef, attempt int,
+// LockOrderTx 在事务内对作业单行加排他锁（FOR UPDATE），作为开票 / 拦截事务的第一条语句，使同一张单的写入串行
+// （复核第 21 条：避免两边 upsert 不同 rule_id 后删旧行时在 uk_check 的 next-key 锁上死锁）。单不存在返回 model.ErrNotFound。
+func (ApprovalRepo) LockOrderTx(ctx context.Context, tx *gorm.DB, ref model.OrderRef) error {
+	if err := requireFarm(ref.TenantID, ref.FarmID); err != nil {
+		return err
+	}
+	if err := requireTx(tx); err != nil {
+		return err
+	}
+	var ids []uint64
+	if err := tx.WithContext(ctx).Raw(`SELECT id FROM work_order WHERE tenant_id=? AND farm_id=? AND id=? FOR UPDATE`,
+		ref.TenantID, ref.FarmID, ref.OrderID).Scan(&ids).Error; err != nil {
+		return fmt.Errorf("repository: lock work_order %d: %w", ref.OrderID, err)
+	}
+	if len(ids) == 0 {
+		return fmt.Errorf("repository: lock work_order %d: %w", ref.OrderID, model.ErrNotFound)
+	}
+	return nil
+}
+
+// UpsertChecksTx 写审批前约束校验（P1 L3 审查修复：attempt 取 ticket_seq）。同一 attempt 可能先被拦截、修正后再开票，
+// 故按 uk_check 覆盖（AS new ON DUPLICATE KEY UPDATE）并删除本次结果集之外的旧行，库中 PRE_APPROVAL 行恒为最近一次复核；
+// 历次拦截的 rule_id 留在 CONSTRAINT_BLOCKED 事件（run_event + audit_log）里追溯。
+func (ApprovalRepo) UpsertChecksTx(ctx context.Context, tx *gorm.DB, ref model.OrderRef, attempt int,
 	checks []model.ConstraintCheck, now time.Time) error {
 	if err := requireFarm(ref.TenantID, ref.FarmID); err != nil {
 		return err
@@ -115,19 +137,50 @@ func (ApprovalRepo) InsertChecksTx(ctx context.Context, tx *gorm.DB, ref model.O
 	if err := requireTx(tx); err != nil {
 		return err
 	}
+	ruleIDs := make([]string, 0, len(checks))
 	for _, c := range checks {
 		if c.Phase != model.PhasePreApproval {
 			return fmt.Errorf("repository: constraint_check %s phase %q, want %s", c.RuleID, c.Phase, model.PhasePreApproval)
 		}
 		err := tx.WithContext(ctx).Exec(
-			`INSERT IGNORE INTO constraint_check (tenant_id, farm_id, order_id, phase, attempt, rule_id, passed, observed, threshold, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			`INSERT INTO constraint_check (tenant_id, farm_id, order_id, phase, attempt, rule_id, passed, observed, threshold, created_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) AS new
+ON DUPLICATE KEY UPDATE passed=new.passed, observed=new.observed, threshold=new.threshold, created_at=new.created_at`,
 			ref.TenantID, ref.FarmID, ref.OrderID, string(c.Phase), attempt, c.RuleID, c.Passed,
 			string(c.Observed), string(c.Threshold), now).Error
 		if err != nil {
-			return fmt.Errorf("repository: insert constraint_check order %d rule %s: %w", ref.OrderID, c.RuleID, err)
+			return fmt.Errorf("repository: upsert constraint_check order %d rule %s: %w", ref.OrderID, c.RuleID, err)
 		}
+		ruleIDs = append(ruleIDs, c.RuleID)
+	}
+	q := `DELETE FROM constraint_check WHERE tenant_id=? AND farm_id=? AND order_id=? AND phase='PRE_APPROVAL' AND attempt=?`
+	args := []any{ref.TenantID, ref.FarmID, ref.OrderID, attempt}
+	if len(ruleIDs) > 0 {
+		q += ` AND rule_id NOT IN (?)`
+		args = append(args, ruleIDs)
+	}
+	if err := tx.WithContext(ctx).Exec(q, args...).Error; err != nil {
+		return fmt.Errorf("repository: prune constraint_check order %d attempt %d: %w", ref.OrderID, attempt, err)
 	}
 	return nil
+}
+
+// LockTicketByOrderSeqTx 在事务内带锁读某作业单第 seq 张 ORDER 票（FOR UPDATE）：拦截写校验行后用它确认没有并发开出的票
+// （并发开票未提交时等待其提交），避免失败行覆盖已开票单的通过行。
+func (ApprovalRepo) LockTicketByOrderSeqTx(ctx context.Context, tx *gorm.DB, ref model.OrderRef, seq int) (model.ApprovalTicket, bool, error) {
+	if err := requireFarm(ref.TenantID, ref.FarmID); err != nil {
+		return model.ApprovalTicket{}, false, err
+	}
+	if err := requireTx(tx); err != nil {
+		return model.ApprovalTicket{}, false, err
+	}
+	t, ok, err := scanTicket(ctx, tx, `SELECT `+ticketColumns+` FROM approval_ticket
+ WHERE tenant_id=? AND farm_id=? AND ticket_kind='ORDER' AND order_id=? AND ticket_seq=? FOR UPDATE`,
+		ref.TenantID, ref.FarmID, ref.OrderID, seq)
+	if err != nil {
+		return model.ApprovalTicket{}, false, fmt.Errorf("repository: lock ticket order %d seq %d: %w", ref.OrderID, seq, err)
+	}
+	return t, ok, nil
 }
 
 // InsertTicketTx 插入 PREPARING 票（§6.6 定版 SQL，ticket_seq 固定 1）；命中 uk_order_seq 时返回已有 id 且 created=false。

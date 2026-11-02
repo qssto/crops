@@ -26,10 +26,11 @@ type Data struct {
 
 // Obs 是一组气象要素。
 type Obs struct {
-	TempC       float64 `yaml:"temp_c"`
-	HumidityPct float64 `yaml:"humidity_pct"`
-	WindSpeedMS float64 `yaml:"wind_speed_ms"`
-	RainMM      float64 `yaml:"rain_mm"`
+	TempC       float64  `yaml:"temp_c"`
+	HumidityPct float64  `yaml:"humidity_pct"`
+	WindSpeedMS float64  `yaml:"wind_speed_ms"`
+	RainMM      float64  `yaml:"rain_mm"`
+	WindDirDeg  *float64 `yaml:"wind_dir_deg,omitempty"` // 风的来向（度）；缺省不输出
 }
 
 // DayData 是循环日序列中的一天，可带一条预警。
@@ -66,6 +67,7 @@ type record struct {
 	TempC       float64  `json:"temp_c"`
 	HumidityPct float64  `json:"humidity_pct"`
 	WindSpeedMS float64  `json:"wind_speed_ms"`
+	WindDirDeg  *float64 `json:"wind_dir_deg,omitempty"`
 	RainMM      float64  `json:"rain_mm"`
 	RainProbPct *float64 `json:"rain_prob_pct,omitempty"`
 	Source      string   `json:"source"`
@@ -122,5 +124,5 @@ func (m *mock) dayAt(day time.Time) DayData {
 
 func (m *mock) toRecord(at time.Time, o Obs) record {
 	return record{Time: at.UTC().Format(time.RFC3339), TempC: o.TempC, HumidityPct: o.HumidityPct,
-		WindSpeedMS: o.WindSpeedMS, RainMM: o.RainMM, Source: m.data.Source}
+		WindSpeedMS: o.WindSpeedMS, WindDirDeg: o.WindDirDeg, RainMM: o.RainMM, Source: m.data.Source}
 }

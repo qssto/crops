@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"agri-steward/internal/agent"
@@ -32,7 +33,9 @@ type Transactor interface {
 type ApprovalStore interface {
 	TicketByOrderSeq(ctx context.Context, db *repository.DB, ref model.OrderRef, seq int) (model.ApprovalTicket, bool, error)
 	TicketByRun(ctx context.Context, db *repository.DB, scope model.Scope, runID uint64) (model.ApprovalTicket, bool, error)
-	InsertChecksTx(ctx context.Context, tx *repository.DB, ref model.OrderRef, attempt int, checks []model.ConstraintCheck, now time.Time) error
+	LockOrderTx(ctx context.Context, tx *repository.DB, ref model.OrderRef) error
+	UpsertChecksTx(ctx context.Context, tx *repository.DB, ref model.OrderRef, attempt int, checks []model.ConstraintCheck, now time.Time) error
+	LockTicketByOrderSeqTx(ctx context.Context, tx *repository.DB, ref model.OrderRef, seq int) (model.ApprovalTicket, bool, error)
 	InsertTicketTx(ctx context.Context, tx *repository.DB, t model.ApprovalTicket, now time.Time) (uint64, bool, error)
 	ActivateTx(ctx context.Context, tx *repository.DB, scope model.Scope, runID uint64, expiresAt, now time.Time) (int64, error)
 	ListOpen(ctx context.Context, db *repository.DB, scope model.Scope) ([]repository.PendingTicket, error)
@@ -44,17 +47,25 @@ type RiskPolicy interface {
 	TTL(level model.RiskLevel) (time.Duration, error)
 }
 
+// ConstraintReviewer 是开票前约束拦截判定（P1 L3），*constraint.Reviewer 实现：返回应落库的 PRE_APPROVAL 行
+// 与未通过的 rule_id（为空即放行）。
+type ConstraintReviewer interface {
+	Review(o model.WorkOrder) (checks []model.ConstraintCheck, blocked []string)
+}
+
 // ApprovalDeps 是 ApprovalService 的依赖（均必填）。
 type ApprovalDeps struct {
-	Clock      clock.Clock
-	DB         *repository.DB // 事务外的读
-	Tx         Transactor
-	Tickets    ApprovalStore
-	Orders     WorkOrderStore
-	WorkOrders *WorkOrderService
-	Events     EventStore
-	Raw        agent.RawStore
-	Risk       RiskPolicy
+	Clock       clock.Clock
+	DB          *repository.DB // 事务外的读
+	Tx          Transactor
+	Tickets     ApprovalStore
+	Orders      WorkOrderStore
+	WorkOrders  *WorkOrderService
+	Events      EventStore
+	Raw         agent.RawStore
+	Risk        RiskPolicy
+	Constraints ConstraintReviewer // P1 L3：开票前拦截
+	Logger      *slog.Logger
 }
 
 // ApprovalService 是审批闸门（agent.ApprovalGate，P0 §6.6 流程 4-5）与待审批列表。
@@ -67,7 +78,8 @@ func NewApprovalService(d ApprovalDeps) (*ApprovalService, error) {
 	var missing []string
 	for name, isNil := range map[string]bool{"Clock": d.Clock == nil, "DB": d.DB == nil, "Tx": d.Tx == nil,
 		"Tickets": d.Tickets == nil, "Orders": d.Orders == nil, "WorkOrders": d.WorkOrders == nil,
-		"Events": d.Events == nil, "Raw": d.Raw == nil, "Risk": d.Risk == nil} {
+		"Events": d.Events == nil, "Raw": d.Raw == nil, "Risk": d.Risk == nil, "Constraints": d.Constraints == nil,
+		"Logger": d.Logger == nil} {
 		if isNil {
 			missing = append(missing, name)
 		}
@@ -127,10 +139,14 @@ func validateOpen(scope model.Scope, req agent.ApprovalRequest) error {
 const snapshotDigestPrefix = 16
 
 // Open 为已落库的 DRAFT 单开 PREPARING 票（§6.6 流程 4）：已有票直接返回（整图重跑）；否则读库中作业单
-// （run_id 须与请求一致），按其 work_type 查 risk_matrix 定级；快照先 RawStore.Put（key 含 order_id、ticket_seq
+// （run_id / work_type / device_type / dispatch_mode 须与请求一致），先按库中这几项经 Constraints 复核约束
+// （P1 L3：法规前置条件 → 未映射法规条目 → 约束，任一不通过即 block：同事务覆盖校验行并写 CONSTRAINT_BLOCKED，不建票）；
+// 通过后按库中 work_type 查 risk_matrix 定级；快照先 RawStore.Put（key 含 order_id、ticket_seq
 // 与快照摘要前缀，内容相同的重跑写同一对象，并发开票内容不同则各写各的）并算 sha256，再单事务写
-// constraint_check(PRE_APPROVAL) + approval_ticket + Transition(DRAFT → PENDING_APPROVAL，已是则跳过) + APPROVAL_OPEN。
+// constraint_check(PRE_APPROVAL，复核后的行，覆盖此前拦截写下的行) + approval_ticket + Transition(DRAFT → PENDING_APPROVAL，已是则跳过) + APPROVAL_OPEN。
 // 事务内命中 uk_order_seq（并发开票先提交）时返回库中已有的票。
+// 锁顺序（复核第 21 条）：开票与拦截事务的第一条语句都是 work_order 行 FOR UPDATE，同一张单的写入串行；否则两边各自
+// upsert 不同 rule_id 后再删旧行，会在 uk_check 的 next-key 锁上互等（1213）。
 func (s *ApprovalService) Open(ctx context.Context, scope model.Scope, req agent.ApprovalRequest) (model.ApprovalTicket, error) {
 	if err := validateOpen(scope, req); err != nil {
 		return model.ApprovalTicket{}, err
@@ -143,6 +159,13 @@ func (s *ApprovalService) Open(ctx context.Context, scope model.Scope, req agent
 	cur, err := s.orderForTicket(ctx, ref, o)
 	if err != nil {
 		return model.ApprovalTicket{}, err
+	}
+	reviewed := o
+	// 必检集合与法规条目按库中 work_type / device_type / dispatch_mode（请求已校验一致，这里仍以库为准）
+	reviewed.WorkType, reviewed.DeviceType, reviewed.DispatchMode = cur.WorkType, cur.DeviceType, cur.DispatchMode
+	checks, blocked := s.d.Constraints.Review(reviewed)
+	if len(blocked) > 0 {
+		return s.block(ctx, ref, cur.RunID, checks, blocked)
 	}
 	risk, err := s.d.Risk.For(cur.WorkType)
 	if err != nil {
@@ -157,7 +180,10 @@ func (s *ApprovalService) Open(ctx context.Context, scope model.Scope, req agent
 	}
 	created := false
 	err = s.d.Tx.InTx(ctx, func(tx *repository.DB) error {
-		if err := s.d.Tickets.InsertChecksTx(ctx, tx, ref, firstTicketSeq, o.ConstraintChecks, now); err != nil {
+		if err := s.d.Tickets.LockOrderTx(ctx, tx, ref); err != nil {
+			return err
+		}
+		if err := s.d.Tickets.UpsertChecksTx(ctx, tx, ref, firstTicketSeq, checks, now); err != nil {
 			return err
 		}
 		id, ok, err := s.d.Tickets.InsertTicketTx(ctx, tx, t, now)
@@ -177,6 +203,51 @@ func (s *ApprovalService) Open(ctx context.Context, scope model.Scope, req agent
 		return s.ticketAfterRace(ctx, ref)
 	}
 	return t, nil
+}
+
+// errTicketRaced 是拦截事务内发现并发开票已建票（回滚本次校验行与事件，以库中的票为准）。
+var errTicketRaced = errors.New("ticket opened concurrently")
+
+// block 是开票前约束拦截（P1 L3）：同事务覆盖 constraint_check(PRE_APPROVAL, attempt=ticket_seq)、带锁确认无票、
+// 写 CONSTRAINT_BLOCKED（run_event + audit_log 投影 APPROVAL / FAILED；payload 带未通过行的 observed / threshold / note，
+// 是历次拦截的证据，见 blockedPayload）；不建票、不迁移，作业单留 DRAFT，
+// 返回 *agent.ConstraintBlockedError（errors.Is 命中 agent.ErrConstraintBlocked）。
+// 锁顺序与开票事务一致（先 work_order 行、再校验行、后票据）：并发开票先提交时，本事务读到其票即回滚，返回库中的票，
+// 失败行不会覆盖已开票单的通过行；输掉竞争的拦截在事务外记 Warn 日志（order_id、rule_ids）。
+func (s *ApprovalService) block(ctx context.Context, ref model.OrderRef, runID uint64, checks []model.ConstraintCheck,
+	blocked []string) (model.ApprovalTicket, error) {
+	payload, err := blockedPayload(ref.OrderID, blocked, checks)
+	if err != nil {
+		return model.ApprovalTicket{}, fmt.Errorf("service: open ticket order %d: %w", ref.OrderID, err)
+	}
+	now := s.d.Clock.Now()
+	var raced model.ApprovalTicket
+	err = s.d.Tx.InTx(ctx, func(tx *repository.DB) error {
+		if err := s.d.Tickets.LockOrderTx(ctx, tx, ref); err != nil {
+			return err
+		}
+		if err := s.d.Tickets.UpsertChecksTx(ctx, tx, ref, firstTicketSeq, checks, now); err != nil {
+			return err
+		}
+		t, ok, err := s.d.Tickets.LockTicketByOrderSeqTx(ctx, tx, ref, firstTicketSeq)
+		if err != nil {
+			return err
+		}
+		if ok {
+			raced = t
+			return errTicketRaced
+		}
+		return s.appendRunEvent(ctx, tx, ref, runID, model.EventConstraintBlocked, payload, now)
+	})
+	switch {
+	case errors.Is(err, errTicketRaced):
+		s.d.Logger.WarnContext(ctx, "approval: constraint block lost to concurrent ticket, blocked checks rolled back",
+			"order_id", ref.OrderID, "run_id", runID, "rule_ids", blocked, "ticket_id", raced.TicketID)
+		return raced, nil
+	case err != nil:
+		return model.ApprovalTicket{}, fmt.Errorf("service: open ticket order %d: record blocked checks: %w", ref.OrderID, err)
+	}
+	return model.ApprovalTicket{}, &agent.ConstraintBlockedError{OrderID: ref.OrderID, RuleIDs: blocked}
 }
 
 // existingTicket 读作业单第一张票（事务外，读已提交的行）。
@@ -200,15 +271,21 @@ func (s *ApprovalService) ticketAfterRace(ctx context.Context, ref model.OrderRe
 	return t, nil
 }
 
-// orderForTicket 读库中作业单：定级用库中 work_type，并校验 run_id / work_type 与请求一致（快照展示的是请求中的单）。
+// orderForTicket 读库中作业单：定级与约束复核用库中值，并校验 run_id / work_type / device_type / dispatch_mode
+// 与请求一致（快照展示的是请求中的单；请求 dispatch_mode 为空按建单缺省 DRY_RUN 比较）。
 func (s *ApprovalService) orderForTicket(ctx context.Context, ref model.OrderRef, o model.WorkOrder) (model.OrderState, error) {
 	cur, err := s.d.Orders.GetState(ctx, s.d.DB, ref)
 	if err != nil {
 		return model.OrderState{}, fmt.Errorf("service: open ticket order %d: %w", ref.OrderID, err)
 	}
-	if cur.RunID != o.RunID || cur.WorkType != o.WorkType {
-		return model.OrderState{}, fmt.Errorf("%w: order %d is run %d / %s in db, request says run %d / %s",
-			ErrBadApproval, ref.OrderID, cur.RunID, cur.WorkType, o.RunID, o.WorkType)
+	mode := o.DispatchMode
+	if mode == "" {
+		mode = model.DispatchDryRun
+	}
+	if cur.RunID != o.RunID || cur.WorkType != o.WorkType || cur.DeviceType != o.DeviceType || cur.DispatchMode != mode {
+		return model.OrderState{}, fmt.Errorf("%w: order %d is run %d / %s / %s / %s in db, request says run %d / %s / %s / %s",
+			ErrBadApproval, ref.OrderID, cur.RunID, cur.WorkType, cur.DeviceType, cur.DispatchMode,
+			o.RunID, o.WorkType, o.DeviceType, mode)
 	}
 	return cur, nil
 }
@@ -313,11 +390,18 @@ func (s *ApprovalService) activatable(ctx context.Context, scope model.Scope, ru
 }
 
 func (s *ApprovalService) appendEvent(ctx context.Context, tx *repository.DB, t model.ApprovalTicket, typ model.EventType, payload any, now time.Time) error {
+	ref := model.OrderRef{TenantID: t.TenantID, FarmID: t.FarmID, OrderID: t.OrderID}
+	return s.appendRunEvent(ctx, tx, ref, t.RunID, typ, payload, now)
+}
+
+// appendRunEvent 在事务内追加一条 agent 发起的 run_event（audit_log 投影在 AppendTx 内）。
+func (s *ApprovalService) appendRunEvent(ctx context.Context, tx *repository.DB, ref model.OrderRef, runID uint64,
+	typ model.EventType, payload any, now time.Time) error {
 	b, err := json.Marshal(payload)
 	if err != nil {
 		return fmt.Errorf("encode %s payload: %w", typ, err)
 	}
-	if _, err := s.d.Events.AppendTx(ctx, tx, model.RunEvent{TenantID: t.TenantID, FarmID: t.FarmID, RunID: t.RunID,
+	if _, err := s.d.Events.AppendTx(ctx, tx, model.RunEvent{TenantID: ref.TenantID, FarmID: ref.FarmID, RunID: runID,
 		Type: typ, Actor: model.ActorAgent, Payload: b, CreatedAt: now}); err != nil {
 		return fmt.Errorf("append %s: %w", typ, err)
 	}

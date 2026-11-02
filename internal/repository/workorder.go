@@ -14,19 +14,21 @@ import (
 type WorkOrderRepo struct{}
 
 // GetState 读取迁移前的状态与 row_ver（不加锁，靠 UpdateStatus 的 row_ver 条件兜底），
-// 以及开票定级与归属校验用的 run_id / work_type。
+// 以及开票定级与归属校验用的 run_id / work_type；device_type / dispatch_mode 供开票前约束复核（P1 L3，以库为准）。
 func (WorkOrderRepo) GetState(ctx context.Context, tx *gorm.DB, ref model.OrderRef) (model.OrderState, error) {
 	if err := requireFarm(ref.TenantID, ref.FarmID); err != nil {
 		return model.OrderState{}, err
 	}
 	var row struct {
-		RunID    uint64
-		WorkType string
-		Status   string
-		RowVer   int
+		RunID        uint64
+		WorkType     string
+		DeviceType   string
+		DispatchMode string
+		Status       string
+		RowVer       int
 	}
 	res := tx.WithContext(ctx).Raw(
-		`SELECT run_id, work_type, status, row_ver FROM work_order WHERE tenant_id=? AND farm_id=? AND id=?`,
+		`SELECT run_id, work_type, device_type, dispatch_mode, status, row_ver FROM work_order WHERE tenant_id=? AND farm_id=? AND id=?`,
 		ref.TenantID, ref.FarmID, ref.OrderID).Scan(&row)
 	if res.Error != nil {
 		return model.OrderState{}, fmt.Errorf("repository: get work_order %d: %w", ref.OrderID, res.Error)
@@ -34,8 +36,8 @@ func (WorkOrderRepo) GetState(ctx context.Context, tx *gorm.DB, ref model.OrderR
 	if res.RowsAffected == 0 {
 		return model.OrderState{}, fmt.Errorf("repository: work_order %d: %w", ref.OrderID, model.ErrNotFound)
 	}
-	return model.OrderState{RunID: row.RunID, WorkType: model.WorkType(row.WorkType),
-		Status: model.WorkOrderStatus(row.Status), RowVer: row.RowVer}, nil
+	return model.OrderState{RunID: row.RunID, WorkType: model.WorkType(row.WorkType), DeviceType: row.DeviceType,
+		DispatchMode: model.DispatchMode(row.DispatchMode), Status: model.WorkOrderStatus(row.Status), RowVer: row.RowVer}, nil
 }
 
 // UpdateStatus 执行 P0 L1 定版的乐观锁 UPDATE；影响行数 0 返回 model.ErrConcurrentUpdate。
