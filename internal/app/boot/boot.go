@@ -84,6 +84,9 @@ func Open(ctx context.Context, f *Flags) (_ *Process, err error) {
 		"auth.jwt_secret"); err != nil {
 		return nil, err
 	}
+	if err := cfg.Retention.RequireKinds(app.RawKindNames()); err != nil { // P1 L7：缺任一 kind 的保留天数即启动失败
+		return nil, err
+	}
 	// 模型在连库之前选定：openai 缺 ONEAPI_* 时直接报错退出。
 	mcfg, err := config.LoadModel(f.Model)
 	if err != nil {
@@ -142,10 +145,16 @@ func Open(ctx context.Context, f *Flags) (_ *Process, err error) {
 	if err != nil {
 		return nil, err
 	}
-	raw := repository.NewRawStore(db, repository.MinIOPutter{Client: mc}, cfg.MinIO.BucketRaw)
+	raw := repository.NewRawStore(db, repository.MinIOPutter{Client: mc}, cfg.MinIO.BucketRaw).
+		WithRetention(cfg.Retention.RawDays()) // P1 L7：Put 写 expire_at
 	rawRead := repository.RawReader{DB: db, Obj: repository.MinIOGetter{Client: mc}, Bucket: cfg.MinIO.BucketRaw}
+	obs, alerts, err := app.NewObserve(db, clk, logger, cfg.Alerts.AuditWriteTimeout) // P1 L7-B：gateway 与 app 共用同一份指标与告警出口
+	if err != nil {
+		return nil, err
+	}
+	repository.SetAuditAlertSink(alerts) // P1 L7：封链失败 audit_write_failed P0，与业务告警同一出口
 	tools, err := buildTools(f.Tools, f.Policy, toolDeps{clk: clk, logger: logger, db: db, rdb: rdb, keys: keys,
-		raw: raw, rawRead: rawRead})
+		raw: raw, rawRead: rawRead, alerts: alerts, obs: obs})
 	if err != nil {
 		return nil, err
 	}
@@ -170,6 +179,9 @@ func Open(ctx context.Context, f *Flags) (_ *Process, err error) {
 			KB: knowledge.NewStore(knowledge.NewRepoReader(f.Repo))}),
 		Tools: tools, Risk: risk, Constraints: constraints, Permissions: grants, Devices: devices, Env: cfg.Env,
 		Dispatch:      cfg.Dispatch,
+		Metrics:       obs,    // P1 L7-B
+		Alerts:        alerts, // P1 L7-B
+		AlertsConfig:  cfg.Alerts,
 		Faults:        faults,                           // P1 L6
 		Approval:      cfg.Approval,                     // P1 L5：驳回导出跨度上限
 		NotifyTexts:   notifyTexts,                      // P1 L5：notify.send 文案
@@ -179,7 +191,10 @@ func Open(ctx context.Context, f *Flags) (_ *Process, err error) {
 		Presign:       repository.MinIOPresigner{Client: mc, Bucket: cfg.MinIO.BucketRaw},
 		HITL: app.HITLDeps{Objects: repository.MinIOGetter{Client: mc}, RawBucket: cfg.MinIO.BucketRaw,
 			Memory: memory.Options{Enabled: cfg.Memory.Enabled, EpisodicLimit: cfg.Memory.EpisodicLimit,
-				RuneBudget: cfg.Memory.RuneBudget}}})
+				RuneBudget: cfg.Memory.RuneBudget}},
+		L7: app.AuditL7Deps{Retention: cfg.Retention, Audit: cfg.Audit, // P1 L7：导出 / 保留期 / 锚点
+			Objects: repository.MinIORemover{Client: mc}, RawBucket: cfg.MinIO.BucketRaw,
+			Anchors: repository.MinIOAnchorStore{Client: mc, Bucket: cfg.Audit.AnchorBucket}}})
 	if err != nil {
 		return nil, err
 	}

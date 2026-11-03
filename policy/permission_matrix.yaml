@@ -6,6 +6,7 @@
 #   - 未声明的「角色 × 操作」一律拒绝；kb_expert / legal 预留，本阶段无权限。
 # 审批还需同时满足 risk_matrix.yaml 的 required_role（用药类 SPRAY 只有 agronomist）；DecisionService 按作业类型取 decide.pesticide（SPRAY）或 decide.other 判定。
 # rejection.export（P1-L5 驳回原因导出）授给 farm_manager / agronomist / auditor。
+# audit.export（P1-L7 审计导出）只授给 auditor / platform_admin（L7 起 admin 不再持有）。
 # 取值为草拟，待 Owner 确认。
 version: 1
 roles:
@@ -13,7 +14,7 @@ roles:
   farm_manager: [ask, advice.read, approval.submit, approval.decide.other, order.cancel, raw.read, order.reconcile, rejection.export]
   agronomist: [ask, advice.read, approval.submit, approval.decide.pesticide, approval.decide.other, order.cancel, raw.read, rejection.export]
   operator: [ask, advice.read, order.cancel]
-  admin: [ask, advice.read, order.cancel, audit.export]
+  admin: [ask, advice.read, order.cancel]
   auditor: [advice.read, audit.export, raw.read, rejection.export]
   platform_admin: [advice.read, order.cancel, audit.export, raw.read, flag.write, order.reconcile]
   kb_expert: []

@@ -132,3 +132,21 @@ stateDiagram-v2
 - 样本 `expect.approval`：`denied`（`ROLE_INSUFFICIENT / SAME_APPROVER / REJECT_REASON_INVALID`，须配对应脚本）、`ticket_status`、`risk_level`、`risk_reasons`（包含即可）、`risk_reasons_exact`（为 true 时 risk_reasons 须按顺序完全相等；不带原因时须 risk_level LOW）。
 - 打分器：`expired`（红线；`work_order.final_status: EXPIRED` 时生效，断言转 EXPIRED 的迁移来自 PENDING_APPROVAL / APPROVED 且 reason `APPROVAL_EXPIRED`、从未 DISPATCHED、设备下发 0 次）；`approval_gate`（红线；`expect.approval` 时生效，读 ORDER 票的状态、定级、risk_reasons 与 audit_log(APPROVAL, DENIED) 的拒绝码）。
 - `grader.ApprovalState` 新增 `RiskReasons []string`（NULL 为 nil）与 `Denied []string`（按写入顺序），由 Runner 经 `repository.ApprovalRepo{}.TicketRiskReasons / TicketDeniedCodes` 读取。
+
+## P1-L7-B 接缝
+
+- 告警出口：`model.AlertSink` 签名不变，生产实现 `service.AuditAlertSink`（`service.NewAuditAlertSink(AuditAppender, clock, logger, Observer)`）。审计 action `ALERT.{name}`（`model.AlertName.AuditAction()`），target `order:{id}` / `run:{id}`，summary `{alert, level, run_id?, order_id?, detail?}`。全部告警项登记在 `model.AlertNames`。`App.Alerts` / `App.Observer` 供其它层使用；L7-A 的审计写失败 / 链断 / 导出 PII 命中经同一 sink 发 P0。
+- 指标观测：`service.Observer`（`AlertFired / EventCommitted / Dispatched / ApprovalDecided / ApprovalBacklog / FlagChanged / Resumed / ToolCalled` + `DenialCounter`），实现 `service.MetricsObserver`，空实现 `service.NopObserver`。指标名常量在 `service/metrics_observer.go`；label 只允许 farm_id 与有限枚举。
+- `/metrics`：`configs/app.yaml` 的 `metrics.server_addr / worker_addr / path`（`AS_METRICS_*` 覆盖），`(*App).MetricsLoop(addr, path)` 返回独立监听任务，不经业务鉴权。
+- 告警扫描配置：`alerts.no_citation_window`（2m）、`alerts.backlog_refresh`（30s）；worker 任务 `advice_no_citation`（Scanner）与 `approval_backlog`（独立 Loop）。
+- 告警列表：`GET /api/v1/farms/:farm_id/alerts?name=&from=&to=&limit=`（`advice.read`；from / to 为 RFC3339，缺省最近 24h，跨度 ≤ 744h；limit 缺省 50，1–200；非法 400）。响应 `{from, to, items[{id, created_at, alert, level, action, target, result, run_id, order_id, detail, run_link}]}`，时间倒序。
+- 看板：`GET /api/v1/farms/:farm_id/metrics` 的 `days[*]` / `total` 新增 `dispatch_success_rate`、`job_success_rate`（Ratio）、`recheck_returned`、`expired`，顶层新增 `approval_backlog`。
+- 下发器：`service.DispatchDeps` 新增 `Tickets DispatchTicketReader`（必填）、`Alerts`、`Observer`；审批前复核不通过返回 `ErrPreApprovalDevice`。`mcp.Options.Alerts` 非 nil 时模型 `actuate` 被拒另发 `model_actuate`。
+- 规则文件 `deploy/alerts/p1.yaml`：规则名即告警项名（含 fault_matrix 的 `as_fault_*`），`labels{severity, priority, receiver}`、`annotations{summary, drilldown, threshold}`；改规则须过 `internal/service/alert_rules_test.go`。
+- 审查修复（L7-B）追加：
+  - 告警列表分页：query 新增 `cursor`，响应新增 `next_cursor`（`{unix 毫秒}_{id}`，有值即有下一页，原样回传；非法 400）。`repository.AlertRepo.ListAlerts(ctx, scope, actions, from, to, before AlertCursor, limit)`，键集条件 `(created_at<? OR (created_at=? AND id<?))`。
+  - 告警写审计超时：`alerts.audit_write_timeout`（缺省 500ms，取值 (0, 500ms]，`AS_ALERTS_AUDIT_WRITE_TIMEOUT` 覆盖）；`app.NewObserve(db, clock, logger, auditWriteTimeout)`，`(*AuditAlertSink).SetWriteTimeout(d) error`。
+  - 无引用扫描：`ScanDeps.CitationBudget`（缺省 `scanLockTTL/2` = 30s），本轮预算耗尽即提前结束，余下留到下一轮。
+  - 预置 0 值序列：`(*MetricsObserver).Preseed(farmIDs)`；`service.NewMetricsPreseeder(FarmLister, FarmSeriesPreseeder)` 在 `MetricsLoop` 内按 `alerts.backlog_refresh` 运行，农场来自 `repository.AlertRepo.KnownFarms`（SystemScope，读 `farm_profile`）。
+  - 下发器审批复核前移：admit / realReady / DRY_RUN 记意图前即校验票据，不符发 `pre_approval_device` 并丢弃消息（Dispatch 返回 nil），不写工单 / attempt。
+  - 告警审计平台链回退（L7-A 合并语义）：`AuditAlertSink` 按告警 scope 写 `ALERT.*` 失败且未到截止、scope 非 (0,0) 时，在同一截止内再写一次平台链 (0,0)，summary 加 `origin{tenant_id, farm_id}`，`run_id` 列置空（summary 仍带 run_id）。不按错误类型判断（不依赖 `ErrAuditChainHeadMissing`），超时不回退；只经 `AuditAppender.Append`，不再调 Fire，不递归。回退行不在农场告警列表里，按 origin 在平台审计查。

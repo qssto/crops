@@ -25,6 +25,15 @@ func scopeRequiredCalls() map[string]func(model.Scope) error {
 	noFarmTicket := TicketRow{TenantID: 1, ID: 9}
 	noFarmRun := RunKey{TenantID: 1, ID: 1}
 	return map[string]func(model.Scope) error{
+		// P1 L7-B：告警去重与告警列表
+		"AlertRepo.AlertedRuns": func(s model.Scope) error {
+			_, err := AlertRepo{}.AlertedRuns(ctx, s, "ALERT.x", []uint64{1}, now)
+			return err
+		},
+		"AlertRepo.ListAlerts": func(s model.Scope) error {
+			_, err := AlertRepo{}.ListAlerts(ctx, s, []string{"ALERT.x"}, now, now, AlertCursor{}, 1)
+			return err
+		},
 		"AdviceRepo.SaveAdvice": func(s model.Scope) error {
 			_, err := (&AdviceRepo{}).SaveAdvice(ctx, s, model.AdviceCard{})
 			return err
@@ -331,6 +340,19 @@ func scopeRequiredCalls() map[string]func(model.Scope) error {
 			_, _, err := (&CheckpointRepo{}).Get(agent.WithCheckpointTarget(ctx, agent.CheckpointTarget{Scope: s, RunID: 1}), "1")
 			return err
 		},
+		// P1-L7-A：审计导出与保留期墓碑。
+		"AuditExportRepo.InsertTx": func(s model.Scope) error {
+			_, _, err := AuditExportRepo{}.InsertTx(ctx, nil, s, model.AuditExportPayload{RequestID: "r"}, now)
+			return err
+		},
+		"AuditExportRepo.Get": func(s model.Scope) error { _, err := AuditExportRepo{}.Get(ctx, s, 1); return err },
+		"AuditExportRepo.SetPayloadTx": func(s model.Scope) error {
+			return AuditExportRepo{}.SetPayloadTx(ctx, nil, s, 1, model.AuditExportPayload{}, now)
+		},
+		"RetentionRepo.MarkDeletedTx": func(s model.Scope) error {
+			_, err := RetentionRepo{}.MarkDeletedTx(ctx, nil, RawRef{TenantID: s.TenantID, FarmID: s.FarmID, ID: 1}, now)
+			return err
+		},
 	}
 }
 
@@ -389,6 +411,20 @@ func TestSystemScopeRequired(t *testing.T) {
 			return err
 		},
 		"DeviceReceiptRepo.DueAttempts": func() error { _, err := DeviceReceiptRepo{}.DueAttempts(ctx, zero, now); return err },
+		// P1-L7-A：保留期扫描与锚点读链头。
+		"RetentionRepo.ListExpired": func() error {
+			_, err := RetentionRepo{}.ListExpired(ctx, zero, now, RetentionCursor{}, 10)
+			return err
+		},
+		"RetentionRepo.Referenced": func() error { _, err := RetentionRepo{}.Referenced(ctx, zero, []uint64{1}); return err },
+		"AuditChainRepo.Heads":     func() error { _, err := AuditChainRepo{}.Heads(ctx, zero); return err },
+		// P1 L7-B
+		"AlertRepo.AdviceWithoutCitation": func() error {
+			_, err := AlertRepo{}.AdviceWithoutCitation(ctx, zero, now, now)
+			return err
+		},
+		"AlertRepo.OpenOrderTickets": func() error { _, err := AlertRepo{}.OpenOrderTickets(ctx, zero); return err },
+		"AlertRepo.KnownFarms":       func() error { _, err := AlertRepo{}.KnownFarms(ctx, zero); return err },
 	}
 	for name, call := range calls {
 		t.Run(name, func(t *testing.T) {

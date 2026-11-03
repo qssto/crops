@@ -14,7 +14,8 @@ func (a *App) buildFlags() error {
 	svc, err := service.NewFlagService(service.FlagDeps{Store: repository.FlagRepo{DB: a.DB},
 		Tx: repository.Transactor{DB: a.DB}, Audit: repository.AuditRepo{DB: a.DB},
 		Pub: repository.RedisPublisher{Client: a.Redis}, Sub: repository.RedisSubscriber{Client: a.Redis},
-		FarmRoles: repository.UserRoleRepo{DB: a.DB}, Keys: a.Keys, Clock: a.Clock, Logger: a.Logger})
+		FarmRoles: repository.UserRoleRepo{DB: a.DB}, Keys: a.Keys, Clock: a.Clock, Logger: a.Logger,
+		Observer: a.Observer}) // P1 L7-B：as_flag_change_total
 	if err != nil {
 		return fmt.Errorf("app: build flags: %w", err)
 	}

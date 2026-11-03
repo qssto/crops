@@ -148,7 +148,8 @@ func TestDispatchHeld_Integration(t *testing.T) {
   WHERE id = ?`, slot.Clock.Now().Add(time.Hour), orderID).Error; err != nil {
 			t.Fatal(err)
 		}
-		return runID, orderID, insertDispatchOutbox(t, slot.DB, orderID, 1, runID, slot.Clock.Now())
+		ticketID := itest.InsertTicket(t, slot.DB, runID, orderID, "APPROVED", slot.Clock.Now())
+		return runID, orderID, insertDispatchOutbox(t, slot.DB, orderID, ticketID, runID, slot.Clock.Now())
 	}
 
 	runID, orderID, outboxID := enqueue()

@@ -89,6 +89,26 @@ type ScanDeps struct {
 	// Expiring / Notify 是 P1 L5 即将过期提醒（approval_expiring）的依赖；任一为空不注册该任务，Run 启动时打 Warn。
 	Expiring ExpiringScanStore
 	Notify   NotifyOutboxWriter
+	// Anchor / Retention 是 P1 L7 每日锚点（audit_anchor）与保留期清理（retention）；为空不注册该任务。
+	Anchor    AnchorTicker
+	Retention RetentionTicker
+	// Citations / Alerts 是 P1 L7-B 无引用建议扫描（advice_no_citation）的依赖，任一为空不注册该任务；
+	// CitationWindow 是回看窗口，0 取 DefaultNoCitationWindow；CitationBudget 是单轮时间预算（审查修复：
+	// 锁剩余时间不足时提前结束本轮），0 取 DefaultCitationRoundBudget。
+	Citations      CitationScanStore
+	Alerts         model.AlertSink
+	CitationWindow time.Duration
+	CitationBudget time.Duration
+}
+
+// AnchorTicker 是 audit_anchor 任务，*AnchorService 实现。
+type AnchorTicker interface {
+	Tick(ctx context.Context, sys repository.SystemScope, now time.Time) error
+}
+
+// RetentionTicker 是 retention 任务，*RetentionService 实现。
+type RetentionTicker interface {
+	Tick(ctx context.Context, sys repository.SystemScope, now time.Time) (RetentionStats, error)
 }
 
 // missingExpiringDeps 返回 approval_expiring 缺的依赖名；非空时该任务不注册。
@@ -129,6 +149,20 @@ func NewScanner(d ScanDeps) *Scanner {
 	}
 	if len(d.missingExpiringDeps()) == 0 {
 		s.tasks = append(s.tasks, scanTask{ScanApprovalExpiring, s.approvalExpiring})
+	}
+	if d.Anchor != nil {
+		s.tasks = append(s.tasks, scanTask{ScanAuditAnchor, func(ctx context.Context, now time.Time) error {
+			return d.Anchor.Tick(ctx, scanSystem, now)
+		}})
+	}
+	if d.Retention != nil {
+		s.tasks = append(s.tasks, scanTask{ScanRetention, func(ctx context.Context, now time.Time) error {
+			_, err := d.Retention.Tick(ctx, scanSystem, now)
+			return err
+		}})
+	}
+	if d.citationScanReady() {
+		s.tasks = append(s.tasks, scanTask{ScanAdviceNoCitation, s.adviceNoCitation})
 	}
 	return s
 }

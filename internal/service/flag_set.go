@@ -99,6 +99,7 @@ func (s *FlagService) Set(ctx context.Context, actor model.Scope, in FlagSetInpu
 	}
 	s.invalidate(w.Key)
 	s.publish(ctx, w.Key)
+	s.d.Observer.FlagChanged(w.Key)
 	s.d.Logger.InfoContext(ctx, "flag changed", "flag_key", w.Key, "tenant_id", w.TenantID, "farm_id", w.FarmID,
 		"value", string(w.Value), "row_ver", res.RowVer, "actor_id", actor.UserID)
 	return res, nil

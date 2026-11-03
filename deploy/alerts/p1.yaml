@@ -1,0 +1,203 @@
+# P1 告警规则（P1-L7-B，Prometheus 规则文件格式）。指标由 cmd/server 与 cmd/worker 的 /metrics 暴露
+# （metrics.server_addr / metrics.worker_addr，见 configs/app.yaml），名字与 label 以 internal/service/metrics_observer.go 为准，
+# internal/service/alert_rules_test.go 校验：每个 expr 引用的指标都已登记、label 在白名单内、全部告警项与
+# policy/fault_matrix.yaml 的四个告警名都有规则且级别一致。
+#
+# 约定：
+#   - labels.severity：critical（P0，电话）| warning（P1）；labels.priority：P0 | P1；labels.receiver：接收角色（见《告警清单》）。
+#   - annotations.drilldown：告警列表 GET /api/v1/farms/{farm_id}/alerts?name=…（ALERT.* 审计行，时间倒序，每行带 run / 作业单链接）。
+#     只有经 AlertSink 落 ALERT.* 审计（6 条红线）或有业务审计（cross_farm_denied / flag_changed）的告警指向告警列表；
+#     纯指标告警（降级矩阵、dispatch_failure_rate、approval_backlog、recheck_returned、expired_surge、resume_failure_rate、
+#     token_cost_anomaly、mcp_success_low）没有文档级下钻，指向看板 GET /api/v1/farms/{farm_id}/metrics。
+#   - 所有阈值、窗口与 for 均为草拟，annotations.threshold 标「待实测」，P1 试运行后按实测回填。
+#   - 不按 run_id / order_id 聚合（这两个字段不是 label）；按 farm_id 聚合的规则在 drilldown 里带上 farm_id。
+#   - as_approval_backlog 由每个 worker 副本各自刷新，用 max by(farm_id) 合并副本。
+#   - 新序列首样本（审查修复 P0）：计数器序列按需创建时首个样本即为 1，increase() 只看窗口内两点之差，算不出这一次。
+#     两层兜底：① 进程启动时（及按 alerts.backlog_refresh 周期）按已知农场（含平台链 farm_id=0）× 告警项 × 级别、
+#     降级故障码、规则用到的迁移 (to, reason) 预置 0 值序列（MetricsObserver.Preseed）；
+#     ②「任一次即告警」的规则另加新序列分支 `or (X > 0 unless X offset <窗口>)`（窗口前不存在、现在 > 0 → 触发）。
+#     比较运算优先级高于 unless、unless 高于 or，这里仍显式加括号。
+groups:
+  - name: agri-steward-p0
+    rules:
+      # ---- 红线：经 AlertSink 触发（as_alert_total 由 service.AuditAlertSink 计数）----
+      - alert: advice_no_citation
+        expr: |
+          (sum by (farm_id) (increase(as_alert_total{alert="advice_no_citation"}[2m])) > 0)
+          or (sum by (farm_id) (as_alert_total{alert="advice_no_citation"}) > 0
+            unless sum by (farm_id) (as_alert_total{alert="advice_no_citation"} offset 2m))
+        labels: {severity: critical, priority: P0, receiver: sre_oncall}
+        annotations:
+          summary: "农场 {{ $labels.farm_id }} 出现无引用的非拒答建议"
+          drilldown: "/api/v1/farms/{{ $labels.farm_id }}/alerts?name=advice_no_citation"
+          threshold: "任一次即告警（扫描周期 30s，回看 2m，待实测）"
+      - alert: model_actuate
+        expr: |
+          (sum by (farm_id) (increase(as_alert_total{alert="model_actuate"}[2m])) > 0)
+          or (sum by (farm_id) (as_alert_total{alert="model_actuate"}) > 0
+            unless sum by (farm_id) (as_alert_total{alert="model_actuate"} offset 2m))
+        labels: {severity: critical, priority: P0, receiver: sre_oncall}
+        annotations:
+          summary: "农场 {{ $labels.farm_id }} 模型发起设备动作被策略拦截"
+          drilldown: "/api/v1/farms/{{ $labels.farm_id }}/alerts?name=model_actuate"
+          threshold: "任一次即告警（待实测）"
+      - alert: pre_approval_device
+        expr: |
+          (sum by (farm_id) (increase(as_alert_total{alert="pre_approval_device"}[2m])) > 0)
+          or (sum by (farm_id) (as_alert_total{alert="pre_approval_device"}) > 0
+            unless sum by (farm_id) (as_alert_total{alert="pre_approval_device"} offset 2m))
+        labels: {severity: critical, priority: P0, receiver: sre_oncall}
+        annotations:
+          summary: "农场 {{ $labels.farm_id }} 审批前设备调用被下发器拦截"
+          drilldown: "/api/v1/farms/{{ $labels.farm_id }}/alerts?name=pre_approval_device"
+          threshold: "任一次即告警（待实测）"
+      - alert: audit_write_failed
+        expr: |
+          (sum by (farm_id) (increase(as_alert_total{alert="audit_write_failed"}[2m])) > 0)
+          or (sum by (farm_id) (as_alert_total{alert="audit_write_failed"}) > 0
+            unless sum by (farm_id) (as_alert_total{alert="audit_write_failed"} offset 2m))
+        labels: {severity: critical, priority: P0, receiver: sre_oncall}
+        annotations:
+          summary: "农场 {{ $labels.farm_id }} 审计写入 / 封链失败（L7-A 经 AlertSink 触发）"
+          drilldown: "/api/v1/farms/{{ $labels.farm_id }}/alerts?name=audit_write_failed"
+          threshold: "任一次即告警（待实测）"
+      - alert: audit_chain_broken
+        expr: |
+          (sum by (farm_id) (increase(as_alert_total{alert="audit_chain_broken"}[10m])) > 0)
+          or (sum by (farm_id) (as_alert_total{alert="audit_chain_broken"}) > 0
+            unless sum by (farm_id) (as_alert_total{alert="audit_chain_broken"} offset 10m))
+        labels: {severity: critical, priority: P0, receiver: sre_oncall}
+        annotations:
+          summary: "农场 {{ $labels.farm_id }} 审计链校验或锚点核对发现断链（L7-A 经 AlertSink 触发）"
+          drilldown: "/api/v1/farms/{{ $labels.farm_id }}/alerts?name=audit_chain_broken"
+          threshold: "任一次即告警（待实测）"
+      - alert: audit_export_pii_leak
+        expr: |
+          (sum by (farm_id) (increase(as_alert_total{alert="audit_export_pii_leak"}[10m])) > 0)
+          or (sum by (farm_id) (as_alert_total{alert="audit_export_pii_leak"}) > 0
+            unless sum by (farm_id) (as_alert_total{alert="audit_export_pii_leak"} offset 10m))
+        labels: {severity: critical, priority: P0, receiver: sre_oncall}
+        annotations:
+          summary: "农场 {{ $labels.farm_id }} 审计导出文件 pii_clean 命中（L7-A 经 AlertSink 触发）"
+          drilldown: "/api/v1/farms/{{ $labels.farm_id }}/alerts?name=audit_export_pii_leak"
+          threshold: "任一次即告警（待实测）"
+      # ---- 降级矩阵 P0（policy/fault_matrix.yaml level=critical）----
+      - alert: as_fault_llm_unavailable
+        expr: |
+          (sum by (farm_id) (increase(as_degraded_total{fault="LLM_UNAVAILABLE"}[5m])) > 0)
+          or (sum by (farm_id) (as_degraded_total{fault="LLM_UNAVAILABLE"}) > 0
+            unless sum by (farm_id) (as_degraded_total{fault="LLM_UNAVAILABLE"} offset 5m))
+        for: 2m
+        labels: {severity: critical, priority: P0, receiver: sre_oncall}
+        annotations:
+          summary: "农场 {{ $labels.farm_id }} LLM 不可用，建议走规则层降级"
+          drilldown: "/api/v1/farms/{{ $labels.farm_id }}/metrics"
+          threshold: "5m 内任一次 DEGRADED(LLM_UNAVAILABLE) 且持续 2m（待实测）"
+
+  - name: agri-steward-p1
+    rules:
+      # ---- 降级矩阵 warning（policy/fault_matrix.yaml level=warning）----
+      - alert: as_fault_mcp_timeout
+        expr: sum by (farm_id) (increase(as_degraded_total{fault="MCP_TIMEOUT"}[10m])) > 3
+        for: 5m
+        labels: {severity: warning, priority: P1, receiver: sre_oncall}
+        annotations:
+          summary: "农场 {{ $labels.farm_id }} MCP 超时，建议走缓存降级"
+          drilldown: "/api/v1/farms/{{ $labels.farm_id }}/metrics"
+          threshold: "10m 内 DEGRADED(MCP_TIMEOUT) > 3 次且持续 5m（待实测）"
+      - alert: as_fault_kb_miss
+        expr: sum by (farm_id) (increase(as_degraded_total{fault="KB_MISS"}[1h])) > 5
+        labels: {severity: warning, priority: P1, receiver: agronomist}
+        annotations:
+          summary: "农场 {{ $labels.farm_id }} 知识库未覆盖导致拒答增多"
+          drilldown: "/api/v1/farms/{{ $labels.farm_id }}/metrics"
+          threshold: "1h 内 DEGRADED(KB_MISS) > 5 次（待实测）"
+      - alert: as_fault_device_offline
+        expr: |
+          (sum by (farm_id) (increase(as_degraded_total{fault="DEVICE_OFFLINE"}[15m])) > 0)
+          or (sum by (farm_id) (as_degraded_total{fault="DEVICE_OFFLINE"}) > 0
+            unless sum by (farm_id) (as_degraded_total{fault="DEVICE_OFFLINE"} offset 15m))
+        labels: {severity: warning, priority: P1, receiver: farm_manager}
+        annotations:
+          summary: "农场 {{ $labels.farm_id }} 设备离线，作业单暂缓下发并已通知"
+          drilldown: "/api/v1/farms/{{ $labels.farm_id }}/metrics"
+          threshold: "15m 内任一次 DEGRADED(DEVICE_OFFLINE)（待实测）"
+      # ---- 业务指标 P1 ----
+      - alert: dispatch_failure_rate
+        expr: |
+          (sum by (farm_id) (increase(as_dispatch_total{mode="REAL",result=~"rejected|manual|error|blocked"}[30m]))
+            / sum by (farm_id) (increase(as_dispatch_total{mode="REAL"}[30m])) > 0.2)
+          and sum by (farm_id) (increase(as_dispatch_total{mode="REAL"}[30m])) >= 5
+        labels: {severity: warning, priority: P1, receiver: sre_oncall}
+        annotations:
+          summary: "农场 {{ $labels.farm_id }} REAL 下发失败率 30m 内超过 20%"
+          drilldown: "/api/v1/farms/{{ $labels.farm_id }}/metrics"
+          threshold: "30m 失败率 > 20% 且下发量 >= 5（待实测）"
+      - alert: approval_backlog
+        expr: max by (farm_id) (as_approval_backlog) > 20
+        for: 30m
+        labels: {severity: warning, priority: P1, receiver: farm_manager}
+        annotations:
+          summary: "农场 {{ $labels.farm_id }} 待审批作业单积压 {{ $value }} 张"
+          drilldown: "/api/v1/farms/{{ $labels.farm_id }}/metrics"
+          threshold: "OPEN 票据 > 20 且持续 30m（待实测）"
+      - alert: recheck_returned
+        expr: sum by (farm_id) (increase(as_order_transition_total{reason="RECHECK_FAILED"}[1h])) > 3
+        labels: {severity: warning, priority: P1, receiver: agronomist}
+        annotations:
+          summary: "农场 {{ $labels.farm_id }} 下发前复检退回 1h 内超过 3 次"
+          drilldown: "/api/v1/farms/{{ $labels.farm_id }}/metrics"
+          threshold: "1h 内 RECHECK_FAILED > 3 次（待实测）"
+      - alert: expired_surge
+        expr: sum by (farm_id) (increase(as_order_transition_total{to="EXPIRED"}[1h])) > 5
+        labels: {severity: warning, priority: P1, receiver: farm_manager}
+        annotations:
+          summary: "农场 {{ $labels.farm_id }} 作业单过期 1h 内超过 5 张"
+          drilldown: "/api/v1/farms/{{ $labels.farm_id }}/metrics"
+          threshold: "1h 内转 EXPIRED > 5 张（待实测）"
+      # 以下指标无 farm_id label（拒绝码 / 开关 / 续跑 / MCP server 是全局枚举），drilldown 里的 {farm_id} 由值班按审计行逐场填。
+      - alert: cross_farm_denied
+        expr: sum by (code) (increase(as_cross_farm_denied_total[10m])) > 10
+        labels: {severity: warning, priority: P1, receiver: sre_oncall}
+        annotations:
+          summary: "10m 内越权访问拒绝（{{ $labels.code }}）超过 10 次"
+          drilldown: "/api/v1/farms/{farm_id}/alerts?name=cross_farm_denied"
+          threshold: "10m 内 > 10 次（待实测）"
+      - alert: flag_changed
+        expr: |
+          (sum by (flag) (increase(as_flag_change_total[5m])) > 0)
+          or (sum by (flag) (as_flag_change_total) > 0 unless sum by (flag) (as_flag_change_total offset 5m))
+        labels: {severity: warning, priority: P1, receiver: farm_manager}
+        annotations:
+          summary: "开关 {{ $labels.flag }} 发生变更"
+          drilldown: "/api/v1/farms/{farm_id}/alerts?name=flag_changed"
+          threshold: "任一次即通知（待实测）"
+      - alert: resume_failure_rate
+        expr: |
+          (sum(increase(as_run_resume_total{result="error"}[30m])) / sum(increase(as_run_resume_total[30m])) > 0.1)
+          and sum(increase(as_run_resume_total[30m])) >= 5
+        labels: {severity: warning, priority: P1, receiver: sre_oncall}
+        annotations:
+          summary: "审批后续跑失败率 30m 内超过 10%"
+          drilldown: "/api/v1/farms/{farm_id}/metrics"
+          threshold: "30m 失败率 > 10% 且续跑量 >= 5（待实测）"
+      - alert: token_cost_anomaly
+        expr: |
+          sum by (farm_id) (increase(as_llm_tokens_total[1h]))
+            > 3 * sum by (farm_id) (increase(as_llm_tokens_total[1h] offset 1d))
+          and sum by (farm_id) (increase(as_llm_tokens_total[1h])) > 200000
+        labels: {severity: warning, priority: P1, receiver: sre_oncall}
+        annotations:
+          summary: "农场 {{ $labels.farm_id }} 1h token 用量超过昨日同时段 3 倍"
+          drilldown: "/api/v1/farms/{{ $labels.farm_id }}/metrics"
+          threshold: "1h 用量 > 昨日同时段 3 倍且 > 200000（待实测）"
+      - alert: mcp_success_low
+        expr: |
+          (sum by (server) (increase(as_mcp_calls_total{status="OK"}[15m])) / sum by (server) (increase(as_mcp_calls_total[15m])) < 0.95)
+          and sum by (server) (increase(as_mcp_calls_total[15m])) >= 20
+        for: 5m
+        labels: {severity: warning, priority: P1, receiver: sre_oncall}
+        annotations:
+          summary: "MCP server {{ $labels.server }} 15m 成功率低于 95%"
+          drilldown: "/api/v1/farms/{farm_id}/metrics"
+          threshold: "15m 成功率 < 95% 且调用量 >= 20，持续 5m（待实测）"

@@ -1,6 +1,7 @@
 // cmd/migrate 是迁移入口：
 //
 //	migrate up [--target business|eval] [--skip-buckets]   建库 + golang-migrate（业务库另建 MinIO bucket）
+//	                                                      业务库另预建审计链 head、回填 expire_at、建锚点 bucket（P1 L7）
 //	migrate seed --file configs/seed/fields.yaml          示范农场地块 upsert（可重复执行）
 //
 // 配置读 configs/app.yaml，环境变量 AS_* 覆盖；密码只从环境变量或 deploy/.env 取。禁止 AutoMigrate。
@@ -119,8 +120,12 @@ func cmdUp(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	if *target != targetBusiness {
 		return nil
 	}
+	if err := postMigrateL7(ctx, cfg, stdout); err != nil {
+		return fmt.Errorf("tables migrated but audit chain / retention init failed: %w", err)
+	}
 	if *skipBuckets {
-		fmt.Fprintln(stderr, "migrate: WARNING buckets skipped by --skip-buckets:", cfg.MinIO.BucketRaw, cfg.MinIO.BucketEval)
+		fmt.Fprintln(stderr, "migrate: WARNING buckets skipped by --skip-buckets:", cfg.MinIO.BucketRaw, cfg.MinIO.BucketEval,
+			cfg.Audit.AnchorBucket)
 		return nil
 	}
 	mc, err := app.NewMinIO(cfg)
@@ -130,7 +135,40 @@ func cmdUp(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	if err := repository.EnsureBuckets(ctx, mc, cfg.MinIO.BucketRaw, cfg.MinIO.BucketEval); err != nil {
 		return fmt.Errorf("tables migrated but buckets not created: %w", err)
 	}
-	fmt.Fprintf(stdout, "buckets ready: %s %s\n", cfg.MinIO.BucketRaw, cfg.MinIO.BucketEval)
+	// P1 L7：锚点 bucket 必须开 object lock COMPLIANCE；MinIO 不支持时明确报错，不降级为普通 bucket。
+	if err := repository.EnsureAnchorBucket(ctx, mc, cfg.Audit.AnchorBucket, cfg.Audit.AnchorLockDays); err != nil {
+		return fmt.Errorf("tables migrated but anchor bucket not ready: %w", err)
+	}
+	fmt.Fprintf(stdout, "buckets ready: %s %s %s (object lock COMPLIANCE %d days)\n", cfg.MinIO.BucketRaw, cfg.MinIO.BucketEval,
+		cfg.Audit.AnchorBucket, cfg.Audit.AnchorLockDays)
+	return nil
+}
+
+// postMigrateL7 在业务库迁移后预建审计链 head（(0,0) + 存量农场）并回填 raw_object.expire_at（P1 L7，均幂等）。
+// 保留期配置缺 kind 时先失败，不做部分回填。
+func postMigrateL7(ctx context.Context, cfg *config.Config, stdout io.Writer) error {
+	if err := cfg.Retention.RequireKinds(app.RawKindNames()); err != nil {
+		return err
+	}
+	logger, err := app.NewLogger(os.Stderr, cfg.Log.Level)
+	if err != nil {
+		return err
+	}
+	clk := clock.System{}
+	db, err := app.OpenMySQL(ctx, cfg, cfg.MySQL.Database, clk, logger)
+	if err != nil {
+		return err
+	}
+	heads, headErr := repository.InitChainHeads(ctx, db, clk.Now())
+	var filled map[string]int64
+	var fillErr error
+	if headErr == nil {
+		filled, fillErr = repository.RetentionRepo{DB: db}.BackfillExpire(ctx, cfg.Retention.RawDays())
+	}
+	if err := errors.Join(headErr, fillErr, repository.Close(db)); err != nil {
+		return err
+	}
+	fmt.Fprintf(stdout, "audit_chain_head created: %d; raw_object.expire_at backfilled: %v\n", heads, filled)
 	return nil
 }
 

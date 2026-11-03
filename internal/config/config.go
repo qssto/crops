@@ -31,6 +31,13 @@ type Config struct {
 	DeviceReceipt DeviceReceipt `mapstructure:"device_receipt"`
 	// Approval 是审批体系配置（P1 L5，approval.go）；缺省 rejection_export_max_span=744h（31 天）。
 	Approval Approval `mapstructure:"approval"`
+	// Retention 是保留期配置（P1 L7，audit.go）；天数「待法务确认」，缺 kind 由 app 装配报错。
+	Retention Retention `mapstructure:"retention"`
+	// Audit 是审计锚点 / 导出配置（P1 L7，audit.go）。
+	Audit Audit `mapstructure:"audit"`
+	// Metrics / Alerts 是 P1 L7-B /metrics 暴露与告警扫描配置（observe.go）。
+	Metrics Metrics `mapstructure:"metrics"`
+	Alerts  Alerts  `mapstructure:"alerts"`
 }
 
 // DeviceReceipt 是回执 webhook 的 HMAC 密钥；只从环境变量 / deploy/.env 读，未配置时回执路由不挂载。
@@ -115,6 +122,8 @@ func Load(file, envFile string) (*Config, error) {
 	v.AutomaticEnv()
 	setDispatchDefaults(v)
 	setApprovalDefaults(v)
+	setAuditDefaults(v)
+	setObserveDefaults(v)
 	if err := v.ReadInConfig(); err != nil {
 		return nil, fmt.Errorf("config: read %s: %w", file, err)
 	}
@@ -136,6 +145,9 @@ func Load(file, envFile string) (*Config, error) {
 		return nil, fmt.Errorf("config: %s: %w", file, err)
 	}
 	if err := c.Approval.Validate(); err != nil {
+		return nil, fmt.Errorf("config: %s: %w", file, err)
+	}
+	if err := errors.Join(c.Audit.Validate(), c.Metrics.Validate(), c.Alerts.Validate()); err != nil {
 		return nil, fmt.Errorf("config: %s: %w", file, err)
 	}
 	return &c, nil

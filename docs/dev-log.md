@@ -651,3 +651,105 @@
 - 以上红线测试均已确认去掉修复后失败。
 - 评测样本（2026-11-02）：rice-l6fault-0007 第二条 weather.forecast 的 `collected_at` 20:00 晚于样本时钟 18:00，与 P1-L4 评测修复同一问题，改为 17:50（该样本设备离线、不进复检，判分不变）。
 
+## P1-L7-A · 审计哈希链、每日锚点、auditctl、审计导出、敏感操作二次留痕、保留期（2026-11-02）
+
+- 迁移 `migrations/0011_audit_chain.up.sql` / `.down.sql`（gitignore，调度方拷进主仓）：audit_log 加 chain_seq / prev_hash / row_hash 与 idx_chain (tenant_id, farm_id, chain_seq)、idx_action；advice_card 加 idx_outcome_time；新表 audit_chain_head(tenant_id, farm_id, chain_seq, head_hash, updated_at, uk_chain)；raw_object 加 expire_at / deleted_at 与 idx_expire。`cmd/migrate up`（业务库）随后幂等预建 head（(0,0)、farm_profile ∪ user_role 的农场、各租户 (t,0)），按 kind 回填 expire_at，建锚点 bucket 并开 object lock COMPLIANCE（MinIO 不支持时报错，不降级）。种子同事务预建 head。
+- 封链（`repository/audit_chain.go`）：`AuditRepo.AppendTx` 只把条目挂到 inTx 事务上；inTx 在 fn 成功后按 (tenant_id, farm_id) 升序 `SELECT … FROM audit_chain_head … FOR UPDATE`，逐条 chain_seq = head+1、row_hash = hex(sha256(prev_hash 十六进制文本 ‖ canonical_json(行)))，写 audit_log，推进 head，再提交；onCommit 钩子只在封链成功且提交后执行（签名与语义未改）。缺 head 返回 ErrAuditChainHeadMissing 整笔回滚；不经 inTx 的事务写审计返回 ErrAuditNoSeal。封链失败告警 audit_write_failed P0 在事务回滚之后发出（告警出口经 Append 另开短事务写 ALERT.* 并锁同一 head，回调内同步发会等锁超时）；告警自身写审计失败不再告警（ctx 标记）。`AuditRepo.Append` 自开短事务走同一封链。
+- 哈希行：action、actor_id、actor_type、chain_seq、created_at、farm_id、payload_digest、raw_object_id、result、run_id、summary、target、tenant_id；不含自增 id。RFC 8785 规范化（键按 UTF-16 排序、数字按 ES6 最短表示、无空白），整数列写十进制字符串，NULL / 空 target / 空 summary 写 null，created_at 截到毫秒 UTC `2006-01-02T15:04:05.000Z`；summary 落库前先规范化，读回重算与写入一致。创世 prev_hash 为 64 个 0。
+- 每日锚点（`service/audit_anchor.go`，扫描任务 `audit_anchor`，锁 `lock:scan:audit_anchor`）：北京时间 00:10 后读全部 head 写 `anchor/{yyyymmdd}.json`（含整体 sha256），再核对前一日与当日锚点仍与库一致并逐链 verify 增量，写 `verify/{yyyymmdd}.json`；链断 / 锚点被改 audit_chain_broken P0。已存在则跳过（幂等）。
+- `cmd/auditctl`：`verify --farm [--tenant] [--from-seq --to-seq]` 报第一个 ROW_MODIFIED / GAP / LINK_BROKEN（chain_seq + audit_log.id），退出码非 0；`anchor-check --date` 发现截尾重算（TRUNCATED / RECOMPUTED）；`--from-manifest` 返回未启用。只读连接（DSN 带 transaction_read_only=1），密码只读环境变量，跳过 chain_seq 为 NULL 的存量行。
+- 审计导出：POST / GET `/api/v1/farms/{farm_id}/audit/exports[/{export_id}]`，权限 `audit.export`（auditor / platform_admin；admin 不再持有），区间上限 `audit.export_max_span`（缺省 744h）。POST 写 outbox `audit.export`（去重 `audit.export:{farm_id}:{request_id}`）；worker 依次 verify → pii_mask → zip → RawStore.Put(kind=EXPORT) → 回写 raw_object_id → `internal/piiclean` 扫描出口（命中删对象、P0 audit_export_pii_leak、不写 AUDIT_EXPORT）。跨农场 404；下载签 5 分钟 URL 并写 RAW_READ（自动带 SENSITIVE.RAW_READ）。
+- 敏感操作二次留痕：FLAG_CHANGE / ORDER_CANCEL / RAW_READ / AUDIT_EXPORT 主审计 result=OK 时，封链紧跟主行追加 SENSITIVE.{op}（target `audit:{主行 id}`）；审批决策在写 approval_decision 的同一事务追加 SENSITIVE.APPROVAL_DECIDE（target `decision:{id}`）。同事务，业务失败一并回滚。
+- 保留期：`retention.raw_object_days` 按 kind 配天数（缺 kind 启动失败），`RawStore.Put` 写 expire_at；扫描任务 `retention` 分批（每批 200、每周期最多 5 批）先删对象再置 deleted_at，按 (tenant, farm, kind) 写 RETENTION_PURGE；跳过未终态工单 / 未关闭审批引用的对象；audit_log / run_event 不删。已过期的读返回 ErrRawExpired（→ 410「原文已过保留期」）。天数为草拟值「待法务确认」。
+- §6.8 验收：
+  - 验收 2（篡改定位）：TestVerifyChainTamper_Integration 在真实库上改 summary / 删中间行 / 改 prev_hash / 删末行，VerifyChain 分别报 ROW_MODIFIED、GAP、LINK_BROKEN、GAP 及 chain_seq 与 audit_log.id；auditctl 同一逻辑见 cmd/auditctl/verify_test。截尾重算（verify 本身通过）由 TestAnchorDetectsRecompute_Integration 经锚点报 TRUNCATED / RECOMPUTED。现场「待演练」：
+    1. `UPDATE audit_log SET summary = JSON_OBJECT('x', 1) WHERE tenant_id = 1 AND farm_id = 1 AND chain_seq = 3;`
+    2. `AS_MYSQL_PASSWORD=… go run ./cmd/auditctl verify --tenant 1 --farm 1`，期望 `ROW_MODIFIED chain_seq=3 audit_log.id=…`、退出码 1。
+  - 验收 3（抽查 100 单审计完整、导出无明文）「待演练」：
+    1. 完整率：以下 SQL 应返回 0 行（每单至少一条带链审计，且无 chain_seq 为 NULL 的行）：
+       `SELECT w.id, COUNT(a.id) n, SUM(a.chain_seq IS NULL) unchained FROM (SELECT id, tenant_id, farm_id, run_id FROM work_order WHERE tenant_id = 1 AND farm_id = 1 ORDER BY RAND() LIMIT 100) w LEFT JOIN audit_log a ON a.tenant_id = w.tenant_id AND a.farm_id = w.farm_id AND a.run_id = w.run_id GROUP BY w.id HAVING n = 0 OR unchained > 0;`
+    2. 链完整：`go run ./cmd/auditctl verify --tenant 1 --farm 1` 输出 `OK chain (1,1) …`、退出码 0；`go run ./cmd/auditctl anchor-check --date <当日 yyyymmdd>` 无 mismatch。
+    3. 导出：auditor 调 POST `/api/v1/farms/1/audit/exports`（覆盖上述工单时间段），轮询 GET 到 DONE，下载解压后 `grep -E '1[3-9][0-9]{9}|[0-9]{17}[0-9Xx]'` 应无命中；worker 出口已经 pii_clean 扫描，命中会删文件并发 P0。
+  - 验收 5（五类二次留痕）：TestSensitiveAuditRollback_Integration 对 FLAG_CHANGE、ORDER_CANCEL、RAW_READ、AUDIT_EXPORT、APPROVAL_DECIDE 各跑提交 / 业务失败两条：提交时 SENSITIVE.* 紧跟主行（target 指回主记录）、链可重算；失败时主行、留痕行、approval_decision 都不在，head 不动。各 service 入口经同一封链路径（单测覆盖 flag / approval / order / raw / export 的 AppendTx 调用），未在每个 service 上各写一条集成回滚用例。
+- 测试：repository/canonjson_test（RFC 8785 向量）、scope_test / sqlscope_test 登记 L7 方法；service/audit_verify_test、audit_anchor_test、audit_export_test、audit_retention_test；cmd/auditctl/verify_test；config/audit_test；model/audit_l7_test；app/audit_l7_test；controller/audit_export_test。均含应失败用例。
+- 集成测试（本地只过 `go vet -tags integration`，worktree 无 deploy/.env，待调度方带 AS_TEST_NS=l7a 在主仓跑，repository 包加 -race）：
+  - repository：TestAuditChainSeal_Integration、TestAuditChainHeadMissing_Integration（含「告警在回滚后发出、告警出口写同一链不等锁」）、TestAuditChainAlertNoRecursion_Integration、TestAuditChainConcurrent_Integration、TestSensitiveAuditRollback_Integration、TestInitChainHeads_Integration，以及受影响的既有集成用例。
+  - service：TestVerifyChainTamper_Integration、TestAnchorDetectsRecompute_Integration、TestRetentionPurge_Integration，以及既有 TestAuditService_ReadRaw_Integration、workorder / approval 集成用例（审计改为封链写入）。
+- 已知问题：
+  - 扫描锁 TTL 60s 不续期；锚点当日增量校验在一次 Tick 内完成（分页读，耗时随当日审计量增长）。
+  - 引用判断用到的 snapshot_raw_id / command_raw_id / device_receipt.raw_object_id 无索引；run_checkpoint 引用未跳过。
+  - L7 之前的存量审计（chain_seq 为 NULL）不进链、不导出、不校验。
+  - 导出在内存里建 zip，受 handler 2 分钟超时约束；锚点「当日已完成」状态只存在进程内存。
+  - auditctl 只读依赖会话变量 transaction_read_only，建议另建只有 SELECT 的账号。
+  - 租户链 (t,0) 只为种子 / 迁移时已有的租户预建；新租户开通须调用 InitChainHeadTx。
+  - `RetentionRepo.BackfillExpire` 豁免 WHERE 前缀检查（只由 cmd/migrate up 调用）。
+  - 不经 inTx 的事务写审计（ErrAuditNoSeal）仍在回调内同步告警：该连接未经 sealAudit，不持有 head 行锁；当前没有「普通事务里嵌套 inTx」的调用方。
+
+### P1-L7-A 审查修复（2026-11-02）
+
+- 导出窗口边界（P1-1，`service/audit_export.go` verifySpan）：
+  - 原先只校验 [lo, hi]。现在校验 [max(lo-1, 1), hi+1]：窗口末行被删会使 hi+1 的 prev_hash 断开，末行被挪出窗口时同样能发现。
+  - 窗口内一行都没有时，用 `AuditChainRepo.SeqBefore` 取窗口前一行 b，校验 [b, b+1]，因此整窗被删也能发现。
+  - 窗口位于链尾时，校验到 head 并核对 head_hash。
+  - 校验发现断点时：导出 FAILED/CHAIN_BROKEN，发 P0 告警，不写对象。
+  - 单测：TestAuditExportWindowEdges（末行删、首行删、末行改 created_at 挪出、整窗删、链尾窗口删，共 5 条必败用例）。
+  - 集成测试：TestAuditExportWindowTailDeleted_Integration。
+- 锚点比对重算（P2-1，CheckAnchor）：锚定行先用 AuditRowHash 按内容重算，再与存储的 row_hash、锚点逐一比对。内容被改但保留 row_hash、summary 无法规范化，都报 RECOMPUTED。测试：TestCheckAnchor「anchored row content modified, row_hash kept」「anchored row summary not canonicalizable」，TestRunAnchorCheck 同名用例。
+- 锚点对象版本（P2-2）：
+  - `MinIOAnchorStore.GetAnchor` 用 ListObjects(WithVersions) 列出全部版本，读最早的一个，并返回版本数。版本数大于 1（对象被重写过）时，worker 发 P0，auditctl 输出 BROKEN 并以 1 退出。
+  - 锚点文件里的 date 与对象 key 的日期不一致时，按锚点被篡改处理。
+  - verify 标记已存在时不再直接跳过：先按当前链重算，再与已存标记比对（日期、行数、问题列表），不一致或无法解析时发 P0。
+  - 测试：TestAnchorTick「rewritten anchor version fires P0」「existing verify mark rechecked」（4 条）「anchor copied from another date fires P0」，TestRunAnchorCheck「rewritten anchor object」。
+- 导出失败留痕（P2-3）：CHAIN_BROKEN 与 PII_LEAK（隔离删对象）都在置 FAILED 的同一事务里写 AUDIT_EXPORT result=FAILED。summary 只含 export_id、区间、行数、chain 区间和 error 码，不含明文。测试：TestAuditExportHandle「chain broken…」「pii leak…」（assertFailedAudit）。
+- 保留期引用（P2-4，`RetentionRepo.Referenced`）：UNION 了未终态 run 的 run_checkpoint.raw_object_id，查不到 run 时按被引用处理。上面已知问题里「run_checkpoint 引用未跳过」一条已经修复。
+- 导出对象 key（P2-5）：日期取 outbox 消息入队时间 msg.CreatedAt，跨日重放会覆盖同一个对象，不留孤儿。测试：TestAuditExportHandle「object key dated by enqueue time」。
+- 保留期集成用例（P2-6）：TestRetentionPurge_Integration 新建了四类引用：非终态工单的 OPEN 票、dispatch_attempt、device_receipt，以及非终态 run 的 checkpoint。断言四个对象都不清；工单与 run 进入终态后清掉后三个；票据关闭后清掉快照。
+- 墓碑行重写（P2-7，`RawStore.Put` upsert）：deleted_at 不为 NULL 时 expire_at 改用本次写入的值，并清空 deleted_at；未删的行仍保留原 expire_at。集成测试：TestRawStoreRePutAfterTombstone_Integration。
+- 并发用例（P3-1）：TestAuditChainConcurrent_Integration 在同一事务里交叉写 (1,1)、(1,2) 和平台链 (0,0)，一半按正序、一半按逆序。须用 `go test -tags integration -race -p 1 ./internal/repository/` 跑（Makefile 未改）。
+- auditctl（P3-3）：`verify --from-seq` 大于 head 时报用法错误，退出码 2。测试：TestRunVerify「from-seq beyond head is usage error」。
+- 超过 2^53 的整数（P3-5）：选择记录，不拒绝。规范化按双精度舍入，校验发现不了「改成舍入到同一双精度的另一个整数」这类篡改。拒绝的话，含大整数的审计会写入失败，封链又会回滚业务事务。需要精确比对的大整数由发出方写成字符串。说明写在 `repository/canonjson.go` 头注释，测试 TestCanonicalJSON_RFC8785Samples「beyond_2^53_rounds」。
+- 部署要求（未在代码里实现）：
+  - 锚点 bucket 应使用独立凭据：worker 只授 PutObject / GetObject / ListBucketVersions，业务账号与 auditctl 无写权限。
+  - GetAnchor 列版本需要锚点 bucket 的 ListObjects（含版本）权限。
+- 合并说明：app.Deps 没有告警出口字段，buildAuditL7 维持现状（AuditL7Deps.Alerts 为空时取 LogAlertSink）。L7-B 接入真实告警出口时：
+  - 把 `internal/app/boot/boot.go` 的 `repository.SetAuditAlertSink(service.LogAlertSink{Logger: logger})` 改为 `SetAuditAlertSink(alerts)`；
+  - 同时给 `deps.L7.Alerts` 赋同一出口。
+  - 缺 head 时写 (0,0) ALERT 审计归 L7-B。
+- 已知问题（审查记录的 P3-2 / P3-4 / P3-6 / P3-7，本轮不修，只登记）：细节以审查意见原文为准，下一轮按条处理。
+- 集成测试（待调度方在主仓跑）：
+  - repository：`-tags integration -race -p 1`，跑 TestAuditChainConcurrent_Integration、TestRawStoreRePutAfterTombstone_Integration、TestRawStore_Integration。
+  - service：TestAuditExportWindowTailDeleted_Integration、TestRetentionPurge_Integration，以及 TestVerifyChainTamper_Integration、TestAnchorDetectsRecompute_Integration。
+## P1-L7-B · 指标、告警规则与告警清单、告警下钻、看板扩展、无引用扫描、审批前设备调用告警（2026-11-02）
+
+- 无迁移，无新依赖。`go get github.com/prometheus/client_golang` 被权限拒绝，指标注册表改为标准库实现 `service/metric_registry.go`（counter / gauge / histogram，Prometheus 文本格式 0.0.4，`GET` only）；接入 client_golang 后只替换该文件与 `NewMetricsObserver` 的构造。不加 OTel。
+- 告警出口 `service.AuditAlertSink`（替换 `LogAlertSink` 装配，`model.AlertSink` / `service/alert.go` 签名不变）：`Fire` 计 `as_alert_total{alert, level, farm_id}`；经 `AuditRepo.Append` 独立短写 `audit_log(ALERT.{name})`（target `order:{id}` 或 `run:{id}`，summary 只含告警名 / 级别 / run / order id / detail（截 256 字符），P0 result=FAILED、P1=DENIED）；Error 日志。审计写入脱离调用方取消、上限 2s，失败或 panic 只记日志，不阻塞、不回传错误。`app.NewObserve` 在 boot 装配 gateway 前构造，gateway 与 App 共用；评测等未传入时 `buildObserve` 补缺省。
+- 指标（埋点都在 service 层，repository 不埋）：
+  - `as_dispatch_total{farm_id, mode, result=ok|rejected|manual|error|blocked}`（下发器 recordResult / recordSent / 审批前拦截）；
+  - `as_order_transition_total{farm_id, to, reason}`、`as_degraded_total{farm_id, fault}`、`as_llm_tokens_total{farm_id, kind}`：由已提交的 run_event 派生（`service.ObservedEvents` / `ObservedEventSink` 只包最外层，不重复计）；
+  - `as_approval_backlog{farm_id}`：worker 任务 `approval_backlog` 每 `alerts.backlog_refresh`（30s）全量替换，各副本各自刷新，规则用 `max by (farm_id)`；
+  - `as_approval_wait_seconds{farm_id, decision}`（开票 created_at → 终态决定，桶 1m–24h）；`as_cross_farm_denied_total{code}`（接 DenialCounter）；`as_flag_change_total{flag}`；`as_run_resume_total{result}`（`ObservedResumer`）；`as_mcp_calls_total{server, status}`（`ObservedTools` 包 gateway）。
+  - label 只有 farm_id 与有限枚举，未知取值归 `other`；`run_id` / `order_id` 等不进 label（TestMetrics_LabelWhitelist）。
+- `/metrics`：server 与 worker 各一个独立监听（`metrics.server_addr` 127.0.0.1:9101、`metrics.worker_addr` 127.0.0.1:9102、`metrics.path`），只挂 `/metrics`，不经业务鉴权；监听失败只记 Error，不拖垮业务进程。
+- 告警规则 `deploy/alerts/p1.yaml` 与《告警清单》`docs/alerts/P1-alert-list.md`：P0 七条（6 条经 sink + `as_fault_llm_unavailable`），P1 十二条（三条故障矩阵 warning + 九条业务）。阈值全部草拟，**待实测**。`alert_rules_test.go` 断言指标 / label / 取值已登记、`model.AlertNames` 与 fault_matrix 告警名全覆盖且级别一致、带 drilldown 与「待实测」，另有 13 条校验器应失败用例。
+- 告警下钻 `GET /api/v1/farms/:farm_id/alerts`（`advice.read`，已登记 routeOps）：`ALERT.*` 审计行时间倒序，带 run_link / order_id；`cross_farm_denied` / `flag_changed` 一并列出业务审计行但不返回其 summary。
+- 无引用扫描：Scanner 任务 `advice_no_citation`（`lock:scan:advice_no_citation`，30s 一轮，回看 `alerts.no_citation_window` 2m，SystemScope，SQL 按技术实现第 6 条）。去重选「按审计 `ALERT.advice_no_citation` 的 run_id 去重」：发告警前查窗口内已有审计行，已告警的跳过；代价是审计短写失败时下一轮会重复告警一次（宁可重复不漏报）。
+- 审批前设备调用：下发器在 DryRun、REAL 首发与续跑重发三处调 Adapter 前，持 lock:order 重读作业单与 order.dispatch 的审批票（`guardDeviceCall`，复用 L4 ① 的锁内重读），票非 APPROVED / 不属本单 / 单状态不符即不调 Adapter、`Fire(pre_approval_device, P0, order_id)`、计 `result=blocked`，outbox 退避。`DispatchDeps.Tickets` 必填。
+- 模型 `actuate`：gateway 原有 policy 拦截处另 `Fire(model_actuate, P0, run_id)`。
+- 看板：`GET /metrics` 每日与合计新增 `dispatch_success_rate`、`job_success_rate`、`recheck_returned`、`expired`，顶层 `approval_backlog`；口径与对账 SQL 见 `docs/metrics.md`「P1-L7-B 运营指标」（对账**待演练**）。amis 片段只在回报里给（`web/amis/` 被 gitignore）。
+- 测试：service 的 alert_sink / scan_citation / dispatch_guard / backlog / metrics_observer / metrics_l7b / alert_list / alert_rules，controller/alert_test，mcp/gateway_test 的 TestCall_ActuateAlertSink。红线应失败用例：票未 APPROVED / 单状态不符不调 Adapter 且告警；REFUSED 与已引用不命中、只告警一次；sink 审计失败 / 阻塞 / panic 不影响调用方；规则引用未知指标 / 取值即失败；`run_id` label 即失败。
+- 集成测试（本地只过 `go vet -tags integration`，待调度方带 `AS_TEST_NS=l7b` 在主仓跑）：TestAlertRepo_AdviceWithoutCitation_Integration、TestAlertRepo_OpenOrderTickets_Integration。
+- 演练（**待演练**，步骤在《告警清单》附录）：§6.8 验收 1「建议无引用 / 审批前设备调用告警 1 分钟内触发并下钻到 run_id」，验收 4 看板与审计口径对账。
+- 已知问题：没有 Prometheus / Alertmanager 服务端，规则只经 Go 测试做静态校验（正则解析，非 PromQL 解析器）；进程内计数重启归零、按副本分，告警以趋势为准、看板以库为准；`work_order_transition` 无 created_at 索引，看板按 `(tenant_id, farm_id)` 前缀过滤；无 farm_id label 的四条规则 drilldown 需值班填农场；OTel 未做。
+
+### P1-L7-B 审查修复（2026-11-02）
+
+- P0 新序列首样本不触发：`MetricsObserver` 构造时预置 farm_id=0、`Preseed(farmIDs)` 按已登记农场预置 0 值序列（`MetricsPreseeder` 在 `MetricsLoop` 内每 `alerts.backlog_refresh` 运行，农场来自 `AlertRepo.KnownFarms`）；9 条「任一次即告警」规则加 `or (X > 0 unless X offset w)`。测试：TestMetricsObserver_PreseededZeroSeries、TestAlertRules_NewSeriesAndDrilldown、TestMetricsPreseeder。
+- P1 复核在不可逆写之后：票据校验前移到 admit / realReady / DRY_RUN 记意图之前，不符即告警、计 blocked、丢弃消息（Dispatch 返回 nil），工单与 attempt 不写。测试：TestDispatch_PreApprovalDeviceGuard、TestDispatch_StaleTicketDroppedBeforeWrite。集成夹具改用 `itest.InsertTicket` 真实票据。
+- P2 sink 持锁阻塞：审计写超时缺省 500ms，`alerts.audit_write_timeout` 可配（上限 500ms，越界启动失败）；无引用扫描选「提前结束本轮」（`ScanDeps.CitationBudget`，缺省 `scanLockTTL/2`），预算耗尽 Warn 并把余下留到下一轮，不选异步队列（不引入进程内丢失窗口）。测试：TestAuditAlertSink_SetWriteTimeout、TestAlerts_AuditWriteTimeout、TestObserve_AuditWriteTimeout、TestScanner_AdviceNoCitation_RoundBudget。
+- P2 注册表写网络时持族锁：`WriteText` 锁内只复制快照，锁外写出。测试：TestMetricRegistry_SlowWriterDoesNotBlockRecording。
+- P2 纯指标告警下钻到空列表：纯指标规则 drilldown 改为看板 `/metrics`，《告警清单》写明分界。测试：TestAlertRules_NewSeriesAndDrilldown。
+- P2 告警列表分页：`cursor` / `next_cursor` 键集分页（`{unix 毫秒}_{id}`，取 limit+1 判断下一页），WHERE 仍以 `tenant_id=? AND farm_id=?` 开头。测试：TestAlertService_ListCursor、controller TestAlertListHandler 的 cursor 用例、TestAlertRepo_ListAlertsCursor_Integration。
+- P3：无引用 SQL 去掉尾分号（TestAdviceWithoutCitationSQL）；counter 拒负值 / NaN（TestMetricRegistry_CounterRejectsNegative）；`observeAfterCommit` 无提交钩子时的行为写进注释；`docs/metrics.md` 写明 `recheck_returned` 不含 `CANCELED(CONDITION_CHANGED)`；REFUSED 不命中由 TestAdviceWithoutCitationSQL 与扫描用例覆盖。
+- 仍用标准库注册表，未 go get client_golang。集成测试待调度方带 `AS_TEST_NS=l7bn` 在主仓跑。
+- L7-A 合并语义（head 缺失时 audit_write_failed 自身的审计也写不进）：选「通用回退」，没选「audit_* 一律写 (0,0)」。按 scope 写失败、未到截止、scope 非 (0,0) 时，在同一 500ms 截止内再写平台链 (0,0)，summary 带 `origin{tenant_id, farm_id}`。这样任何 scope 写失败都覆盖，正常情况下告警仍留在农场链与农场告警列表里。超时不回退，Fire 总耗时仍受 timeout 约束；不调 Fire，不递归。测试：TestAuditAlertSink_PlatformChainFallback、TestAuditAlertSink_TimeoutDoesNotFallBack。
+

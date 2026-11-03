@@ -149,6 +149,8 @@ type DecisionDeps struct {
 	DispatchWindow time.Duration // 0 取 DefaultDispatchWindow
 	// Perms 是权限矩阵（必填）：审批角色须被授予 approval.decide.pesticide（SPRAY）或 approval.decide.other。
 	Perms *PermissionMatrix
+	// Observer 记审批等待时长（P1 L7-B，可选；为空不计）。
+	Observer Observer
 }
 
 // DecisionService 是审批决策入口与票据过期收尾（作业单迁移一律经 OrderTransitioner）。
@@ -164,6 +166,9 @@ func NewDecisionService(d DecisionDeps) (*DecisionService, error) {
 	}
 	if d.DispatchWindow <= 0 {
 		d.DispatchWindow = DefaultDispatchWindow
+	}
+	if d.Observer == nil {
+		d.Observer = NopObserver{}
 	}
 	return &DecisionService{d: d}, nil
 }
@@ -535,6 +540,7 @@ func (s *DecisionService) approve(ctx context.Context, scope model.Scope, t repo
 	if err != nil {
 		return DecideResult{}, fmt.Errorf("service: approve ticket %d: %w", t.ID, err)
 	}
+	s.observeWait(t, model.TicketApproved, now)
 	if reopened(t) {
 		// P1-L4-A：复检退回后的新票（ticket_seq > 1）批准只写 order.dispatch:{order}:{新票}:1，run 已在首张票批准后收尾，不再唤醒
 		return DecideResult{DecisionID: id, TicketID: t.ID, Status: model.TicketApproved}, nil
@@ -579,7 +585,16 @@ func (s *DecisionService) reject(ctx context.Context, scope model.Scope, t repos
 	if err != nil {
 		return DecideResult{}, fmt.Errorf("service: reject ticket %d: %w", t.ID, err)
 	}
+	s.observeWait(t, model.TicketRejected, now)
 	return DecideResult{DecisionID: id, TicketID: t.ID, Status: model.TicketRejected}, nil
+}
+
+// observeWait 记一次审批等待（开票 created_at → 终态决定，事务已提交）；未读到开票时刻时不计。
+func (s *DecisionService) observeWait(t repository.TicketRow, decision model.TicketStatus, now time.Time) {
+	if t.CreatedAt.IsZero() {
+		return
+	}
+	s.d.Observer.ApprovalDecided(t.FarmID, decision, now.Sub(t.CreatedAt))
 }
 
 // approveTicketTx 置票据 APPROVED：HIGH 票第二人（CONFIRM）走 §6.6 带 first_approver_id 守卫的 UPDATE，其余沿用 P0。

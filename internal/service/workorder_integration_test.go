@@ -41,7 +41,7 @@ func TestTransition_Integration(t *testing.T) {
 			svc := service.NewWorkOrderService(slot.Clock, staleStore{stale: tt.stale}, repository.EventRepo{})
 			slot.Clock.Advance(time.Minute)
 
-			err := slot.DB.WithContext(t.Context()).Transaction(func(tx *repository.DB) error {
+			err := (repository.Transactor{DB: slot.DB}).InTx(t.Context(), func(tx *repository.DB) error {
 				return svc.Transition(t.Context(), tx, ref, tt.to, model.Actor{Type: model.ActorUser, ID: 1001}, "")
 			})
 			if !errors.Is(err, tt.wantErr) {

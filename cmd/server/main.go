@@ -47,13 +47,15 @@ func run() (err error) {
 	if err != nil {
 		return err
 	}
-	return serve(ctx, &http.Server{Addr: p.Config.HTTP.Addr, Handler: a.Handler(auth), ReadHeaderTimeout: readHeaderTimeout}, a)
+	metrics := a.MetricsLoop(p.Config.Metrics.ServerAddr, p.Config.Metrics.Path) // P1 L7-B：独立监听，不经业务鉴权
+	return serve(ctx, &http.Server{Addr: p.Config.HTTP.Addr, Handler: a.Handler(auth), ReadHeaderTimeout: readHeaderTimeout}, a,
+		metrics)
 }
 
 // serve 启动 server 侧后台任务（app.ServerLoops：只有开关订阅；outbox 轮询、扫描任务与分区维护在 cmd/worker），
 // 并监听直到 ctx 取消，然后优雅关闭。
-func serve(ctx context.Context, srv *http.Server, a *app.App) error {
-	waitLoops := app.StartLoops(ctx, a.ServerLoops())
+func serve(ctx context.Context, srv *http.Server, a *app.App, extra ...app.Loop) error {
+	waitLoops := app.StartLoops(ctx, append(a.ServerLoops(), extra...))
 	// SSE 长连接不随 Shutdown 结束，关闭开始时让推送返回
 	srv.RegisterOnShutdown(a.EventStream.Shutdown)
 	errCh := make(chan error, 1)

@@ -26,6 +26,8 @@ var sqlScopeExempt = map[string]string{
 	"UserRoleRepo.FarmTenants": "由路径 farm_id 反查真实租户，供与 token tenant 比对",
 	// P1-L5：§6.6 定版 SQL 照抄为 WHERE id=? AND tenant_id=? AND farm_id=?…，归属条件齐全只是不在开头。
 	"DecisionRepo.ConfirmTicketTx": "§6.6 第二审批人生效 UPDATE 照抄（id 在前，tenant_id / farm_id 同在 WHERE）",
+	// P1-L7-A：迁移后运维回填，只由 cmd/migrate up 调用（同 PartitionRepo.Partitions，不经业务路径）。
+	"RetentionRepo.BackfillExpire": "§6.8 存量 raw_object.expire_at 按 kind 全表回填",
 }
 
 var (

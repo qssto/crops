@@ -23,43 +23,28 @@ const (
 // ErrBadAuditPayload 表示要投影的事件 payload 不是合法 JSON 对象。
 var ErrBadAuditPayload = errors.New("repository: bad audit payload")
 
-const insertAuditSQL = `INSERT INTO audit_log (created_at, tenant_id, farm_id, run_id, actor_type, actor_id, action, target, payload_digest, summary, result, raw_object_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-
-func auditArgs(r model.AuditRecord) []any {
-	var summary any
-	if len(r.Summary) > 0 {
-		summary = string(r.Summary)
-	}
-	return []any{r.CreatedAt, r.TenantID, r.FarmID, r.RunID, string(r.Actor.Type), r.Actor.ID, r.Action,
-		nullIfEmpty(r.Target), r.PayloadDigest, summary, r.Result, r.RawObjectID}
-}
-
 // AuditRepo 写 audit_log：AppendTx 在调用方事务内写，Append 独立短写（拒绝类审计不随业务回滚）。
+// 两条路径都经封链（P1 L7）：AppendTx 把条目挂到 inTx 开启的事务上、提交前统一编链写入；Append 自开短事务走同一封链。
 //
 // 只追加、不读回，故不走 requireFarm：tenant_id = farm_id = 0 是合法行，表示身份未解析出农场的拒绝
 // （service.DenialAuditor 对未登录 / 无 user_role 的请求按空 Scope 落 CROSS_FARM_DENIED）或平台角色
-// （user_role 平台行 tenant_id = farm_id = 0）的操作。按农场读审计的查询须自行 requireFarm。
+// （user_role 平台行 tenant_id = farm_id = 0）的操作，写 (0,0) 链。按农场读审计的查询须自行 requireFarm。
 type AuditRepo struct{ DB *gorm.DB }
 
 var _ agent.AuditStore = AuditRepo{}
 
-// AppendTx 在调用方事务内追加一行审计。
+// AppendTx 在调用方事务内追加一行审计（提交前封链；tx 不是经 inTx 开启的返回 ErrAuditNoSeal）。
+// 主审计是敏感操作（model.SensitiveAudit）时，封链同时写 SENSITIVE.{op} 二次留痕。
 func (AuditRepo) AppendTx(ctx context.Context, tx *gorm.DB, r model.AuditRecord) error {
-	if _, err := execInTx(ctx, tx, insertAuditSQL, auditArgs(r)...); err != nil {
-		return fmt.Errorf("repository: insert audit_log %s %s: %w", r.Action, r.Result, err)
-	}
-	return nil
+	return queueAudit(ctx, tx, r)
 }
 
-// Append 独立短写一行审计。
+// Append 独立短事务写一行审计。
 func (a AuditRepo) Append(ctx context.Context, r model.AuditRecord) error {
 	if a.DB == nil {
 		return errors.New("repository: audit repo has no DB")
 	}
-	if err := a.DB.WithContext(ctx).Exec(insertAuditSQL, auditArgs(r)...).Error; err != nil {
-		return fmt.Errorf("repository: insert audit_log %s %s: %w", r.Action, r.Result, err)
-	}
-	return nil
+	return inTx(ctx, a.DB, func(tx *gorm.DB) error { return queueAudit(ctx, tx, r) })
 }
 
 // NewAuditRecord 按 payload 生成审计行的摘要列：payload_digest = sha256(payload)，summary = payload（≤8KB，超出记长度）。

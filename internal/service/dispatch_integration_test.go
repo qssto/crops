@@ -118,11 +118,12 @@ func TestOutboxDispatch_Integration(t *testing.T) {
 		t0.Add(time.Hour), orderID).Error; err != nil {
 		t.Fatal(err)
 	}
-	payload, err := json.Marshal(map[string]uint64{"order_id": orderID, "ticket_id": 1, "run_id": runID})
+	ticketID := itest.InsertTicket(t, slot.DB, runID, orderID, "APPROVED", t0)
+	payload, err := json.Marshal(map[string]uint64{"order_id": orderID, "ticket_id": ticketID, "run_id": runID})
 	if err != nil {
 		t.Fatal(err)
 	}
-	outboxID := insertDispatchOutbox(t, slot.DB, orderID, 1, runID, t0)
+	outboxID := insertDispatchOutbox(t, slot.DB, orderID, ticketID, runID, t0)
 
 	if n, err := poller.RunOnce(ctx); err != nil || n != 1 {
 		t.Fatalf("RunOnce = %d, %v", n, err)

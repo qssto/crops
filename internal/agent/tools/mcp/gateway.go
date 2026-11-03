@@ -11,6 +11,7 @@ import (
 	"agri-steward/internal/agent"
 	"agri-steward/internal/agent/harness/policy"
 	"agri-steward/internal/clock"
+	"agri-steward/internal/model"
 )
 
 // 默认参数（P0 §6.3 流程 3、③ Redis 键）。
@@ -66,6 +67,8 @@ type Options struct {
 	MaxStaleness map[string]time.Duration
 	// PendingPoll 是等待在途同 key 调用时的轮询间隔。
 	PendingPoll time.Duration
+	// Alerts 非 nil 时，模型发起的 actuate 调用被策略拒绝后另发 P0 告警 model_actuate（P1 L7-B）。
+	Alerts model.AlertSink
 }
 
 func (o Options) validate() error {

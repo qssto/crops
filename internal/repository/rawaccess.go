@@ -50,6 +50,7 @@ func (r RawAccessRepo) InTx(ctx context.Context, fn func(tx *DB) error) error {
 }
 
 // RawTx 按 id 取 raw_object（限定租户 / 农场）；不存在或不属于该 scope 均返回 model.ErrNotFound。
+// 已过保留期（deleted_at 非空，P1 L7）返回行与 model.ErrRawExpired：调用方先核对归属再报「原文已过保留期」。
 func (r RawAccessRepo) RawTx(ctx context.Context, tx *DB, scope model.Scope, rawID uint64) (RawObjectRow, error) {
 	if err := requireScope(scope); err != nil {
 		return RawObjectRow{}, err
@@ -59,9 +60,10 @@ func (r RawAccessRepo) RawTx(ctx context.Context, tx *DB, scope model.Scope, raw
 		RunID     *uint64
 		Kind      string
 		ObjectKey string
+		DeletedAt *time.Time
 	}
 	res := tx.WithContext(ctx).Raw(
-		`SELECT id, run_id, kind, object_key FROM raw_object WHERE tenant_id=? AND farm_id=? AND id=?`,
+		`SELECT id, run_id, kind, object_key, deleted_at FROM raw_object WHERE tenant_id=? AND farm_id=? AND id=?`,
 		scope.TenantID, scope.FarmID, rawID).Scan(&row)
 	if res.Error != nil {
 		return RawObjectRow{}, fmt.Errorf("repository: get raw_object %d: %w", rawID, res.Error)
@@ -72,6 +74,9 @@ func (r RawAccessRepo) RawTx(ctx context.Context, tx *DB, scope model.Scope, raw
 	out := RawObjectRow{ID: row.ID, Kind: model.RawKind(row.Kind), ObjectKey: row.ObjectKey}
 	if row.RunID != nil {
 		out.RunID = *row.RunID
+	}
+	if row.DeletedAt != nil {
+		return out, fmt.Errorf("repository: raw_object %d: %w", rawID, model.ErrRawExpired)
 	}
 	return out, nil
 }

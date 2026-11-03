@@ -22,6 +22,7 @@ const (
 	RawDenyRole        = "ROLE_INSUFFICIENT"
 	RawDenyNotFound    = "RAW_NOT_FOUND"
 	RawDenyRunMismatch = "RUN_MISMATCH"
+	RawDenyExpired     = "RAW_EXPIRED" // P1 L7：已过保留期（deleted_at 非空）
 )
 
 // RawAccessStore 是读原文需要的仓储能力，repository.RawAccessRepo 实现。
@@ -81,7 +82,8 @@ type rawAudit struct {
 }
 
 // ReadRaw 校验角色与归属（raw_object 属于 scope 且 run_id 一致）后签发 5 分钟预签名 URL：
-// 成功时 RAW_READ/OK 与签发同事务写入；拒绝时独立写 RAW_READ/DENIED 并返回包装 ErrForbidden 的错误（→ 403）。
+// 成功时 RAW_READ/OK 与签发同事务写入（封链时同事务追加 SENSITIVE.RAW_READ）；拒绝时独立写 RAW_READ/DENIED
+// 并返回包装 ErrForbidden 的错误（→ 403），已过保留期返回 model.ErrRawExpired（→ 410）。
 // 不存在与跨 run 同样按 403 处理，不暴露对象是否存在。
 func (s *AuditService) ReadRaw(ctx context.Context, scope model.Scope, runID, rawID uint64) (RawLink, error) {
 	if runID == 0 || rawID == 0 {
@@ -97,11 +99,15 @@ func (s *AuditService) ReadRaw(ctx context.Context, scope model.Scope, runID, ra
 		if errors.Is(err, model.ErrNotFound) {
 			return &rawDenied{code: RawDenyNotFound}
 		}
-		if err != nil {
+		expired := errors.Is(err, model.ErrRawExpired)
+		if err != nil && !expired {
 			return err
 		}
 		if row.RunID != runID {
 			return &rawDenied{code: RawDenyRunMismatch, row: &row}
+		}
+		if expired { // 归属核对通过后才报过保留期，不向他 run 暴露对象状态
+			return &rawDenied{code: RawDenyExpired, row: &row}
 		}
 		url, err := s.d.Presign.PresignGet(ctx, row.ObjectKey, RawReadTTL)
 		if err != nil {
@@ -130,8 +136,12 @@ func (s *AuditService) ReadRaw(ctx context.Context, scope model.Scope, runID, ra
 }
 
 // deny 独立写 RAW_READ/DENIED（不随业务事务回滚）；审计写失败时一并返回，仍映射为 403。
+// 过保留期返回包装 model.ErrRawExpired 的错误（→ 410「原文已过保留期」），其余包装 ErrForbidden。
 func (s *AuditService) deny(ctx context.Context, scope model.Scope, runID, rawID uint64, d *rawDenied) error {
 	forbidden := fmt.Errorf("%w: raw %d of run %d: %s", ErrForbidden, rawID, runID, d.code)
+	if d.code == RawDenyExpired {
+		forbidden = fmt.Errorf("service: raw %d of run %d: %w", rawID, runID, model.ErrRawExpired)
+	}
 	p := rawAudit{RawID: rawID, RunID: runID, Code: d.code}
 	if d.row != nil {
 		p.Kind = string(d.row.Kind)

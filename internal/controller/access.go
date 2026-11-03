@@ -66,6 +66,11 @@ var routeOps = map[string][]service.Operation{
 	// P1-L5：待审批详情（读权限）与驳回原因导出。
 	"GET " + farmsPrefix + "/approvals/:ticket_id": {service.OpAdviceRead},
 	"GET " + farmsPrefix + "/rejections":           {service.OpRejectionExport},
+	// P1-L7：审计导出（仅 auditor / platform_admin）。
+	"POST " + farmsPrefix + "/audit/exports":           {service.OpAuditExport},
+	"GET " + farmsPrefix + "/audit/exports/:export_id": {service.OpAuditExport},
+	// P1-L7-B：告警列表（复用看板读权限）。
+	"GET " + farmsPrefix + "/alerts": {service.OpAdviceRead},
 }
 
 const farmsPrefix = "/api/v1/farms/:farm_id"

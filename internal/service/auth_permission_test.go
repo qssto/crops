@@ -28,7 +28,7 @@ func TestPermissionMatrix_RepoFile_AllRolesAllOps(t *testing.T) {
 		model.RoleAgronomist: {OpAsk, OpAdviceRead, OpApprovalSubmit, OpApprovalDecidePesticide, OpApprovalDecideOther,
 			OpOrderCancel, OpRawRead, OpRejectionExport},
 		model.RoleOperator:      {OpAsk, OpAdviceRead, OpOrderCancel},
-		model.RoleAdmin:         {OpAsk, OpAdviceRead, OpOrderCancel, OpAuditExport},
+		model.RoleAdmin:         {OpAsk, OpAdviceRead, OpOrderCancel},
 		model.RoleAuditor:       {OpAdviceRead, OpAuditExport, OpRawRead, OpRejectionExport},
 		model.RolePlatformAdmin: {OpAdviceRead, OpOrderCancel, OpAuditExport, OpRawRead, OpFlagWrite, OpOrderReconcile},
 		model.RoleKBExpert:      nil,

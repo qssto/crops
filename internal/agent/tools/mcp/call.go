@@ -57,11 +57,17 @@ type outcome struct {
 // alertActuateFromAgent 是告警日志的 alert 字段：模型发起了 actuate 调用（执行动作只允许 service/workorder 经 adapter 调用）。
 const alertActuateFromAgent = "ACTUATE_FROM_AGENT"
 
-// alertActuate 以 ERROR 级别记录来自模型的 actuate 调用（兜底拒绝已由 policy.Before 完成，这里只告警）。
+// alertActuate 以 ERROR 级别记录来自模型的 actuate 调用（兜底拒绝已由 policy.Before 完成，这里只告警）；
+// 配置了 Alerts 时另发 P0 告警 model_actuate（run_id 下钻）。
 func (g *Gateway) alertActuate(ctx context.Context, scope model.Scope, call agent.ToolCall, err error) {
 	g.opt.Logger.ErrorContext(ctx, "mcp actuate call from agent rejected",
 		"alert", alertActuateFromAgent, "tool", call.Tool, "tenant_id", scope.TenantID, "farm_id", scope.FarmID,
 		"run_id", call.RunID, "step_id", call.StepID, "err", err)
+	if g.opt.Alerts != nil {
+		g.opt.Alerts.Fire(ctx, model.Alert{Name: model.AlertModelActuate, Level: model.AlertP0,
+			Scope: model.Scope{TenantID: scope.TenantID, FarmID: scope.FarmID}, RunID: call.RunID,
+			Detail: "actuate tool " + call.Tool + " rejected by policy"})
+	}
 }
 
 func failed(code ErrorCode, from, format string, a ...any) outcome {

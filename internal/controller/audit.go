@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"strconv"
 
@@ -24,7 +25,7 @@ func AuditRoutes(r RawReader) Mount {
 }
 
 // RawHandler 是 GET /api/v1/farms/:farm_id/runs/:run_id/raw/:raw_id：返回 5 分钟预签名 URL；
-// 角色不足 / 不属于本农场 / 跨 run 一律 403（已写 RAW_READ/DENIED）。
+// 角色不足 / 不属于本农场 / 跨 run 一律 403（已写 RAW_READ/DENIED）；已过保留期 410「原文已过保留期」。
 func RawHandler(r RawReader) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		scope, ok := service.ScopeFrom(c.Request.Context())
@@ -43,6 +44,10 @@ func RawHandler(r RawReader) gin.HandlerFunc {
 			return
 		}
 		link, err := r.ReadRaw(c.Request.Context(), scope, runID, rawID)
+		if errors.Is(err, model.ErrRawExpired) { // P1 L7：已写 RAW_READ/DENIED(RAW_EXPIRED)
+			abort(c, http.StatusGone, model.ErrRawExpired.Error())
+			return
+		}
 		if err != nil {
 			abortScoped(c, err, "raw:"+strconv.FormatUint(rawID, 10))
 			return

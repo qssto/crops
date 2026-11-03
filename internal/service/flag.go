@@ -63,6 +63,8 @@ type FlagDeps struct {
 	Clock     clock.Clock
 	Logger    *slog.Logger
 	Registry  model.FlagRegistry
+	// Observer 计开关变更 as_flag_change_total（P1 L7-B，可选；为空不计）。
+	Observer Observer
 }
 
 // FlagService 是开关的统一读写入口（P1 §6.1 流程 2-5）：业务代码只经 Bool / Mode / BoolLive 读取。
@@ -92,6 +94,9 @@ func NewFlagService(d FlagDeps) (*FlagService, error) {
 	}
 	if d.Registry == nil {
 		d.Registry = model.DefaultFlagRegistry()
+	}
+	if d.Observer == nil {
+		d.Observer = NopObserver{}
 	}
 	return &FlagService{d: d, cache: map[flagCacheKey]flagCacheEntry{}}, nil
 }

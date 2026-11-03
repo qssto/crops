@@ -28,7 +28,7 @@ func TestEventAppendTx_Integration(t *testing.T) {
 
 	var seqs []int64
 	for range 2 {
-		err := slot.DB.WithContext(t.Context()).Transaction(func(tx *repository.DB) error {
+		err := (repository.Transactor{DB: slot.DB}).InTx(t.Context(), func(tx *repository.DB) error { // P1 L7：审计投影须经封链事务
 			seq, err := repo.AppendTx(t.Context(), tx, ev)
 			seqs = append(seqs, seq)
 			return err
@@ -157,6 +157,52 @@ func TestRawStore_Integration(t *testing.T) {
 	}
 	if n := itest.Count(t, slot.DB, "SELECT COUNT(*) FROM raw_object WHERE sha256 = ?", second.SHA256); n != 1 {
 		t.Fatalf("raw_object rows = %d, want 1", n)
+	}
+}
+
+// 必败：已置墓碑的行被同一 key 重写，expire_at 按本次写入重算（沿用旧的已过期时刻会被下一轮保留期立刻清掉）；
+// 未删行重写保留已有 expire_at。
+func TestRawStoreRePutAfterTombstone_Integration(t *testing.T) {
+	e := itest.Setup(t, "repo")
+	slot := e.Fresh(t, t0)
+	rs := repository.NewRawStore(slot.DB, &memPutter{}, e.Cfg.MinIO.BucketRaw).WithRetention(map[string]int{"LLM_IO": 30})
+	p := model.RawPut{TenantID: 1, FarmID: 1, RunID: 7, Kind: model.RawLLMIO, Name: "step-1.json", At: t0, CreatedAt: t0,
+		Body: []byte(`{"a":1}`), ContentType: "application/json"}
+	obj, err := rs.Put(t.Context(), p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// state 在库内比较（与写入同一时区口径），返回 expire_at 是否等于 want、行是否已置墓碑。
+	state := func(want time.Time) (bool, bool) {
+		t.Helper()
+		match := itest.Count(t, slot.DB, "SELECT COUNT(*) FROM raw_object WHERE id = ? AND expire_at = ?", obj.ID, want) == 1
+		del := itest.Count(t, slot.DB, "SELECT COUNT(*) FROM raw_object WHERE id = ? AND deleted_at IS NOT NULL", obj.ID) == 1
+		return match, del
+	}
+	if ok, del := state(t0.AddDate(0, 0, 30)); !ok || del {
+		t.Fatalf("first put expire ok %v deleted %v", ok, del)
+	}
+	if err := slot.DB.WithContext(t.Context()).Exec("UPDATE raw_object SET deleted_at = ? WHERE id = ?",
+		t0.AddDate(0, 0, 31), obj.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	cases := []struct {
+		name    string
+		created time.Time
+		want    time.Time
+	}{
+		{name: "tombstoned row takes new expire_at", created: t0.AddDate(0, 0, 60), want: t0.AddDate(0, 0, 90)},
+		{name: "live row keeps existing expire_at", created: t0.AddDate(0, 0, 70), want: t0.AddDate(0, 0, 90)},
+	}
+	for _, c := range cases {
+		p.CreatedAt = c.created
+		again, err := rs.Put(t.Context(), p)
+		if err != nil || again.ID != obj.ID {
+			t.Fatalf("%s: re-put id %d err %v, want id %d", c.name, again.ID, err, obj.ID)
+		}
+		if ok, del := state(c.want); !ok || del {
+			t.Fatalf("%s: expire ok %v deleted %v, want expire %v live", c.name, ok, del, c.want)
+		}
 	}
 }
 

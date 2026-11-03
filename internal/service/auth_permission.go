@@ -24,7 +24,7 @@ const (
 	OpApprovalDecidePesticide Operation = "approval.decide.pesticide" // 审批用药类作业单（SPRAY）
 	OpApprovalDecideOther     Operation = "approval.decide.other"     // 审批非用药类作业单
 	OpOrderCancel             Operation = "order.cancel"              // 中止作业（POST /orders/:order_id/cancel）
-	OpAuditExport             Operation = "audit.export"              // 导出审计（暂无路由）
+	OpAuditExport             Operation = "audit.export"              // 导出审计（POST/GET /audit/exports，P1-L7）
 	OpRawRead                 Operation = "raw.read"                  // 读 raw_store 原文
 	OpFlagWrite               Operation = "flag.write"                // 改开关（admin 路由，只限 platform_admin）
 	OpOrderReconcile          Operation = "order.reconcile"           // 人工对账（POST /orders/:order_id/reconcile，P1-L4-B）

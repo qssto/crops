@@ -15,11 +15,18 @@ type commitHooks struct {
 
 type commitHooksKey struct{}
 
-// inTx 开事务执行 fn，提交成功后执行 fn 内经 onCommit 登记的动作。
-// 本包所有会调用 EventRepo.AppendTx 的事务入口（Transactor / DecisionRepo / EventSink / OrderDraftRepo）都走这里。
+// inTx 开事务执行 fn，提交前统一封链 fn 内经 AuditRepo.AppendTx 挂上的审计（P1 L7，audit_chain.go），
+// 封链成功且提交成功后才执行 fn 内经 onCommit 登记的动作；封链失败在事务回滚之后告警（不在回调内持锁告警）。
+// 本包所有会调用 EventRepo.AppendTx / AuditRepo.AppendTx 的事务入口（Transactor / DecisionRepo / EventSink / OrderDraftRepo …）都走这里。
 func inTx(ctx context.Context, db *gorm.DB, fn func(tx *gorm.DB) error) error {
 	h := &commitHooks{}
-	if err := db.WithContext(context.WithValue(ctx, commitHooksKey{}, h)).Transaction(fn); err != nil {
+	var failed sealFailure
+	if err := db.WithContext(context.WithValue(ctx, commitHooksKey{}, h)).Transaction(func(tx *gorm.DB) error {
+		return withAuditSeal(ctx, tx, fn, &failed)
+	}); err != nil {
+		if failed.err != nil {
+			fireAuditWriteFailed(ctx, failed.recs, failed.err)
+		}
 		return err
 	}
 	h.mu.Lock()

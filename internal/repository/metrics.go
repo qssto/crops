@@ -41,7 +41,8 @@ const (
 )
 
 // MetricSQL 列出指标事实查询（隔离测试扫描用）。
-var MetricSQL = []string{sqlMetricRuns, sqlMetricRunEvents, sqlMetricToolCalls, sqlMetricAdvice, sqlMetricTickets, sqlMetricOrders}
+var MetricSQL = []string{sqlMetricRuns, sqlMetricRunEvents, sqlMetricToolCalls, sqlMetricAdvice, sqlMetricTickets, sqlMetricOrders,
+	sqlMetricAttempts, sqlMetricTransitions, sqlMetricOpenTickets}
 
 // RunDetailSQL 列出 run 详情查询（隔离测试扫描用）。
 var RunDetailSQL = []string{sqlDetailSteps, sqlDetailEvents, sqlDetailToolCalls, sqlDetailTickets, sqlDetailDecisions,
@@ -100,6 +101,10 @@ type MetricFacts struct {
 	Advice    []MetricAdvice
 	Tickets   []MetricTicket
 	Orders    []MetricOrder
+	// P1 L7-B（metrics_l7b.go）：REAL 下发尝试、作业单关键迁移、查询时刻 OPEN 的 ORDER 票数。
+	Attempts    []MetricAttempt
+	Transitions []MetricTransition
+	OpenTickets int
 }
 
 // MetricsRepo 读指标事实行（只读）。
@@ -160,6 +165,9 @@ func (r *MetricsRepo) Facts(ctx context.Context, scope model.Scope, from, to tim
 		if err := r.db.WithContext(ctx).Raw(q.query, q.args...).Scan(q.dst).Error; err != nil {
 			return MetricFacts{}, fmt.Errorf("repository: metric facts %s: %w", q.name, err)
 		}
+	}
+	if err := r.opsFacts(ctx, scope, from, to, &f); err != nil {
+		return MetricFacts{}, err
 	}
 	for _, x := range runs {
 		f.Runs = append(f.Runs, MetricRun{ID: x.ID, Status: model.RunStatus(x.Status), CreatedAt: x.CreatedAt})

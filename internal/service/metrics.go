@@ -59,6 +59,7 @@ type DayMetrics struct {
 	Resume            Ratio      `json:"resume_success_rate"`
 	Tokens            TokenStats `json:"tokens"`
 	Jobs              JobMetrics `json:"jobs"`
+	OpsMetrics                   // P1 L7-B（metrics_l7b.go）
 }
 
 // WaitStats 是审批等待时长（OPEN → 决策，秒）；MissingOpen 是缺 APPROVAL_PENDING 事件、无法计时的票数。
@@ -92,6 +93,8 @@ type MetricsReport struct {
 	To    string       `json:"to"`
 	Days  []DayMetrics `json:"days"`
 	Total DayMetrics   `json:"total"`
+	// ApprovalBacklog 是查询时刻 OPEN 的 ORDER 票数（P1 L7-B，快照，不随时间窗）。
+	ApprovalBacklog int `json:"approval_backlog"`
 }
 
 // MetricsService 计算看板指标（只读生产业务库）。
@@ -142,6 +145,7 @@ type bucket struct {
 	realOrders, realDispatched int
 	realDone, dryRun           int
 	badPayload                 int
+	opsBucket
 }
 
 // computeMetrics 是纯函数：事实行按日期归桶（run 类按 run 创建日，票按决策日，其余按行创建日）后出指标。
@@ -238,7 +242,9 @@ func computeMetrics(f repository.MetricFacts, from, to time.Time) MetricsReport 
 			}
 		})
 	}
-	rep := MetricsReport{From: from.Format(DateLayout), To: to.Format(DateLayout), Total: total.metrics(totalBucket)}
+	addOpsFacts(f, add)
+	rep := MetricsReport{From: from.Format(DateLayout), To: to.Format(DateLayout), Total: total.metrics(totalBucket),
+		ApprovalBacklog: f.OpenTickets}
 	for d := from; !d.After(to); d = d.Add(day) {
 		key := d.Format(DateLayout)
 		b, ok := days[key]
@@ -262,6 +268,7 @@ func (b *bucket) metrics(date string) DayMetrics {
 		ApprovalWait: WaitStats{Decided: b.decided, MissingOpen: b.missingOpen},
 		Jobs: JobMetrics{Orders: b.realOrders, DispatchRate: ratio(b.realDispatched, b.realOrders),
 			DoneRate: ratio(b.realDone, b.realOrders), DryRunExcluded: b.dryRun},
+		OpsMetrics: b.opsBucket.metrics(),
 	}
 	if len(b.toolLatency) > 0 {
 		lat := make([]float64, len(b.toolLatency))

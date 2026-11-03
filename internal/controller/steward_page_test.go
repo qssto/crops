@@ -21,6 +21,7 @@ var stewardContract = []string{
 	"/api/v1/farms/:farm_id/runs/:run_id/events",
 	"/api/v1/farms/:farm_id/runs/:run_id/raw/:raw_id",
 	"/api/v1/farms/:farm_id/approvals",
+	"/api/v1/farms/:farm_id/approvals/:ticket_id",
 	"/api/v1/farms/:farm_id/approvals/:ticket_id/decide",
 }
 

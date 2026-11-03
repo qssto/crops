@@ -14,6 +14,7 @@ import (
 	"agri-steward/internal/agent/tools/mcp/servers"
 	"agri-steward/internal/clock"
 	"agri-steward/internal/config"
+	"agri-steward/internal/model"
 	"agri-steward/internal/repository"
 	"agri-steward/internal/repository/rediskey"
 	"agri-steward/internal/service"
@@ -29,6 +30,9 @@ type toolDeps struct {
 	raw    agent.RawStore
 	// rawRead 读回 raw 对象：去重命中时向模型返回原始结果（result_summary 已脱敏）。
 	rawRead mcp.RawReader
+	// P1 L7-B：model_actuate 告警出口与 MCP 调用指标（as_mcp_calls_total）。
+	alerts model.AlertSink
+	obs    service.Observer
 }
 
 // buildTools 读 tools 配置并按 mode 装配四个 MCP Server，再用 mcp gateway 包装
@@ -67,12 +71,13 @@ func buildTools(path, policyPath string, d toolDeps) (agent.ToolProvider, error)
 		Devices: devices,                                                              // device_id 按显式绑定判归属
 		Levels:  levels, Timeouts: timeouts, Mask: pii.MaskJSON, RawReader: d.rawRead,
 		CacheTTL: fresh, MaxStaleness: maxStale,
+		Alerts: d.alerts, // P1 L7-B：模型 actuate 被拒另发 P0 model_actuate
 		// Events: L7 接 EventRepo。
 	})
 	if err != nil {
 		return nil, fmt.Errorf("build mcp gateway: %w", err)
 	}
-	return gw, nil
+	return service.ObservedTools{Next: gw, Obs: d.obs}, nil
 }
 
 // fieldHistoryWriter 按 tools.field.mode 选 field.history 回写写端（P1-L4-B）：mock → 内存幂等实现；

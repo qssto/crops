@@ -92,3 +92,35 @@ SELECT dispatch_mode, COUNT(*) FROM work_order WHERE tenant_id=1 AND farm_id=1 A
 ```
 
 `cmd/reconcile` 自动跑上面这组 SQL 并与 `MetricsService.Daily` 逐项比较，见 `docs/reconcile/L7.md`。
+
+## P1-L7-B 运营指标（看板扩展）
+
+同一接口 `GET /api/v1/farms/{farm_id}/metrics`，`days[*]` / `total` 新增下列字段（平铺），顶层新增 `approval_backlog`。
+事实行 SQL 在 `internal/repository/metrics_l7b.go`，聚合在 `internal/service/metrics_l7b.go`。原有字段口径不变；审批等待仍是上表 `approval_wait`。
+
+| 指标（JSON 键） | 定义 | 分子 / 分母 | 归日 |
+|---|---|---|---|
+| `dispatch_success_rate` | 下发成功率 | `dispatch_attempt.mode='REAL'` 且 `device_job_id IS NOT NULL`（平台已受理）/ 全部 REAL 下发尝试（含重试，每次 attempt 一行） | `dispatch_attempt.sent_at` |
+| `job_success_rate` | 作业成功率 | REAL 单迁移到 `DONE` / `PARTIALLY_DONE` 的次数 / 迁移到 `DONE` + `PARTIALLY_DONE` + `FAILED` 的次数 | `work_order_transition.created_at` |
+| `recheck_returned` | 复检拦截次数 | `work_order_transition.reason_code='RECHECK_FAILED'` 的迁移数（含 DRY_RUN）；**不含**用户触发复检后条件变化取消的 `CANCELED(CONDITION_CHANGED)`（`service/recheck.go`，那是取消不是退回） | 同上 |
+| `expired` | EXPIRED 数 | `work_order_transition.to_status='EXPIRED'` 的迁移数（含 DRY_RUN） | 同上 |
+| `approval_backlog`（顶层） | 审批积压 | 查询时刻 `approval_ticket.ticket_kind='ORDER' AND status='OPEN'` 的票数，不随时间窗 | — |
+
+- 比率分母为 0 时 `value=null`；DRY_RUN 单不进 `dispatch_success_rate` / `job_success_rate`。
+- 与 Prometheus 指标的关系：`as_dispatch_total` / `as_order_transition_total` / `as_approval_backlog` 是进程内计数（重启归零、按副本分），告警用；看板以库为准，两者只对趋势，不逐条对数。
+- 预置 0 值序列（审查修复 P0）：注册表构造时预置 farm_id=0，`/metrics` 监听任务按 `alerts.backlog_refresh` 周期读 `farm_profile` 预置已登记农场的 `as_alert_total`（告警项 × 级别）、`as_degraded_total`（故障码）、`as_dispatch_total`（mode × result）、`as_llm_tokens_total`（kind）与 `as_order_transition_total{to="EXPIRED",reason="APPROVAL_EXPIRED"}` / `{to="PENDING_APPROVAL",reason="RECHECK_FAILED"}`，首次计数是 0 → 1，`increase()` 可见。
+- `as_order_transition_total` 只在事务提交后计数（`service.observeAfterCommit`；未经 `InTx` 的写语句已自动提交，立即计数）。
+- `work_order_transition` 没有 `created_at` 索引，按 `idx_order` 的 `(tenant_id, farm_id)` 前缀过滤，单农场量级可接受。
+
+对账 SQL（单日 D，`[D, D+1)`；**待演练**，`cmd/reconcile` 尚未纳入这组）：
+
+```sql
+SELECT COUNT(*), SUM(device_job_id IS NOT NULL) FROM dispatch_attempt
+ WHERE tenant_id=1 AND farm_id=1 AND mode='REAL' AND sent_at>=? AND sent_at<?;
+SELECT SUM(w.to_status IN ('DONE','PARTIALLY_DONE')), SUM(w.to_status IN ('DONE','PARTIALLY_DONE','FAILED'))
+ FROM work_order_transition w JOIN work_order o ON o.id=w.order_id AND o.tenant_id=w.tenant_id AND o.farm_id=w.farm_id
+ WHERE w.tenant_id=1 AND w.farm_id=1 AND o.dispatch_mode='REAL' AND w.created_at>=? AND w.created_at<?;
+SELECT SUM(reason_code='RECHECK_FAILED'), SUM(to_status='EXPIRED') FROM work_order_transition
+ WHERE tenant_id=1 AND farm_id=1 AND created_at>=? AND created_at<?;
+SELECT COUNT(*) FROM approval_ticket WHERE tenant_id=1 AND farm_id=1 AND ticket_kind='ORDER' AND status='OPEN';
+```

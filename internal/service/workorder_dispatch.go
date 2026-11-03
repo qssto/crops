@@ -81,6 +81,8 @@ type LiveFlagReader interface {
 //   - MaxAttempts：order.dispatch 的 attempt 上限（config dispatch.max_attempts）；ReceiptTimeout：回执时限，写 receipt_due_at；
 //     DeviceWaitMax：选不到设备的最长等待（config dispatch.device_wait_max，单无 dispatch_deadline_at 时生效）。
 //   - Notify / OfflineTextKey：设备离线通知（P1 L6，经 L5 / L6 共用接缝写 notify.send outbox；文案 key 取自 fault_matrix）。
+//   - Tickets：设备调用前重读审批票（P1 L7-B 审批前设备调用拦截，必填）；Alerts：P0 告警出口，nil 时用 LogAlertSink；
+//     Observer：下发结果指标 as_dispatch_total（可选，nil 不计）。
 type DispatchDeps struct {
 	Adapter        adapter.DryRunner
 	Devices        DeviceRegistry
@@ -103,6 +105,9 @@ type DispatchDeps struct {
 	DeviceWaitMax  time.Duration
 	Notify         NotifyOutboxWriter
 	OfflineTextKey string
+	Tickets        DispatchTicketReader
+	Alerts         model.AlertSink
+	Observer       Observer
 }
 
 func (d DispatchDeps) validate() error {
@@ -117,6 +122,8 @@ func (d DispatchDeps) validate() error {
 		return fmt.Errorf("%w: max_attempts >= 1, receipt_timeout > 0 and device_wait_max > 0 required", ErrDispatchNotConfigured)
 	case d.Notify == nil || d.OfflineTextKey == "":
 		return fmt.Errorf("%w: notify and offline text key required", ErrDispatchNotConfigured)
+	case d.Tickets == nil:
+		return fmt.Errorf("%w: tickets required (pre-approval device guard)", ErrDispatchNotConfigured)
 	}
 	return nil
 }
@@ -125,6 +132,12 @@ func (d DispatchDeps) validate() error {
 func (s *WorkOrderService) SetDispatch(d DispatchDeps) error {
 	if err := d.validate(); err != nil {
 		return err
+	}
+	if d.Alerts == nil {
+		d.Alerts = LogAlertSink{Logger: d.Logger}
+	}
+	if d.Observer == nil {
+		d.Observer = NopObserver{}
 	}
 	s.dispatch = &d
 	return nil
@@ -252,7 +265,7 @@ func (s *WorkOrderService) Dispatch(ctx context.Context, msg repository.OutboxMe
 	return s.dispatchReal(ctx, msg, m, ref, flagReadAt)
 }
 
-// admit 是第 ① 步的状态要求；返回 true 表示消息已处理完毕。
+// admit 是第 ① 步的状态要求，放行前 admitTicket 校验审批票（任何写入之前）；返回 true 表示消息已处理完毕。
 func (s *WorkOrderService) admit(ctx context.Context, msg repository.OutboxMessage, m dispatchMessage,
 	o repository.DispatchOrder) (bool, error) {
 	d := s.dispatch
@@ -271,7 +284,7 @@ func (s *WorkOrderService) admit(ctx context.Context, msg repository.OutboxMessa
 		case s.overdue(o):
 			return true, s.failRetry(ctx, ref, m, "dispatch deadline passed")
 		}
-		return false, nil
+		return s.admitTicket(ctx, o, m.TicketID)
 	}
 	switch {
 	case st == model.OrderDispatched && !o.HasResult && mode == model.DispatchDryRun:
@@ -286,7 +299,7 @@ func (s *WorkOrderService) admit(ctx context.Context, msg repository.OutboxMessa
 	case s.overdue(o):
 		return true, s.expire(ctx, ref)
 	}
-	return false, nil
+	return s.admitTicket(ctx, o, m.TicketID)
 }
 
 // lockedDispatch 是 DRY_RUN 单的 ⑤（intent=true 时）→ ⑥ → ⑦，持 lock:order 执行；⑤ 前在锁内重读，防止复检期间状态已变。
@@ -305,6 +318,9 @@ func (s *WorkOrderService) lockedDispatch(ctx context.Context, msg repository.Ou
 		} else if model.WorkOrderStatus(o.Status) != model.OrderDispatched || o.HasResult {
 			return fmt.Errorf("%w: order %d changed to %s before resume", ErrDispatchState, o.ID, o.Status)
 		}
+		if o, err = s.guardDeviceCall(lctx, ref, deviceCallCheck{TicketID: m.TicketID, DryRun: true}); err != nil {
+			return err
+		}
 		out, err := d.Adapter.DryRun(lctx, o.WorkOrder())
 		if err != nil {
 			return fmt.Errorf("service: dispatch dry-run order %d: %w", o.ID, err)
@@ -313,8 +329,8 @@ func (s *WorkOrderService) lockedDispatch(ctx context.Context, msg repository.Ou
 	})
 }
 
-// recordIntent 是 DRY_RUN 单的 ⑤：锁内复核仍为 APPROVED 且未过期，同事务 APPROVED → DISPATCHED + DISPATCHED(INTENT)。
-// 复核时已终态返回 done=true；过期转 EXPIRED 收尾。
+// recordIntent 是 DRY_RUN 单的 ⑤：锁内复核仍为 APPROVED 且未过期、审批票仍有效（admitTicket），同事务 APPROVED → DISPATCHED + DISPATCHED(INTENT)。
+// 复核时已终态 / 票无效返回 done=true；过期转 EXPIRED 收尾。
 func (s *WorkOrderService) recordIntent(ctx context.Context, m dispatchMessage, o repository.DispatchOrder) (bool, error) {
 	d := s.dispatch
 	ref := o.Ref()
@@ -326,6 +342,9 @@ func (s *WorkOrderService) recordIntent(ctx context.Context, m dispatchMessage, 
 		return false, fmt.Errorf("%w: order %d changed to %s before dispatch", ErrDispatchState, o.ID, o.Status)
 	case s.overdue(o):
 		return true, s.expireLocked(ctx, ref)
+	}
+	if done, err := s.admitTicket(ctx, o, m.TicketID); err != nil || done {
+		return done, err
 	}
 	err := d.Tx.InTx(ctx, func(tx *repository.DB) error {
 		if err := s.TransitionFrom(ctx, tx, ref, model.OrderApproved, model.OrderDispatched,
@@ -371,6 +390,7 @@ func (s *WorkOrderService) recordResult(ctx context.Context, msg repository.Outb
 	if err != nil {
 		return fmt.Errorf("service: dispatch result order %d: %w", o.ID, err)
 	}
+	d.Observer.Dispatched(o.FarmID, model.DispatchDryRun, DispatchOK)
 	d.Logger.InfoContext(ctx, "dispatch: dry-run done", "order_id", o.ID, "run_id", o.RunID, "outbox_id", msg.ID)
 	return nil
 }
@@ -476,6 +496,9 @@ func (s *WorkOrderService) resumeLocked(ctx context.Context, att model.DispatchA
 		return fmt.Errorf("%w: order %d device_type %s adapter cannot dispatch archived command", ErrDispatchState, o.ID,
 			att.DeviceType)
 	}
+	if _, err := s.guardDeviceCall(ctx, att.Ref(), deviceCallCheck{TicketID: att.TicketID}); err != nil {
+		return err
+	}
 	if err := s.markIdem(ctx, att, true); err != nil {
 		return err
 	}
@@ -576,12 +599,16 @@ func (s *WorkOrderService) dispatchReal(ctx context.Context, msg repository.Outb
 		if err := s.markIdem(lctx, att, false); err != nil {
 			return err
 		}
+		if _, err := s.guardDeviceCall(lctx, ref, deviceCallCheck{TicketID: m.TicketID}); err != nil {
+			return err
+		}
 		rc, err := disp.DispatchArchived(adapter.WithTraceOrder(lctx, traceOrder(o)), work, att.IdemKey, att.CommandRawID)
 		return s.recordSent(lctx, o, att, rc, err)
 	})
 }
 
-// realReady 是锁内状态复核：attempt=1 要求 APPROVED（过时效 → EXPIRED），attempt>1 要求 DISPATCHED；返回 true 表示处理完毕。
+// realReady 是锁内状态复核：attempt=1 要求 APPROVED（过时效 → EXPIRED），attempt>1 要求 DISPATCHED；放行前 admitTicket
+// 复核审批票（Archive / SENT 尝试 / 迁移之前）。返回 true 表示处理完毕。
 func (s *WorkOrderService) realReady(ctx context.Context, m dispatchMessage, o repository.DispatchOrder) (bool, error) {
 	st := model.WorkOrderStatus(o.Status)
 	switch {
@@ -592,13 +619,12 @@ func (s *WorkOrderService) realReady(ctx context.Context, m dispatchMessage, o r
 			"status", o.Status, "attempt", m.Attempt)
 		return true, nil
 	case m.Attempt > 1:
-		return false, nil
 	case st != model.OrderApproved:
 		return false, fmt.Errorf("%w: order %d changed to %s before dispatch", ErrDispatchState, o.ID, o.Status)
 	case s.overdue(o):
 		return true, s.expireLocked(ctx, o.Ref())
 	}
-	return false, nil
+	return s.admitTicket(ctx, o, m.TicketID)
 }
 
 // recordSentIntent 是 REAL 单的 ⑤：同事务写 SENT 尝试、attempt=1 时 APPROVED → DISPATCHED、追加 DISPATCHED(INTENT)。
@@ -665,6 +691,7 @@ func (s *WorkOrderService) recordSent(ctx context.Context, o repository.Dispatch
 				rc.DoneAreaMu, att.ReceiptDueAt, now)
 		})
 		if err == nil {
+			d.Observer.Dispatched(o.FarmID, model.DispatchReal, DispatchManual)
 			d.Logger.ErrorContext(ctx, "dispatch: failed receipt without job, manual reconcile", "alert", "DISPATCH_MANUAL",
 				"order_id", o.ID, "attempt", att.Attempt, "failure_kind", rc.FailureKind, "code", rc.Code)
 		}
@@ -681,12 +708,15 @@ func (s *WorkOrderService) recordSent(ctx context.Context, o repository.Dispatch
 			return s.appendEvent(ctx, tx, o, model.DispatchPhaseResult, realPayload(o, att, model.DispatchPhaseResult, false))
 		})
 		if err == nil {
+			d.Observer.Dispatched(o.FarmID, model.DispatchReal, DispatchRejected)
 			d.Logger.WarnContext(ctx, "dispatch: rejected by device platform, order failed", "order_id", o.ID,
 				"attempt", att.Attempt, "err", callErr, "code", rc.Code)
 		}
 	case callErr != nil:
+		d.Observer.Dispatched(o.FarmID, model.DispatchReal, DispatchError)
 		return fmt.Errorf("service: dispatch order %d attempt %d device: %w", o.ID, att.Attempt, callErr)
 	case rc.DeviceJobID == "":
+		d.Observer.Dispatched(o.FarmID, model.DispatchReal, DispatchError)
 		return fmt.Errorf("service: dispatch order %d attempt %d: %w: %s receipt without device_job_id", o.ID, att.Attempt,
 			model.ErrBadReceipt, rc.Status)
 	default:
@@ -698,6 +728,7 @@ func (s *WorkOrderService) recordSent(ctx context.Context, o repository.Dispatch
 			return s.appendEvent(ctx, tx, o, model.DispatchPhaseResult, realPayload(o, att, model.DispatchPhaseResult, true))
 		})
 		if err == nil {
+			d.Observer.Dispatched(o.FarmID, model.DispatchReal, DispatchOK)
 			d.Logger.InfoContext(ctx, "dispatch: accepted by device platform", "order_id", o.ID, "attempt", att.Attempt,
 				"device_id", att.DeviceID, "device_job_id", rc.DeviceJobID, "status", rc.Status)
 		}

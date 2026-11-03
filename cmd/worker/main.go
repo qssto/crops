@@ -35,15 +35,16 @@ func run() (err error) {
 		return err
 	}
 	defer func() { err = errors.Join(err, p.Close()) }()
-	return work(ctx, p.App)
+	return work(ctx, p.App, p.App.MetricsLoop(p.Config.Metrics.WorkerAddr, p.Config.Metrics.Path)) // P1 L7-B
 }
 
 // work 装配后台任务（处理器表 topic 冲突即启动失败），运行到 ctx 取消，等全部任务返回后收尾。
-func work(ctx context.Context, a *app.App) error {
+func work(ctx context.Context, a *app.App, extra ...app.Loop) error {
 	loops, err := a.WorkerLoops()
 	if err != nil {
 		return err
 	}
+	loops = append(loops, extra...)
 	names := make([]string, 0, len(loops))
 	for _, l := range loops {
 		names = append(names, l.Name)

@@ -455,3 +455,30 @@ func TestCall_ActuateAlert(t *testing.T) {
 		t.Fatalf("alert = %v, logs:\n%s", alert, buf.String())
 	}
 }
+
+// sinkRecorder 记录 Fire 的告警（P1 L7-B model_actuate）。
+type sinkRecorder struct{ got []model.Alert }
+
+func (r *sinkRecorder) Fire(_ context.Context, a model.Alert) { r.got = append(r.got, a) }
+
+// TestCall_ActuateAlertSink：配置 Alerts 时 actuate 拒绝另发一条 P0 model_actuate（带 run_id）；write 拒绝不发。
+func TestCall_ActuateAlertSink(t *testing.T) {
+	rec := &sinkRecorder{}
+	e := newEnv(t, func(o *mcp.Options) { o.Alerts = rec })
+	if res := e.call(t, agent.ToolCall{Tool: "dev.write", Args: fieldArgs}); res.Status != model.ToolStatusRejected {
+		t.Fatalf("write res = %+v", res)
+	}
+	if len(rec.got) != 0 {
+		t.Fatalf("write rejection fired %+v, want none", rec.got)
+	}
+	if res := e.call(t, agent.ToolCall{Tool: "dev.dispatch", Args: fieldArgs}); res.Status != model.ToolStatusRejected {
+		t.Fatalf("actuate res = %+v", res)
+	}
+	if len(rec.got) != 1 {
+		t.Fatalf("alerts = %+v, want exactly one", rec.got)
+	}
+	a := rec.got[0]
+	if a.Name != model.AlertModelActuate || a.Level != model.AlertP0 || a.RunID != 7 || a.OrderID != 0 || a.Scope.FarmID == 0 {
+		t.Fatalf("alert = %+v", a)
+	}
+}

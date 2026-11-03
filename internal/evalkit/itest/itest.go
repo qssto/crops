@@ -123,6 +123,16 @@ func InsertOrder(t *testing.T, db *repository.DB, runID uint64, status string, a
 		TenantID, FarmID, runID, runID, at, at.Add(time.Hour), status, at, at)
 }
 
+// InsertTicket 给 run / order 插一张 ORDER 票（ticket_seq=1、LOW、digest 64 位，snapshot_raw_id 不校验外键），返回 id。
+// 下发器写入前与调设备前都校验 order.dispatch 里的 ticket_id 须为本单 APPROVED 票，下发夹具须用真实票号。
+func InsertTicket(t *testing.T, db *repository.DB, runID, orderID uint64, status string, at time.Time) uint64 {
+	t.Helper()
+	return insert(t, db, `INSERT INTO approval_ticket (tenant_id, farm_id, run_id, order_id, ticket_kind, ticket_seq,
+  risk_level, required_role, initiator_id, snapshot_digest, snapshot_raw_id, status, expires_at, created_at, updated_at)
+  VALUES (?, ?, ?, ?, 'ORDER', 1, 'LOW', '["agronomist"]', 1001, ?, 1, ?, ?, ?, ?)`,
+		TenantID, FarmID, runID, orderID, fmt.Sprintf("%064d", 0), status, at.Add(time.Hour), at, at)
+}
+
 func insert(t *testing.T, db *repository.DB, q string, args ...any) uint64 {
 	t.Helper()
 	sqlDB, err := db.DB()

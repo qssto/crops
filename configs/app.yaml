@@ -39,3 +39,34 @@ dispatch:
 # 审批体系（P1-L5）：驳回导出 GET /rejections 的 [from, to] 最大跨度（超限 400）；AS_APPROVAL_REJECTION_EXPORT_MAX_SPAN 覆盖。
 approval:
   rejection_export_max_span: 744h
+# 保留期（P1-L7）：raw_object 按 kind 的保留天数（RawStore.Put 写 expire_at，worker retention 任务到期删对象）；
+# 缺任何 kind 启动失败。table_days 只登记不删（audit_log / run_event 不由 retention 清理）。天数均为草拟值「待法务确认」。
+retention:
+  raw_object_days:
+    LLM_IO: 180
+    TOOL_RAW: 180
+    SNAPSHOT: 1095
+    CHECKPOINT: 30
+    EXPORT: 30
+    DEVICE_CMD: 1095
+    RECEIPT_RAW: 1095
+  table_days:
+    audit_log: 1095
+    run_event: 365
+# 审计（P1-L7）：每日锚点 bucket（cmd/migrate up 建桶并开 object lock COMPLIANCE，天数「待法务确认」）与审计导出区间上限。
+audit:
+  anchor_bucket: agri-steward-audit-anchor
+  anchor_lock_days: 365
+  export_max_span: 744h
+# 观测（P1-L7-B）：server / worker 各自的 /metrics 监听（不经业务鉴权，只监听这里配置的地址）；
+# AS_METRICS_SERVER_ADDR / AS_METRICS_WORKER_ADDR / AS_METRICS_PATH 覆盖。
+metrics:
+  server_addr: 127.0.0.1:9101
+  worker_addr: 127.0.0.1:9102
+  path: /metrics
+# 告警扫描（P1-L7-B）：无引用建议扫描回看窗口（阈值待实测）、审批积压 gauge 刷新周期、告警审计短写超时（≤500ms）；
+# AS_ALERTS_NO_CITATION_WINDOW / AS_ALERTS_BACKLOG_REFRESH / AS_ALERTS_AUDIT_WRITE_TIMEOUT 覆盖。
+alerts:
+  no_citation_window: 2m
+  backlog_refresh: 30s
+  audit_write_timeout: 500ms

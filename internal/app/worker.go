@@ -41,7 +41,7 @@ func (a *App) OutboxHandlers() (map[string]service.OutboxHandler, error) {
 	return MergeOutboxHandlers(map[string]service.OutboxHandler{
 		repository.TopicOrderDispatch: a.WorkOrders.Dispatch,
 		repository.TopicNotifySend:    notify,
-	}, a.OrderOpsHandlers())
+	}, a.OrderOpsHandlers(), a.auditL7Handlers()) // P1 L7：audit.export
 }
 
 // MergeOutboxHandlers 合并多张处理器表；同一 topic 出现两次或处理器为 nil 即报错（不静默覆盖）。
@@ -90,6 +90,11 @@ func (a *App) WorkerLoops() ([]Loop, error) {
 		{Name: LoopPartitions, Run: a.Partitions.Run},
 		{Name: LoopFlags, Run: a.Flags.Run},
 	}
+	backlog, err := a.backlogLoop() // P1 L7-B：审批积压 gauge
+	if err != nil {
+		return nil, err
+	}
+	loops = append(loops, backlog)
 	for i, run := range a.OrderOpsLoops() {
 		if run == nil {
 			return nil, fmt.Errorf("app: order ops loop %d is nil", i)

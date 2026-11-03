@@ -199,13 +199,24 @@ func bindAt(r model.Role) string {
 	return "a seeded farm"
 }
 
-// Apply 在一个事务内 upsert 全部农场、地块与角色绑定，可重复执行。
+// Apply 在一个事务内 upsert 全部农场、地块与角色绑定，并预建 (0,0) 与各农场的审计链 head（P1 L7），可重复执行。
 func Apply(ctx context.Context, db *repository.DB, d *Data, now time.Time) error {
 	profiles, roles := repository.ProfileRepo{}, repository.UserRoleRepo{}
 	farms := append([]FarmData{{Farm: d.Farm, Fields: d.Fields}}, d.ExtraFarms...)
 	return db.WithContext(ctx).Transaction(func(tx *repository.DB) error {
+		if err := repository.InitChainHeadTx(ctx, tx, repository.ChainKey{}, now); err != nil {
+			return err
+		}
 		for _, fd := range farms {
 			if err := profiles.UpsertFarm(ctx, tx, fd.Farm, now); err != nil {
+				return err
+			}
+			if err := repository.InitChainHeadTx(ctx, tx,
+				repository.ChainKey{TenantID: fd.Farm.TenantID, FarmID: fd.Farm.FarmID}, now); err != nil {
+				return err
+			}
+			// 租户级链 (tenant, 0)：TENANT 级开关变更等不落到具体农场的审计。
+			if err := repository.InitChainHeadTx(ctx, tx, repository.ChainKey{TenantID: fd.Farm.TenantID}, now); err != nil {
 				return err
 			}
 			for _, f := range fd.Fields {

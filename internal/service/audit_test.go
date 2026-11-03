@@ -17,6 +17,7 @@ var rawNow = time.Date(2026, 10, 29, 9, 0, 0, 0, time.UTC)
 // memRawAccess 是内存原文仓储：rows 按 id 索引（已按 scope 过滤），txAudits / audits 分别记录同事务与独立写的审计。
 type memRawAccess struct {
 	rows      map[uint64]repository.RawObjectRow
+	expired   map[uint64]bool // P1 L7：deleted_at 非空的行
 	txAudits  []model.AuditRecord
 	audits    []model.AuditRecord
 	committed bool
@@ -36,6 +37,9 @@ func (m *memRawAccess) RawTx(_ context.Context, _ *repository.DB, _ model.Scope,
 	r, ok := m.rows[id]
 	if !ok {
 		return repository.RawObjectRow{}, model.ErrNotFound
+	}
+	if m.expired[id] {
+		return r, model.ErrRawExpired
 	}
 	return r, nil
 }
@@ -79,11 +83,17 @@ func TestAuditService_ReadRaw(t *testing.T) {
 		{name: "other farm or missing", scope: agronomist, runID: 9, rawID: 999, wantErr: ErrForbidden,
 			wantCode: RawDenyNotFound},
 		{name: "zero ids", scope: agronomist, wantErr: ErrBadInput},
+		{name: "expired", scope: agronomist, runID: 9, rawID: 102, wantErr: model.ErrRawExpired, wantCode: RawDenyExpired,
+			wantRawID: true},
+		{name: "expired cross run hides state", scope: agronomist, runID: 8, rawID: 102, wantErr: ErrForbidden,
+			wantCode: RawDenyRunMismatch, wantRawID: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			store := &memRawAccess{rows: map[uint64]repository.RawObjectRow{
-				101: {ID: 101, RunID: 9, Kind: model.RawLLMIO, ObjectKey: "raw/1/2/2026/10/29/9/LLM_IO/x"}}}
+				101: {ID: 101, RunID: 9, Kind: model.RawLLMIO, ObjectKey: "raw/1/2/2026/10/29/9/LLM_IO/x"},
+				102: {ID: 102, RunID: 9, Kind: model.RawLLMIO, ObjectKey: "raw/1/2/2026/10/29/9/LLM_IO/y"}},
+				expired: map[uint64]bool{102: true}}
 			pre := &fakePresign{}
 			svc, err := NewAuditService(AuditDeps{Store: store, Presign: pre, Clock: fixedClock{rawNow}, Perms: testPerms(t)})
 			if err != nil {

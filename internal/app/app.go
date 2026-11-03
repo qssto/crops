@@ -18,6 +18,7 @@ import (
 	"agri-steward/internal/clock"
 	"agri-steward/internal/config"
 	"agri-steward/internal/controller"
+	"agri-steward/internal/model"
 	"agri-steward/internal/repository"
 	"agri-steward/internal/repository/rediskey"
 	"agri-steward/internal/service"
@@ -77,6 +78,14 @@ type Deps struct {
 	NotifyTexts *service.NotifyTexts
 	// Approval 是审批配置（configs/app.yaml 的 approval 段，P1 L5；零值取 config.DefaultApproval）。
 	Approval config.Approval
+	// L7 是 P1 L7 审计依赖（导出 / 保留期 / 锚点，见 audit_l7.go；零值三项都不启用）。
+	L7 AuditL7Deps
+	// Metrics / Alerts 是 P1 L7-B 业务指标与告警出口（可选：boot 经 NewObserve 构造后传入，
+	// 与 MCP gateway 共用；为空时 buildObserve 补缺省）。
+	Metrics *service.MetricsObserver
+	Alerts  model.AlertSink
+	// AlertsConfig 是告警扫描配置（configs/app.yaml 的 alerts 段；零值取 config.DefaultAlerts）。
+	AlertsConfig config.Alerts
 }
 
 // metaer 是能报告自身版本信息的主链路（graph.Agent）。
@@ -134,8 +143,9 @@ type App struct {
 	LocalOrders repository.LocalOrderRepo
 	// constraints 即 Deps.Constraints：GraphAgent 由它取约束注册表注入 graph.Config.Constraints（见 constraint.go）。
 	constraints service.ConstraintReviewer
-	// eventRepo 是唯一的 run_event 写入口（同事务 audit_log 投影 + 提交后 PUBLISH sse:run:{run_id}）。
-	eventRepo repository.EventRepo
+	// eventRepo 是唯一的 run_event 写入口（同事务 audit_log 投影 + 提交后 PUBLISH sse:run:{run_id}），
+	// 外包 service.ObservedEvents：提交后的事件派生指标（P1 L7-B）。
+	eventRepo service.EventStore
 	// P1-L4-B：回执 / 中止 / 对账 / field.history 回写；receiptWebhook 表示回执密钥已配置、webhook 挂载。
 	// FieldHistory 是实际装配的回写写端（评测读 *service.MemFieldHistory 的记录）。
 	OrderOps       *service.OrderOpsService
@@ -145,6 +155,15 @@ type App struct {
 	Faults *policy.FaultMatrix
 	// P1 L5：待审批详情、驳回导出与 notify.send 文案（见 approval_l5.go）。
 	L5 *ApprovalL5
+	// P1 L7：审计导出、保留期清理与每日锚点（见 audit_l7.go）。
+	L7 *AuditL7
+	// P1 L7-B：告警出口（指标 + ALERT.* 审计 + Error 日志）与指标观测（见 observe.go）。
+	Alerts   model.AlertSink
+	Observer service.Observer
+	// AlertList 是告警列表（GET /alerts，规则 annotation 下钻入口）。
+	AlertList *service.AlertService
+	metrics   *service.MetricsObserver
+	alerts    config.Alerts
 }
 
 // 缺依赖时返回的错误。
@@ -188,11 +207,15 @@ func Build(deps Deps) (*App, error) {
 	if deps.Adapter == nil {
 		deps.Adapter = adapter.MockAdapter{}
 	}
+	if err := buildObserve(&deps); err != nil {
+		return nil, err
+	}
 	locker := repository.NewLocker(deps.Redis)
 	runs := repository.NewRunRepo(deps.DB, deps.Clock)
 	advice := repository.NewAdviceRepo(deps.DB, deps.Clock)
 	orders := repository.WorkOrderRepo{}
-	events := repository.EventRepo{Pub: repository.RedisPublisher{Client: deps.Redis}, Keys: deps.Keys, Log: deps.Logger}
+	rawEvents := repository.EventRepo{Pub: repository.RedisPublisher{Client: deps.Redis}, Keys: deps.Keys, Log: deps.Logger}
+	events := service.ObservedEvents{Next: rawEvents, Obs: deps.Metrics}
 	workOrders := service.NewWorkOrderService(deps.Clock, orders, events)
 	approvals, err := service.NewApprovalService(service.ApprovalDeps{Clock: deps.Clock, DB: deps.DB,
 		Tx: repository.Transactor{DB: deps.DB}, Tickets: repository.ApprovalRepo{}, Orders: orders,
@@ -213,7 +236,7 @@ func Build(deps Deps) (*App, error) {
 		LocalOrders: repository.LocalOrderRepo{DB: deps.DB},
 		RunLocker:   repository.NewRunLocker(locker, deps.Keys),
 		Approvals:   approvals,
-		Events:      repository.EventSink{DB: deps.DB, Events: events},
+		Events:      service.ObservedEventSink{Next: repository.EventSink{DB: deps.DB, Events: rawEvents}, Obs: deps.Metrics},
 		Adapter:     deps.Adapter,
 		HITL:        buildHITLStores(deps),
 		RunDetail:   service.NewRunDetailService(repository.NewRunDetailRepo(deps.DB, runs, advice)),
@@ -221,9 +244,16 @@ func Build(deps Deps) (*App, error) {
 		eventRepo:   events,
 
 		DashboardDir: deps.DashboardDir,
+		Alerts:       deps.Alerts,
+		Observer:     deps.Metrics,
+		metrics:      deps.Metrics,
+		alerts:       deps.AlertsConfig,
 	}
 	a.constraints = deps.Constraints
 	a.Faults = deps.Faults
+	if err := a.buildAlertList(); err != nil {
+		return nil, err
+	}
 	if err := a.buildAccess(deps); err != nil {
 		return nil, err
 	}
@@ -249,6 +279,9 @@ func Build(deps Deps) (*App, error) {
 		Limiter: repository.NewAskLimiter(deps.Redis, deps.Keys, AskPerMinute),
 		Runs:    runs, Advice: advice, Agent: a.Agent, Meta: meta, Logger: deps.Logger, Flags: a.Flags,
 	})
+	if err := a.buildAuditL7(deps); err != nil {
+		return nil, err
+	}
 	if err := a.buildHITLServices(); err != nil {
 		return nil, err
 	}
@@ -295,6 +328,10 @@ func (a *App) Handler(auth *service.AuthService) http.Handler {
 	}
 	mounts = append(mounts, a.orderOpsMounts()...)
 	mounts = append(mounts, a.approvalL5Mounts()...)
+	mounts = append(mounts, a.auditL7Mounts()...)
+	if a.AlertList != nil {
+		mounts = append(mounts, controller.AlertRoutes(a.AlertList)) // P1 L7-B
+	}
 	g := a.guard(auth)
 	r := controller.NewRouter(g, a.Ask, mounts...)
 	controller.MountAdmin(r, g, a.Flags) // P1-L0：/api/v1/admin/flags（flag.write）
@@ -330,7 +367,8 @@ func (a *App) buildDispatch(cfg config.Dispatch) error {
 		Devices: a.Devices, Attempts: repository.DispatchAttemptRepo{DB: a.DB}, Idem: repository.NewRedisIdem(a.Redis),
 		Picker: service.ToolDevicePicker{Tools: a.Tools}, Reopener: reopener,
 		MaxAttempts: cfg.MaxAttempts, ReceiptTimeout: cfg.ReceiptTimeout, DeviceWaitMax: cfg.DeviceWaitMax,
-		Notify: repository.NotifyOutboxRepo{}, OfflineTextKey: offlineTextKey(a.Faults)}
+		Notify: repository.NotifyOutboxRepo{}, OfflineTextKey: offlineTextKey(a.Faults),
+		Tickets: repository.ReopenRepo{DB: a.DB}, Alerts: a.Alerts, Observer: a.Observer}
 	if a.HITL.Recheck != nil {
 		d.Recheck = a.HITL.Recheck
 	}

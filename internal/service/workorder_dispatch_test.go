@@ -167,6 +167,8 @@ type dispatchFixture struct {
 	flags    *fakeLiveFlags
 	audit    *memAudit
 	notify   *memNotify
+	tickets  *memTickets
+	alerts   *memAlerts
 	svc      *WorkOrderService
 	deps     DispatchDeps
 }
@@ -214,7 +216,7 @@ func newDispatchFixture(t *testing.T, status model.WorkOrderStatus, lockHeld boo
 		DispatchMode: string(model.DispatchDryRun), DispatchDeadlineAt: &deadline, RowVer: 2}}
 	f := &dispatchFixture{store: store, events: &fakeEvents{}, dev: &countingAdapter{}, flags: &fakeLiveFlags{},
 		audit: &memAudit{}, notify: &memNotify{}, picker: &fakePicker{id: "uav-1"}, idem: &memIdem{m: map[string]string{}},
-		reopener: &fakeReopener{store: store},
+		reopener: &fakeReopener{store: store}, tickets: newApprovedTickets(), alerts: &memAlerts{},
 		real: &fakeDevice{caps: adapter.Capabilities{Cancel: true, IdemKey: true},
 			rc: model.DeviceReceipt{Status: model.AttemptAccepted, DeviceJobID: "job-1"}}}
 	f.pre = &fakePrecheck{store: store, res: PreDispatchResult{Checks: []model.ConstraintCheck{
@@ -224,7 +226,8 @@ func newDispatchFixture(t *testing.T, status model.WorkOrderStatus, lockHeld boo
 		Picker: f.picker, Recheck: f.pre, Reopener: f.reopener, Store: store, Tx: store, Cards: fakeCards{},
 		Epochs: fakeEpochs{}, Locks: memLocks{held: lockHeld}, Keys: keys, Flags: f.flags, Audit: f.audit,
 		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)), MaxAttempts: 2, ReceiptTimeout: 30 * time.Minute,
-		DeviceWaitMax: 2 * time.Hour, Notify: f.notify, OfflineTextKey: testOfflineTextKey}
+		DeviceWaitMax: 2 * time.Hour, Notify: f.notify, OfflineTextKey: testOfflineTextKey, Tickets: f.tickets,
+		Alerts: f.alerts}
 	if err := f.svc.SetDispatch(f.deps); err != nil {
 		t.Fatal(err)
 	}

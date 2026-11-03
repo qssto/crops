@@ -50,6 +50,7 @@ type TicketRow struct {
 	ExpiresAt       *time.Time
 	DecidedAt       *time.Time
 	RowVer          int
+	CreatedAt       time.Time // 开票时刻（P1 L7-B 审批等待直方图起点）
 }
 
 // Scope 返回票据所在农场的系统 Scope。
@@ -82,7 +83,7 @@ func (t TicketRow) Ticket() (model.ApprovalTicket, error) {
 		Status:   model.TicketStatus(t.Status), Operator: t.OperatorID, ExpiresAt: t.ExpiresAt, DecidedAt: t.DecidedAt}, nil
 }
 
-const decisionTicketColumns = `id, tenant_id, farm_id, run_id, order_id, ticket_seq, risk_level, required_role, confirm_required, initiator_id, first_approver_id, snapshot_digest, snapshot_raw_id, status, operator_id, expires_at, decided_at, row_ver`
+const decisionTicketColumns = `id, tenant_id, farm_id, run_id, order_id, ticket_seq, risk_level, required_role, confirm_required, initiator_id, first_approver_id, snapshot_digest, snapshot_raw_id, status, operator_id, expires_at, decided_at, row_ver, created_at`
 
 // TicketTx 读一张 ORDER 票（限定租户 / 农场）；db 可为事务或连接。
 func (r *DecisionRepo) TicketTx(ctx context.Context, db *gorm.DB, scope model.Scope, ticketID uint64) (TicketRow, error) {
@@ -148,7 +149,24 @@ func (r *DecisionRepo) InsertDecisionTx(ctx context.Context, tx *gorm.DB, d Deci
 	if err != nil {
 		return 0, fmt.Errorf("repository: approval_decision id: %w", err)
 	}
+	if err := queueDecisionSensitive(ctx, tx, d, uint64(id)); err != nil {
+		return 0, err
+	}
 	return uint64(id), nil
+}
+
+// queueDecisionSensitive 同事务追加 SENSITIVE.APPROVAL_DECIDE（P1 L7 §6.8 技术实现第 2 条，target decision:{id}）；
+// summary 只含控制字段，不含 comment（自由文本可能含 PII）。
+func queueDecisionSensitive(ctx context.Context, tx *gorm.DB, d DecisionRow, id uint64) error {
+	summary, err := json.Marshal(map[string]any{"ticket_id": d.TicketID, "decision": d.Decision,
+		"operator_role": d.OperatorRole, "snapshot_digest": d.SnapshotDigest, "request_id": d.RequestID})
+	if err != nil {
+		return fmt.Errorf("repository: sensitive approval audit summary: %w", err)
+	}
+	return queueAudit(ctx, tx, model.AuditRecord{TenantID: d.TenantID, FarmID: d.FarmID,
+		Actor: model.Actor{Type: model.ActorUser, ID: d.OperatorID}, Action: string(model.AuditSensitiveApprovalDecide),
+		Target: ref("decision", id), PayloadDigest: Digest(summary), Summary: summary, Result: model.AuditResultOK,
+		CreatedAt: d.CreatedAt})
 }
 
 // affected 把影响行数 0 统一转为 model.ErrConcurrentUpdate。

@@ -49,11 +49,14 @@ func buildHITLStores(deps Deps) *HITL {
 // buildHITLServices 在主链路就绪后装配审批决策与扫描任务；主链路实现 agent.Resumer 时作为续跑入口。
 // 扫描的 Activate（ticket_activate）走 L5 的 ApprovalService。
 func (a *App) buildHITLServices() error {
-	resumer, _ := a.Agent.(agent.Resumer)
+	var resumer agent.Resumer
+	if r, ok := a.Agent.(agent.Resumer); ok {
+		resumer = service.ObservedResumer{Next: r, Obs: a.Observer} // P1 L7-B：as_run_resume_total
+	}
 	idem := repository.NewRedisIdem(a.Redis)
 	decisions, err := service.NewDecisionService(service.DecisionDeps{Store: a.HITL.decisions, Orders: a.WorkOrders,
 		Events: a.eventRepo, Idem: idem, Locks: a.Locker, Keys: a.Keys, Resumer: resumer,
-		Clock: a.Clock, Logger: a.Logger, Perms: a.Perms})
+		Clock: a.Clock, Logger: a.Logger, Perms: a.Perms, Observer: a.Observer})
 	if err != nil {
 		return fmt.Errorf("app: build decision service: %w", err)
 	}
@@ -61,7 +64,10 @@ func (a *App) buildHITLServices() error {
 	a.HITL.Scanner = service.NewScanner(service.ScanDeps{Tickets: a.HITL.decisions, Runs: a.Runs,
 		Expirer: a.HITL.Decisions, Orders: a.WorkOrders, Resumer: resumer, Gate: a.Approvals, Locks: a.Locker,
 		Keys: a.Keys, Clock: a.Clock, Logger: a.Logger,
-		Expiring: a.HITL.decisions, Notify: repository.NotifyOutboxRepo{}}) // P1 L5：approval_expiring
+		Expiring: a.HITL.decisions, Notify: repository.NotifyOutboxRepo{}, // P1 L5：approval_expiring
+		Anchor: a.anchorTicker(), Retention: a.retentionTicker(), // P1 L7：audit_anchor / retention
+		// P1 L7-B：advice_no_citation（无引用建议 → P0 告警）
+		Citations: repository.AlertRepo{DB: a.DB}, Alerts: a.Alerts, CitationWindow: a.alerts.NoCitationWindow})
 	if rc, ok := a.Agent.(agent.Rechecker); ok {
 		a.HITL.Recheck = service.NewRecheckService(service.RecheckDeps{Rechecker: rc, Tx: a.HITL.decisions,
 			Orders: a.WorkOrders, Starter: a.Ask, Locks: a.Locker, Keys: a.Keys, Logger: a.Logger})

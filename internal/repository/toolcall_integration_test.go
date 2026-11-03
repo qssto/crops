@@ -157,7 +157,7 @@ func TestSummaryRepo_Integration(t *testing.T) {
 	}
 	ev := model.RunEvent{TenantID: itest.TenantID, FarmID: itest.FarmID, RunID: runID,
 		Type: model.EventOrderTransition, Actor: model.ActorSystem, Payload: []byte(`{"lat":31.23}`), CreatedAt: t0}
-	if err := slot.DB.WithContext(t.Context()).Transaction(func(tx *repository.DB) error {
+	if err := (repository.Transactor{DB: slot.DB}).InTx(t.Context(), func(tx *repository.DB) error {
 		_, err := repository.EventRepo{}.AppendTx(t.Context(), tx, ev)
 		return err
 	}); err != nil {
