@@ -22,9 +22,15 @@ type Dim struct {
 	Pass         int
 	Fail         int
 	GraderErrors int
+	// Applicable 是已打分（非 grader_error）且不是 NotApplicable 的 trial 数（P1-L8-A 审查修复）：
+	// 为 0 而 Pass > 0 时该维度在本次实验里全是默认放行，报告标「无适用样本」，不能读成「通过」。
+	Applicable int
 	// Mean 先对每个样本内已打分 trial 的 value 取均值，再对样本取均值（§8.2 套件级 = 样本均值）。
 	Mean float64
 }
+
+// NoApplicable 报告该维度是否有打分但没有一个适用 trial（全是默认放行）。
+func (d *Dim) NoApplicable() bool { return d.Applicable == 0 && d.Pass+d.Fail > 0 }
 
 // TrialRef 是样本内一次 trial 的定位信息（flaky 清单用来链到 run / transcript）。
 type TrialRef struct {
@@ -36,12 +42,16 @@ type TrialRef struct {
 
 // Sample 是一个样本的 n 次 trial 汇总。出错（INFRA_ERROR / grader_error）的 trial 计入 N、不计通过。
 type Sample struct {
-	ID string
-	N  int
+	ID    string
+	Suite string // 样本所属套件（取首个 trial 的 Suite，P1 L8 按套件统计用）
+	N     int
 	// Pass 是各维度的通过次数；AllPass 是红线全过的 trial 数。
 	Pass    map[string]int
 	AllPass int
-	Trials  []TrialRef
+	// Applicable 是各维度的适用次数（已打分、非 grader_error、非 NotApplicable）；GraderErrors 是含 grader_error 的 trial 数。
+	Applicable   map[string]int
+	GraderErrors int
+	Trials       []TrialRef
 }
 
 // PassK 是样本红线全过的 pass^k（k = n）。
@@ -110,6 +120,8 @@ type Result struct {
 	InfraErrors     []ErrorEntry
 	GraderErrors    []ErrorEntry
 	Metrics         Metrics
+	// Suites 是按套件的红线 pass^k（P1 L8，见 suite.go），按套件首次出现顺序。
+	Suites []SuiteStat
 }
 
 // Void 报告实验是否作废：存在未修复的 grader_error 时 pass^k 不可信（§11.3-4）。
@@ -122,6 +134,7 @@ func Reduce(trials []evalkit.Trial) *Result {
 	r.collectSamples(trials)
 	r.collectIssues(trials)
 	r.Metrics = metrics(trials, r.Samples)
+	r.Suites = bySuite(r.Samples, r.RedLines)
 	return r
 }
 
@@ -160,6 +173,9 @@ func (r *Result) collectDims(trials []evalkit.Trial) {
 			} else {
 				d.Fail++
 			}
+			if !sc.NotApplicable {
+				d.Applicable++
+			}
 			a, ok := perSample[sc.Name][t.SampleID]
 			if !ok {
 				a = &acc{}
@@ -190,13 +206,23 @@ func (r *Result) collectSamples(trials []evalkit.Trial) {
 	for _, t := range trials {
 		s, ok := idx[t.SampleID]
 		if !ok {
-			s = &Sample{ID: t.SampleID, Pass: map[string]int{}}
+			s = &Sample{ID: t.SampleID, Suite: t.Suite, Pass: map[string]int{}, Applicable: map[string]int{}}
 			idx[t.SampleID] = s
 			r.Samples = append(r.Samples, s)
 		}
 		s.N++
 		s.Trials = append(s.Trials, TrialRef{Index: t.TrialIndex, RunID: t.RunID, Status: t.Status(), Transcript: t.Transcript})
 		allPass := t.Error == ""
+		graderErr := false
+		for _, sc := range t.Scores {
+			graderErr = graderErr || sc.Error != ""
+			if sc.Error == "" && !sc.NotApplicable {
+				s.Applicable[sc.Name]++
+			}
+		}
+		if graderErr {
+			s.GraderErrors++
+		}
 		for _, d := range r.Dims {
 			if dimPassed(t, d.Name) {
 				s.Pass[d.Name]++

@@ -94,9 +94,10 @@ signed_at: 2026-10-28
 	}{
 		{name: "no args", args: nil, wantCode: exitUsage},
 		{name: "unknown subcommand", args: []string{"foo"}, wantCode: exitUsage},
-		// 181 个样本全部静态校验（含 P1 L5 审批样本 rice-approval-0001..0011、P1 L6 故障样本 rice-l6fault-0001..0007）；
-		// 其中 rice-rcpt-0001..0006 共 6 个隔离（需 REAL 评测设施），run 只跑 175 个。
-		{name: "validate repo samples", wantCode: exitOK, wantStdout: "validate OK: 181 samples",
+		// 216 个样本全部静态校验（含 P1 L5 审批样本 rice-approval-0001..0011、P1 L6 故障样本 rice-l6fault-0001..0007、
+		// P1 L8 redteam 五类 39 条与演练沉淀 rice-dispatch-0004..0005）；
+		// 其中 rice-rcpt-0001..0006 共 6 个隔离（需 REAL 评测设施），run 只跑 210 个。
+		{name: "validate repo samples", wantCode: exitOK, wantStdout: "validate OK: 216 samples",
 			args: []string{"validate", "--suites-dir", suites, "--taxonomy", tax, "--repo", repoRoot}},
 		{name: "validate counts quarantined", wantCode: exitOK, wantStdout: "6 quarantined (run skips them)\n",
 			args: []string{"validate", "--suites-dir", suites, "--taxonomy", tax, "--repo", repoRoot}},
@@ -118,7 +119,7 @@ signed_at: 2026-10-28
 		{name: "run baseline bad name", wantCode: exitFailed, wantStderr: "baseline name",
 			args: []string{"run", "--suites-dir", suites, "--taxonomy", tax, "--repo", repoRoot, "--out", outDir,
 				"--baseline", "../escape"}},
-		{name: "kbdump regression", wantCode: exitOK, wantStdout: "kbdump: 135 samples",
+		{name: "kbdump regression", wantCode: exitOK, wantStdout: "kbdump: 137 samples",
 			args: []string{"kbdump", "--suites-dir", suites, "--taxonomy", tax, "--repo", repoRoot, "--suite", "regression"}},
 		{name: "kbdump unknown suite", wantCode: exitFailed, wantStderr: "no sample matches",
 			args: []string{"kbdump", "--suites-dir", suites, "--taxonomy", tax, "--repo", repoRoot, "--suite", "nope"}},

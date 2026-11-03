@@ -19,6 +19,7 @@ type stubGrader struct {
 	name    string
 	pass    bool
 	err     error
+	na      bool // 返回 NotApplicable
 	gotCard *model.AdviceCard
 }
 
@@ -26,7 +27,26 @@ func (g *stubGrader) Name() string  { return g.name }
 func (g *stubGrader) RedLine() bool { return true }
 func (g *stubGrader) Grade(_ context.Context, t *grader.Trial) (grader.Score, error) {
 	g.gotCard = t.Card
-	return grader.Score{Pass: g.pass, Value: 1}, g.err
+	return grader.Score{Pass: g.pass, Value: 1, NotApplicable: g.na}, g.err
+}
+
+// TestRunner_NotApplicableCopied（P1-L8-A 审查修复）：打分器的 NotApplicable 原样进入 Trial.Scores，报告据此区分「无适用样本」。
+func TestRunner_NotApplicableCopied(t *testing.T) {
+	for _, na := range []bool{false, true} {
+		var q agent.Question
+		g := &stubGrader{name: "g", pass: true, na: na}
+		r, err := NewRunner(StaticEnv(&app.App{Agent: cardAgent{got: &q}}), nil, WithGraders(nil, g))
+		if err != nil {
+			t.Fatal(err)
+		}
+		exp, err := r.Run(context.Background(), []*sample.Sample{mkSample("a", "regression")}, Options{N: 1})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if sc := exp.Trials[0].Scores; len(sc) != 1 || sc[0].NotApplicable != na {
+			t.Fatalf("na=%v: scores = %+v", na, sc)
+		}
+	}
 }
 
 // cardAgent 返回带卡片的 REFUSED 回答，并记录收到的提问。

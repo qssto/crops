@@ -102,6 +102,22 @@ func (m *memDispatch) UpdateReceiptTx(_ context.Context, _ *repository.DB, _ mod
 	return nil
 }
 
+func (m *memDispatch) RefreshSentTx(_ context.Context, _ *repository.DB, _ model.OrderRef, id uint64, rowVer int,
+	flagReadAt, sentAt, receiptDueAt time.Time) error {
+	if err := m.fail("refresh"); err != nil {
+		return err
+	}
+	a, err := m.attempt(id, rowVer)
+	if err != nil {
+		return err
+	}
+	if a.Status != model.AttemptSent || a.DeviceJobID != "" {
+		return model.ErrConcurrentUpdate
+	}
+	a.FlagReadAt, a.SentAt, a.ReceiptDueAt, a.RowVer = flagReadAt, sentAt, receiptDueAt, a.RowVer+1
+	return nil
+}
+
 func (m *memDispatch) ByIdemKey(_ context.Context, _ *repository.DB, _ model.Scope, idemKey string) (model.DispatchAttempt, error) {
 	for _, a := range m.attempts {
 		if a.IdemKey == idemKey {

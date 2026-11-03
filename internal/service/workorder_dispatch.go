@@ -46,6 +46,8 @@ type AttemptStore interface {
 		receiptDueAt, now time.Time) error
 	UpdateReceiptTx(ctx context.Context, tx *repository.DB, ref model.OrderRef, id uint64, rowVer int,
 		status model.AttemptStatus, kind model.FailureKind, doneAreaMu *float64, receiptDueAt, now time.Time) error
+	RefreshSentTx(ctx context.Context, tx *repository.DB, ref model.OrderRef, id uint64, rowVer int,
+		flagReadAt, sentAt, receiptDueAt time.Time) error
 	ByIdemKey(ctx context.Context, tx *repository.DB, scope model.Scope, idemKey string) (model.DispatchAttempt, error)
 }
 
@@ -455,6 +457,7 @@ func (s *WorkOrderService) resumeAttempt(ctx context.Context, msg repository.Out
 // resumeLocked 续跑一条 SENT 尝试（调用方已持 lock:order）：设备支持 ExternalQuery 先 QueryStatus(idem_key)，查到即回填。
 // 只有 caps.IdemKey 为真（平台按 idem_key 去重）才带原键与原 command_raw_id 重发；查无此单但不支持 IdemKey 时，
 // 平台可能已受理而外部单号索引尚未可见，重发会产生二次作业（§6.5），故与两者都不支持一样 FAILED(UNKNOWN) 转人工，禁止重发。
+// 重发前直读 enable_robot_dispatch（L8-B 审查 P0-2）：关 → FAILED(UNKNOWN) + DISPATCH_MANUAL，不调 Adapter；开 → refreshSent 后重发。
 func (s *WorkOrderService) resumeLocked(ctx context.Context, att model.DispatchAttempt) error {
 	d := s.dispatch
 	if att.DeviceJobID != "" || att.Status != model.AttemptSent {
@@ -496,15 +499,45 @@ func (s *WorkOrderService) resumeLocked(ctx context.Context, att model.DispatchA
 		return fmt.Errorf("%w: order %d device_type %s adapter cannot dispatch archived command", ErrDispatchState, o.ID,
 			att.DeviceType)
 	}
+	// 重发即可能产生真实作业：与首发一样先直读开关（覆盖 resumeAttempt 与 dispatchReal 两个入口）。关 → 不调 Adapter 转人工：
+	// 首发请求是否已到平台未知，不能判 FAILED 或重试
+	flagReadAt := s.clock.Now()
+	on, err := d.Flags.BoolLive(ctx, model.FlagEnableRobotDispatch, model.Scope{TenantID: o.TenantID, FarmID: o.FarmID})
+	if err != nil {
+		return fmt.Errorf("service: dispatch resume order %d read flag: %w", o.ID, err)
+	}
+	if !on {
+		return s.toManual(ctx, o, att, manualResumeFlagOff)
+	}
 	if _, err := s.guardDeviceCall(ctx, att.Ref(), deviceCallCheck{TicketID: att.TicketID}); err != nil {
 		return err
 	}
 	if err := s.markIdem(ctx, att, true); err != nil {
 		return err
 	}
+	if att, err = s.refreshSent(ctx, att, flagReadAt); err != nil {
+		return err
+	}
 	d.Logger.WarnContext(ctx, "dispatch: resume resend with original idem_key", "order_id", o.ID, "attempt", att.Attempt)
 	rc, err := disp.DispatchArchived(tctx, o.WorkOrder(), att.IdemKey, att.CommandRawID)
 	return s.recordSent(ctx, o, att, rc, err)
+}
+
+// refreshSent 在续跑重发前把尝试的 flag_read_at 刷成本次读开关时刻、sent_at 刷成现在、receipt_due_at 顺延为现在 + 回执时限
+// （回执时限从本次重发起算），关停报告据此覆盖续跑重发；返回 row_ver+1 后的尝试。
+func (s *WorkOrderService) refreshSent(ctx context.Context, att model.DispatchAttempt,
+	flagReadAt time.Time) (model.DispatchAttempt, error) {
+	d := s.dispatch
+	now := s.clock.Now()
+	due := now.Add(d.ReceiptTimeout)
+	err := d.Tx.InTx(ctx, func(tx *repository.DB) error {
+		return d.Attempts.RefreshSentTx(ctx, tx, att.Ref(), att.ID, att.RowVer, flagReadAt, now, due)
+	})
+	if err != nil {
+		return att, fmt.Errorf("service: dispatch resume order %d attempt %d refresh: %w", att.OrderID, att.Attempt, err)
+	}
+	att.FlagReadAt, att.SentAt, att.ReceiptDueAt, att.RowVer = flagReadAt, now, due, att.RowVer+1
+	return att, nil
 }
 
 // dispatchManual 是 DISPATCH_MANUAL 审计的 summary。
@@ -520,6 +553,7 @@ type dispatchManual struct {
 const (
 	manualNoIdemNoQuery   = "SENT without device_job_id; adapter supports neither idem_key nor external query"
 	manualQueryMissNoIdem = "SENT without device_job_id; external query found no job and adapter has no idem_key dedup"
+	manualResumeFlagOff   = "SENT without device_job_id; resend blocked because enable_robot_dispatch is off"
 )
 
 // toManual 把 SENT 尝试置 FAILED(UNKNOWN)（进待对账列表）并审计 DISPATCH_MANUAL；作业单保持 DISPATCHED，不重发。

@@ -111,6 +111,7 @@ func Render(w io.Writer, exp *evalkit.Experiment) error {
 	ew := &errWriter{w: w}
 	ew.printf("# 评测报告 %s\n\n", exp.ID)
 	ew.printf("> %s%s\n\n", GateLine(r), quarantineNote(exp))
+	ew.printf("> %s\n\n", ProviderLine(exp.Snapshot))
 	renderSnapshot(ew, exp.Snapshot)
 
 	ew.printf("## 总览\n\n")
@@ -134,6 +135,7 @@ func Render(w io.Writer, exp *evalkit.Experiment) error {
 	renderGate(ew, r)
 	renderMetrics(ew, r)
 	renderScores(ew, r)
+	renderSuites(ew, r, exp)
 	renderIssues(ew, r)
 
 	ew.printf("## 按 tag 分组\n\n")

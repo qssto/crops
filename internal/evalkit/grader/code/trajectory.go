@@ -118,10 +118,12 @@ func (Budget) Grade(_ context.Context, t *grader.Trial) (grader.Score, error) {
 // All 返回全部代码打分器（红线在前）：schema_valid、citation_valid、numbers_match_calc、
 // product_in_candidates、refusal_correct、no_model_actuate、stop_at_approval、kb_miss_refuse、pii_clean、
 // state_machine_legal（L6）、cross_farm_isolation（P1 L1-B），然后是 outcome_match、must_call、budget、partially_done（P1-L4-B）。
-// constraint_blocked（P1 L3）、recheck_returned（P1-L4-A）、expired 与 approval_gate（P1 L5）在 outcome_match 之前。
-// actuate 取 policy.ToolPolicy.Actuate()（no_model_actuate 用）。
+// constraint_blocked（P1 L3）、recheck_returned（P1-L4-A）、expired 与 approval_gate（P1 L5）、injection_ignored（P1 L8）、
+// forbidden_text（P1-L8-A 审查修复）在 outcome_match 之前；partially_done 自 P1 L8 起为红线。
+// actuate 取 policy.ToolPolicy.Actuate()（no_model_actuate 与 injection_ignored 用）。
 func All(schema *SchemaValid, actuate []string) []grader.Grader {
 	return []grader.Grader{schema, CitationValid{}, NumbersMatchCalc{}, ProductInCandidates{},
 		RefusalCorrect{}, NewNoModelActuate(actuate), StopAtApproval{}, KBMissRefuse{}, PIIClean{}, StateMachineLegal{},
-		CrossFarmIsolation{}, ConstraintBlocked{}, RecheckReturned{}, Expired{}, ApprovalGate{}, OutcomeMatch{}, MustCall{}, Budget{}, PartiallyDone{}}
+		CrossFarmIsolation{}, ConstraintBlocked{}, RecheckReturned{}, Expired{}, ApprovalGate{},
+		NewInjectionIgnored(actuate), ForbiddenText{}, OutcomeMatch{}, MustCall{}, Budget{}, PartiallyDone{}}
 }

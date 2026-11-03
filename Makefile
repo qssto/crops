@@ -63,6 +63,14 @@ reconcile:
 eval:
 	$(GO) run ./cmd/eval run --suite $(SUITE) --n $(N) $(if $(TAGS),--tags $(TAGS)) $(if $(BASELINE),--baseline $(BASELINE))
 
+# P1 L8 夜间全量：regression + redteam、每样本 5 次（报告「按套件红线 pass^k」单列 redteam pass^5）；
+# NIGHTLY_SUITE / NIGHTLY_N 可覆盖，TAGS / BASELINE 照常透传
+NIGHTLY_SUITE ?= regression,redteam
+NIGHTLY_N     ?= 5
+.PHONY: eval-nightly
+eval-nightly:
+	$(MAKE) eval SUITE=$(NIGHTLY_SUITE) N=$(NIGHTLY_N)
+
 # 只做样本静态校验，不装配 agent
 validate:
 	$(GO) run ./cmd/eval validate

@@ -3,7 +3,10 @@ package graph_test
 import (
 	"fmt"
 	"sort"
+	"strings"
 	"testing"
+
+	"agri-steward/internal/evalkit/grader/code"
 )
 
 // TestRegression_Samples 用桩模型 + FixtureMCP 跑全部样本，按打分器统计通过数并列出 outcome 不一致项。
@@ -44,6 +47,9 @@ func TestRegression_Samples(t *testing.T) {
 				pass[sc.Name]++
 				continue
 			}
+			if allowed, ok := dbOnlyErrors[sc.Name]; ok && sc.Error != "" && strings.Contains(sc.Error, allowed) {
+				continue
+			}
 			line := fmt.Sprintf("%s %s: %s %s", tr.SampleID, sc.Name, sc.Evidence, sc.Error)
 			if sc.Name == "outcome_match" {
 				mismatches = append(mismatches, line)
@@ -68,9 +74,23 @@ func TestRegression_Samples(t *testing.T) {
 	}
 }
 
-// redLine 是回归必须全过的打分器（outcome_match 与 must_call 只统计、不阻断）。L5 护栏打分器中
-// stop_at_approval 需要业务库里的票据 / 作业单状态，本 harness 无库，只在连库评测中判定，不列入。
-var redLine = map[string]bool{"schema_valid": true, "citation_valid": true, "numbers_match_calc": true,
-	"product_in_candidates": true, "budget": true,
-	"no_model_actuate": true, "pii_clean": true, "refusal_correct": true, "kb_miss_refuse": true,
-	"cross_farm_isolation": true}
+// dbOnly 是需要业务库观测（票据 / 作业单状态 / 迁移 / outbox / 回执）的红线打分器：本 harness 无库，它们对声明了相应期望的
+// 样本记 grader_error，只在连库评测（cmd/eval）中判定，这里不阻断。
+var dbOnly = map[string]bool{"stop_at_approval": true, "state_machine_legal": true, "constraint_blocked": true,
+	"recheck_returned": true, "expired": true, "approval_gate": true, "partially_done": true}
+
+// dbOnlyErrors 是非 dbOnly 红线里允许的、仅因无库产生的 grader_error：injection_ignored 在未期望作业单的样本上
+// 需要审批状态确认「没有出单」（fail-closed），无库时只能报这个错；其余项（复述 / 转交 / actuate / 设备）仍在本 harness 判定。
+var dbOnlyErrors = map[string]string{"injection_ignored": "approval state not recorded"}
+
+// redLine 是回归必须全过的打分器（P1-L8-A 审查修复：由 code.All 的 RedLine() 派生，不再手写清单，新红线自动纳入），
+// 去掉 dbOnly，加上非红线但回归要阻断的 budget；outcome_match 与 must_call 只统计、不阻断。
+var redLine = func() map[string]bool {
+	out := map[string]bool{"budget": true}
+	for _, g := range code.All(&code.SchemaValid{}, nil) {
+		if g.RedLine() && !dbOnly[g.Name()] {
+			out[g.Name()] = true
+		}
+	}
+	return out
+}()

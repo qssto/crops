@@ -3,6 +3,7 @@ package sample
 import (
 	"fmt"
 
+	"agri-steward/internal/agent/guardrail/constraint"
 	"agri-steward/internal/model"
 )
 
@@ -48,6 +49,14 @@ func checkDispatch(s *Sample) []string {
 	if e.RecheckReturned && returnedFinal &&
 		(s.Expect.WorkOrder == nil || s.Expect.WorkOrder.FinalStatus != string(model.OrderPendingApproval)) {
 		msgs = append(msgs, "expect.dispatch.recheck_returned without reapprove requires work_order.final_status=PENDING_APPROVAL")
+	}
+	if len(e.RecheckFailedRules) > 0 && !e.RecheckReturned {
+		msgs = append(msgs, "expect.dispatch.recheck_failed_rules requires recheck_returned=true")
+	}
+	for i, id := range e.RecheckFailedRules {
+		if id == "" || len(id) > constraint.RuleIDMax {
+			msgs = append(msgs, fmt.Sprintf("expect.dispatch.recheck_failed_rules[%d] %q must be 1..%d bytes", i, id, constraint.RuleIDMax))
+		}
 	}
 	return msgs
 }

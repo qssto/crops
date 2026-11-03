@@ -99,6 +99,8 @@ type scoreJSON struct {
 	Unknown  bool    `json:"unknown,omitempty"`
 	Evidence string  `json:"evidence,omitempty"`
 	Error    string  `json:"error,omitempty"`
+	// NotApplicable 是样本未声明该维度期望时的放行（P1-L8-A 审查修复）。
+	NotApplicable bool `json:"not_applicable,omitempty"`
 }
 
 // trialInsert 拼批量插入；scores 为维度名 → 结果，passed = status 为 PASS，run_id 为 0 时写 NULL。
@@ -109,7 +111,7 @@ func trialInsert(id uint64, exp *evalkit.Experiment) (string, []any, error) {
 		scores := make(map[string]scoreJSON, len(t.Scores))
 		for _, sc := range t.Scores {
 			scores[sc.Name] = scoreJSON{Pass: sc.Pass, Value: sc.Value, RedLine: sc.RedLine,
-				Unknown: sc.Unknown, Evidence: sc.Evidence, Error: sc.Error}
+				Unknown: sc.Unknown, Evidence: sc.Evidence, Error: sc.Error, NotApplicable: sc.NotApplicable}
 		}
 		b, err := json.Marshal(scores)
 		if err != nil {

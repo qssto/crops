@@ -34,7 +34,7 @@ func (g ApprovalGate) Grade(_ context.Context, t *grader.Trial) (grader.Score, e
 	}
 	exp := t.Sample.Expect.Approval
 	if exp == nil {
-		return grader.Score{Pass: true, Value: 1}, nil
+		return grader.NotApplicable("no expect.approval"), nil
 	}
 	if t.Approval == nil {
 		return grader.Score{}, fmt.Errorf("%s: %s: %w", g.Name(), t.Sample.ID, errNoApproval)

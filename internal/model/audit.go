@@ -26,6 +26,8 @@ const (
 	AuditSensitiveOrderCancel    AuditAction = "SENSITIVE.ORDER_CANCEL"
 	AuditSensitiveRawRead        AuditAction = "SENSITIVE.RAW_READ"
 	AuditSensitiveExport         AuditAction = "SENSITIVE.AUDIT_EXPORT"
+	// P1 L8-B：一键关停演练（平台链 (0,0)，target flag:enable_robot_dispatch，summary 含 T0 / 耗时毫秒 / 各计数）。
+	AuditKillSwitchDrill AuditAction = "KILL_SWITCH_DRILL"
 )
 
 // audit_log.result 取值。

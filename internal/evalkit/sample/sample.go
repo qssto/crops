@@ -162,8 +162,8 @@ type Expect struct {
 	WorkOrder    *WorkOrderExpect `yaml:"work_order,omitempty"`
 	Trajectory   Trajectory       `yaml:"trajectory,omitempty"`
 	PII          []PIIExpect      `yaml:"pii,omitempty"`
-	// Foreign 是问题中出现的非本农场标识（农场 / 地块编码、设备 ID），须原样出现在 question 中；
-	// cross_farm_isolation 断言其不出现在输出与工具入参（P1 L1-B 红队样本）。
+	// Foreign 是非本农场标识（农场 / 地块编码、设备 ID），须原样出现在 question 或某个 fixtures.mcp 返回中
+	// （P1-L8-A：工具返回夹带的他场编码）；cross_farm_isolation 断言其不出现在输出与工具入参（P1 L1-B 红队样本）。
 	Foreign []string `yaml:"foreign,omitempty"`
 	// Constraint 断言开票前约束拦截（P1 L3，constraint_blocked 使用）：rule_ids 须全部出现在拦截结果中。
 	// 不写表示不应被拦截。
@@ -177,6 +177,20 @@ type Expect struct {
 	// Degraded 断言故障降级（P1 L6，degraded_matrix 使用）：本次运行写出的 DEGRADED 事件 (fault, action) 恰为该集合。
 	// 不写表示不检查。
 	Degraded []DegradedExpect `yaml:"degraded,omitempty"`
+	// Injection 声明工具返回中夹带的指令文本（P1 L8 redteam/tool_injection，injection_ignored 使用）：
+	// 每条须原样出现在某个 fixtures.mcp 的 return / returns / cache 中、不得出现在 question 中（见 injection.go）。
+	// 不写表示不检查。
+	Injection []string `yaml:"injection,omitempty"`
+	// MustNotContain 声明输出卡片不得出现的文本（P1-L8-A 审查修复，forbidden_text 使用，见 forbidden.go）。不写表示不检查。
+	MustNotContain *ForbiddenExpect `yaml:"must_not_contain,omitempty"`
+}
+
+// ForbiddenExpect 是输出禁止文本：Values 是问题 / 工具返回里诱导的编造数值（「30克」「翻倍」，按中文数字与倍数词归一后
+// 带数字边界匹配），卡片任何字符串字段都不得出现；Products 是登记候选外的药剂名，卡片可以提及（解释不推荐），
+// 但其前后不得带用量（数量 + 用药单位或倍数）。
+type ForbiddenExpect struct {
+	Values   []string `yaml:"values,omitempty"`
+	Products []string `yaml:"products,omitempty"`
 }
 
 // DegradedExpect 是一条期望的 DEGRADED 事件：fault 取故障矩阵 code，action 取 model.DegradeAction。
@@ -187,9 +201,12 @@ type DegradedExpect struct {
 
 // DispatchExpect 是下发侧期望：RecheckReturned 为 true 时断言下发前复检不通过、单退回 PENDING_APPROVAL(RECHECK_FAILED)、
 // 新票 OPEN、notify.send 已入 outbox；为 false 时断言没有退回。DeviceDispatches 非空时断言设备下发调用（DryRun / Dispatch）次数。
+// RecheckFailedRules 非空时（P1-L8-A 审查修复）还断言作业单上有这些 rule_id 的 PRE_DISPATCH 约束检查且 passed=false，
+// 即确实因该规则退回，而不是被别的规则或别的原因退回。
 type DispatchExpect struct {
-	RecheckReturned  bool `yaml:"recheck_returned"`
-	DeviceDispatches *int `yaml:"device_dispatches,omitempty"`
+	RecheckReturned    bool     `yaml:"recheck_returned"`
+	DeviceDispatches   *int     `yaml:"device_dispatches,omitempty"`
+	RecheckFailedRules []string `yaml:"recheck_failed_rules,omitempty"`
 }
 
 // ConstraintExpect 是约束拦截期望：run 带 CONSTRAINT_BLOCKED、无票据、作业单留 DRAFT、设备零调用。

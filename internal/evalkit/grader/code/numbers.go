@@ -38,7 +38,7 @@ func (NumbersMatchCalc) Grade(_ context.Context, t *grader.Trial) (grader.Score,
 	}
 	a := t.Sample.Expect.Advice
 	if a == nil || len(a.Numbers) == 0 {
-		return grader.Score{Pass: true, Value: 1}, nil
+		return grader.NotApplicable("no expect.advice.numbers"), nil
 	}
 	var fails, skipped []string
 	checked, matched := 0, 0

@@ -5,6 +5,12 @@
 # applies_to 空列表表示不限；取值：work_types SPRAY / FERTILIZE / IRRIGATE，device_types knapsack / uav / manual / valve，
 # dispatch_modes DRY_RUN / REAL。
 version: 1
+# 法务签字元数据（P1-L8-B）：法务签字后由签字人或其授权人填写，工程侧不代填；三项全空即「待签字」，
+# cmd/auditctl gray-preflight 要求三项都非空。
+signoff:
+  legal_signer: ""
+  legal_signed_at: ""
+  record_ref: ""
 entries:
   # 一、民用无人驾驶航空器飞行管理
   - id: uav-no-fly-zone

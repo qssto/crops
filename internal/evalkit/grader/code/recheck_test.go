@@ -90,3 +90,34 @@ func TestRecheckReturned(t *testing.T) {
 			OrderTransitions: straight, Approval: doneApproval, DeviceTargets: dryRuns(0)}},
 	})
 }
+
+func TestRecheckReturned_FailedRules(t *testing.T) {
+	withRules := func(rules ...string) *sample.Sample {
+		s := dispatchSample(true, "", 0)
+		s.Expect.Dispatch.RecheckFailedRules = rules
+		return s
+	}
+	check := func(phase model.ConstraintPhase, rule string, passed bool) model.ConstraintCheck {
+		return model.ConstraintCheck{Phase: phase, Attempt: 1, RuleID: rule, Passed: passed}
+	}
+	trial := func(s *sample.Sample, checks []model.ConstraintCheck) *grader.Trial {
+		return &grader.Trial{Sample: s, OrderTransitions: returnedFlow(), Approval: reopenedOpen, DeviceTargets: dryRuns(0),
+			Outbox: []grader.OutboxRecord{dispatchDone, returnedNotice}, ConstraintChecks: checks}
+	}
+	runCases(t, RecheckReturned{}, []gradeCase{
+		{name: "failed battery recheck passes", pass: true, t: trial(withRules("device_battery"),
+			[]model.ConstraintCheck{check(model.PhasePreDispatch, "device_battery", false),
+				check(model.PhasePreDispatch, "device_payload", true)})},
+		{name: "no rules asserted ignores checks", pass: true, t: trial(withRules(), nil)},
+		// 应失败：退回了但拦下它的是另一条规则（归因错误）
+		{name: "other rule blocked fails", evidence: "no failed PRE_DISPATCH check for rule device_battery",
+			t: trial(withRules("device_battery"), []model.ConstraintCheck{check(model.PhasePreDispatch, "device_payload", false)})},
+		// 应失败：规则在开票前失败，不是复检失败
+		{name: "pre-approval failure does not count", evidence: "rule device_payload",
+			t: trial(withRules("device_payload"), []model.ConstraintCheck{check(model.PhasePreApproval, "device_payload", false)})},
+		// 应失败：复检记录为通过
+		{name: "passed recheck fails", evidence: "rule device_payload",
+			t: trial(withRules("device_payload"), []model.ConstraintCheck{check(model.PhasePreDispatch, "device_payload", true)})},
+		{name: "checks not recorded", wantErr: true, t: trial(withRules("device_battery"), nil)},
+	})
+}

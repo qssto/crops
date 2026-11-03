@@ -6,6 +6,8 @@
 //	    比对锚点 anchor/{date}.json 与当前链（截尾后重算 verify 本身发现不了），不一致退出码 1。
 //	auditctl verify --from-manifest <path>
 //	    只解析参数，返回「未启用」（导出包离线校验留给后续）。
+//	auditctl gray-preflight / kill-switch-report
+//	    灰度前检查与一键关停报告（P1 L8-B，见 gray.go）；断言不成立退出码 1。
 //
 // 配置读 configs/app.yaml；密钥只从环境变量取（不读 deploy/.env），任何输出都不含密钥。历史 chain_seq IS NULL 行不参与校验。
 package main
@@ -30,7 +32,7 @@ const (
 	exitBroken  = 1 // 发现断点 / 锚点不一致
 	exitUsage   = 2
 	exitFailed  = 3 // 运行失败（连库、读对象等）
-	usage       = "usage: auditctl <verify|anchor-check> [flags]"
+	usage       = "usage: auditctl <verify|anchor-check|gray-preflight|kill-switch-report> [flags]"
 	notEnabled  = "auditctl: --from-manifest 未启用（导出包离线校验留给后续阶段）"
 	multiTenant = "farm %d belongs to tenants %v; pass --tenant"
 )
@@ -61,10 +63,19 @@ func run(args []string, stdout, stderr io.Writer) int {
 		err = cmdVerify(ctx, args[1:], stdout)
 	case "anchor-check":
 		err = cmdAnchorCheck(ctx, args[1:], stdout)
+	case "gray-preflight":
+		err = cmdGrayPreflight(ctx, args[1:], stdout)
+	case "kill-switch-report":
+		err = cmdKillSwitchReport(ctx, args[1:], stdout)
 	default:
 		fmt.Fprintln(stderr, usage)
 		return exitUsage
 	}
+	return exitCode(err, stderr)
+}
+
+// exitCode 把子命令错误映射为退出码并打印原因。
+func exitCode(err error, stderr io.Writer) int {
 	switch {
 	case err == nil:
 		return exitOK
@@ -73,7 +84,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	case errors.Is(err, errNotEnabled), errors.Is(err, errUsage):
 		fmt.Fprintln(stderr, "auditctl:", err)
 		return exitUsage
-	case errors.Is(err, errBroken):
+	case errors.Is(err, errBroken), errors.Is(err, errAssert):
 		fmt.Fprintln(stderr, "auditctl:", err)
 		return exitBroken
 	default:
@@ -104,7 +115,12 @@ func openReadOnly(ctx context.Context, cfg *config.Config) (*repository.DB, erro
 	if err != nil {
 		return nil, err
 	}
-	logger, err := app.NewLogger(os.Stderr, cfg.Log.Level)
+	return openDSN(ctx, dsn, cfg.Log.Level)
+}
+
+// openDSN 按给定 DSN 打开连接（只读会话由 DSN 决定）。
+func openDSN(ctx context.Context, dsn, logLevel string) (*repository.DB, error) {
+	logger, err := app.NewLogger(os.Stderr, logLevel)
 	if err != nil {
 		return nil, err
 	}

@@ -1,0 +1,11 @@
+# 外部决策状态（P1-L8-B）：《Phase 1 启动包》中需 Owner / 法务闭环的外部决策，cmd/auditctl gray-preflight 读取。
+# status：OPEN（未闭环）| CLOSED（已闭环）；CLOSED 时 closed_at / approved_by / record_ref 都必须非空。
+# 由 Owner / 法务确认后填写，工程侧不代填；D5 未闭环则 L8 灰度不启动（docs/p1/Phase1启动包.md）。
+version: 1
+decisions:
+  - id: D5
+    title: 作业事故责任划分与保险方案
+    status: OPEN
+    closed_at: ""
+    approved_by: ""
+    record_ref: ""

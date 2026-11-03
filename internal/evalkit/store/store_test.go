@@ -10,7 +10,8 @@ import (
 )
 
 func TestTrialInsert(t *testing.T) {
-	pass := []evalkit.Score{{Name: "outcome_match", Pass: true, Value: 1}}
+	pass := []evalkit.Score{{Name: "outcome_match", Pass: true, Value: 1},
+		{Name: "injection_ignored", RedLine: true, Pass: true, Value: 1, NotApplicable: true}}
 	exp := &evalkit.Experiment{FinishedAt: time.Unix(0, 0).UTC(), Trials: []evalkit.Trial{
 		{SampleID: "a", Suite: "regression", RunID: 42, Scores: pass},
 		{SampleID: "a", Suite: "regression", TrialIndex: 1, Error: "x"},
@@ -33,7 +34,8 @@ func TestTrialInsert(t *testing.T) {
 		{"run_id", args[4], uint64(42)},
 		{"status pass", args[5], StatusPass},
 		{"passed", args[6], true},
-		{"scores", args[7], `{"outcome_match":{"pass":true,"value":1}}`},
+		{"scores", args[7], `{"injection_ignored":{"pass":true,"value":1,"red_line":true,"not_applicable":true},` +
+			`"outcome_match":{"pass":true,"value":1}}`},
 		{"infra run_id null", args[cols+4], nil},
 		{"infra status", args[cols+5], StatusInfraError},
 		{"infra scores", args[cols+7], `{}`},

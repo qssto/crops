@@ -34,7 +34,7 @@ func (StateMachineLegal) Grade(_ context.Context, t *grader.Trial) (grader.Score
 		if t.Sample.Expect.WorkOrder != nil || t.Sample.Fixtures.Approver != "" {
 			return grader.Score{}, fmt.Errorf("state_machine_legal: %s: %w", t.Sample.ID, errNoTransitions)
 		}
-		return grader.Score{Pass: true, Value: 1}, nil
+		return grader.NotApplicable("no work order expected and no transitions recorded"), nil
 	}
 	if fails := illegalTransitions(t.OrderTransitions); len(fails) > 0 {
 		return grader.Score{Evidence: strings.Join(fails, "; ")}, nil

@@ -27,6 +27,8 @@ type Score struct {
 	Unknown  bool
 	Evidence string
 	Error    string
+	// NotApplicable 表示样本未声明该维度期望、打分器按约定放行（P1-L8-A 审查修复；报告据此显示「无适用样本」）。
+	NotApplicable bool
 }
 
 // Status 判定 trial 状态：运行出错为 INFRA_ERROR；任一打分器出错为 GRADER_ERROR；
@@ -88,7 +90,8 @@ func (g grading) grade(ctx context.Context, t *Trial, s *sample.Sample, ans agen
 		Card: ans.Card, KB: kb, ToolCalls: t.ToolCalls, ToolFailures: t.ToolFailures,
 		Approval: t.Approval, DeviceCalls: t.DeviceCalls, Logs: t.Logs, Stored: t.Stored, OrderTransitions: t.OrderTransitions,
 		Scope: t.Scope, Fields: t.Fields, Devices: t.Devices, ToolArgs: t.ToolArgs, DeviceTargets: t.DeviceTargets,
-		ConstraintBlocked: ans.ConstraintBlocked, Outbox: t.Outbox, WorkDone: t.WorkDone, Events: trialEvents(t)}
+		ConstraintBlocked: ans.ConstraintBlocked, Outbox: t.Outbox, WorkDone: t.WorkDone, Events: trialEvents(t),
+		ConstraintChecks: t.ConstraintChecks}
 	t.Scores = make([]Score, 0, len(g.graders))
 	for _, gr := range g.graders {
 		sc := Score{Name: gr.Name(), RedLine: gr.RedLine()}
@@ -97,6 +100,7 @@ func (g grading) grade(ctx context.Context, t *Trial, s *sample.Sample, ans agen
 			sc.Error = fmt.Errorf("grader %s on %s#%d: %w", gr.Name(), s.ID, t.TrialIndex, err).Error()
 		} else {
 			sc.Pass, sc.Value, sc.Unknown, sc.Evidence = res.Pass, res.Value, res.Unknown, res.Evidence
+			sc.NotApplicable = res.NotApplicable
 		}
 		t.Scores = append(t.Scores, sc)
 	}

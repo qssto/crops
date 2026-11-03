@@ -28,6 +28,17 @@ import (
 func newDispatchPoller(t *testing.T, e *itest.Env, slot *env.Slot, dev adapter.DryRunner) (*service.OutboxPoller,
 	*service.WorkOrderService) {
 	t.Helper()
+	a := newDispatchApp(t, e, slot, dev)
+	p, err := a.NewOutboxPoller()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return p, a.WorkOrders
+}
+
+// newDispatchApp 是 newDispatchPoller 的装配部分（关停演练测试另需 App 上的 Locker / Runs / Flags 重新 SetDispatch）。
+func newDispatchApp(t *testing.T, e *itest.Env, slot *env.Slot, dev adapter.DryRunner) *app.App {
+	t.Helper()
 	logger, err := app.NewLogger(os.Stderr, "warn")
 	if err != nil {
 		t.Fatal(err)
@@ -46,11 +57,7 @@ func newDispatchPoller(t *testing.T, e *itest.Env, slot *env.Slot, dev adapter.D
 	if err != nil {
 		t.Fatal(err)
 	}
-	p, err := a.NewOutboxPoller()
-	if err != nil {
-		t.Fatal(err)
-	}
-	return p, a.WorkOrders
+	return a
 }
 
 // itNotifyTexts 读仓库内通知文案（P1 L5：outbox 处理器表含 notify.send）。

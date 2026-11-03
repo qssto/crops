@@ -98,6 +98,25 @@ func (r DispatchAttemptRepo) UpdateReceiptTx(ctx context.Context, tx *gorm.DB, r
 	return affected(res, fmt.Sprintf("update dispatch_attempt %d receipt", id))
 }
 
+// RefreshSentTx 是续跑重发前的写（P1-L8-B 审查 P0-2）：SENT 且无 device_job_id 的尝试刷新 flag_read_at / sent_at /
+// receipt_due_at（row_ver 守卫），让关停报告按本次重发的读开关与下发时刻核对。影响行数 0 → model.ErrConcurrentUpdate。
+func (r DispatchAttemptRepo) RefreshSentTx(ctx context.Context, tx *gorm.DB, ref model.OrderRef, id uint64, rowVer int,
+	flagReadAt, sentAt, receiptDueAt time.Time) error {
+	if err := requireFarm(ref.TenantID, ref.FarmID); err != nil {
+		return err
+	}
+	if flagReadAt.After(sentAt) {
+		return fmt.Errorf("repository: refresh dispatch_attempt %d: flag_read_at after sent_at", id)
+	}
+	if err := requireTx(tx); err != nil {
+		return err
+	}
+	res := tx.WithContext(ctx).Exec(
+		`UPDATE dispatch_attempt SET flag_read_at=?, sent_at=?, receipt_due_at=?, row_ver=row_ver+1, updated_at=? WHERE tenant_id=? AND farm_id=? AND id=? AND row_ver=? AND status='SENT' AND device_job_id IS NULL`,
+		flagReadAt, sentAt, receiptDueAt, sentAt, ref.TenantID, ref.FarmID, id, rowVer)
+	return affected(res, fmt.Sprintf("refresh dispatch_attempt %d sent", id))
+}
+
 // ByOrder 列出作业单的全部尝试（attempt 升序），供下一次 attempt 编号与对账页使用。
 func (r DispatchAttemptRepo) ByOrder(ctx context.Context, ref model.OrderRef) ([]model.DispatchAttempt, error) {
 	if err := requireFarm(ref.TenantID, ref.FarmID); err != nil {

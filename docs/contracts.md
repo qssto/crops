@@ -150,3 +150,19 @@ stateDiagram-v2
   - 预置 0 值序列：`(*MetricsObserver).Preseed(farmIDs)`；`service.NewMetricsPreseeder(FarmLister, FarmSeriesPreseeder)` 在 `MetricsLoop` 内按 `alerts.backlog_refresh` 运行，农场来自 `repository.AlertRepo.KnownFarms`（SystemScope，读 `farm_profile`）。
   - 下发器审批复核前移：admit / realReady / DRY_RUN 记意图前即校验票据，不符发 `pre_approval_device` 并丢弃消息（Dispatch 返回 nil），不写工单 / attempt。
   - 告警审计平台链回退（L7-A 合并语义）：`AuditAlertSink` 按告警 scope 写 `ALERT.*` 失败且未到截止、scope 非 (0,0) 时，在同一截止内再写一次平台链 (0,0)，summary 加 `origin{tenant_id, farm_id}`，`run_id` 列置空（summary 仍带 run_id）。不按错误类型判断（不依赖 `ErrAuditChainHeadMissing`），超时不回退；只经 `AuditAppender.Append`，不再调 Fire，不递归。回退行不在农场告警列表里，按 origin 在平台审计查。
+
+## P1-L8-B 接缝
+
+- 审计 action `KILL_SWITCH_DRILL`（`model.AuditKillSwitchDrill`）：平台链 (0,0)，actor system，target `flag:enable_robot_dispatch`，result OK / FAILED（断言不成立也写），summary `{t0, flag_change_audit_id, elapsed_ms, max_sent_at, real_sent_after, flag_read_after, held_total, expect_held, gray_farms, failures, passed}`。只由 `auditctl kill-switch-report --drill` 经 `AuditRepo.Append` 写。
+- `auditctl gray-preflight --farm <id> [--tenant <id>] [--root .]`：逐项 `PASS|FAIL <name>: <detail>`，末行 `RESULT PASS|FAIL farm (t,f)`；检查项名 `d5_closed / legal_signoff / alert_rules / kill_switch_drill / redteam_pass5 / agronomist_bound / enable_advice_on`（`service.Check*`）。业务库与评测库（`mysql.eval_database`）都走只读会话。
+- `auditctl kill-switch-report --since <RFC3339> [--expect-held N] [--drill]`：T0 = `--since` 之后第一条 OK 的 GLOBAL `force_off:true` FLAG_CHANGE 审计时间；SQL 照抄 §6.9 技术实现第 4 条。退出码（auditctl 全部子命令）：0 通过；1 校验 / 断言不成立；2 参数错；3 运行失败。
+- 仓库文件：`policy/external_decisions.yaml`（`decisions[{id, title, status OPEN|CLOSED, closed_at, approved_by, record_ref}]`，严格字段）；`policy/regulation_map.yaml` 头部新增 `signoff{legal_signer, legal_signed_at, record_ref}`（`constraint.ParseRegulationSignoff`，启动加载只校验字段名）。签字字段由签字人填写。
+- 分层规则白名单：`repository.NewSystemScope` 白名单追加 `internal/service/killswitch.go`（关停报告跨农场读 dispatch_attempt，走 idx_mode_sent）。
+- 仓储：`repository.KillSwitchRepo`（FlagChangesSince / LatestDrill / RealSentAfter / RealReadAfter / HeldSince）、`repository.EvalRedteamRepo`（评测库，无 tenant / farm，已登记 sqlScopeExempt）。
+- 审查修复（L8-B）追加：
+  - KILL_SWITCH_DRILL summary 新增 `released_at`（未解除为 null）；`t0` / `flag_change_audit_id` 为 gray-preflight 回查依据。`--drill` 须 `--expect-held ≥ 1`，否则退出 2 不写审计；`service.KillSwitchReporter.RecordDrill` 对 `ExpectHeld < 1` 返回 `ErrBadInput`。
+  - kill-switch-report：T0 = 第一条成功的 GLOBAL 开 → 关；解除 = 其后第一条 `force_off:false`，报告新增 `released_at / release_audit_id`，计数区间 `[T0, 解除)`。FLAG_CHANGE 扫描上限 200 行仍未定位到解除 → `service.ErrKillSwitchScanLimit`（退出 3）。
+  - `repository.KillSwitchRepo`：`FlagChangeByID(ctx, id) (AuditEntry, bool, error)`；`RealSentAfter / RealReadAfter / HeldSince` 末参 `until *time.Time`（nil 不设上界）；全部审计读取带 `chain_seq IS NOT NULL`，`AuditEntry.Chain` + `VerifyRowHash()`（不符 `repository.ErrAuditRowHash`）。
+  - `repository.DispatchAttemptRepo.RefreshSentTx(ctx, tx, ref, id, rowVer, flagReadAt, sentAt, receiptDueAt)`：续跑重发前刷新 SENT 尝试，row_ver 守卫，0 行 → `model.ErrConcurrentUpdate`。
+  - 下发器续跑：重发前直读 enable_robot_dispatch，关 → FAILED(UNKNOWN) + DISPATCH_MANUAL，reason `SENT without device_job_id; resend blocked because enable_robot_dispatch is off`。
+  - gray-preflight：`--redteam-max-age <duration>`（默认 `service.DefaultRedteamMaxAge` = 36h，≤ 0 退出 2）；`GrayPreflightDeps.RedteamMaxAge`（0 取默认，负值 `ErrBadInput`）；应有样本目录 `service.RedteamSuiteDir` = `eval/suites/redteam`。

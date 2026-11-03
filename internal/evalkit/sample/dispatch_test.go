@@ -47,6 +47,20 @@ func TestCheckDispatch(t *testing.T) {
 			mutate: dispatchSample(func(s *Sample) { s.Expect.Dispatch.DeviceDispatches = intp(-1) })},
 		{name: "returned but final DONE", wantErr: "final_status=PENDING_APPROVAL",
 			mutate: dispatchSample(func(s *Sample) { s.Expect.WorkOrder.FinalStatus = "DONE" })},
+		{name: "recheck failed rules ok", mutate: dispatchSample(func(s *Sample) {
+			s.Expect.Dispatch.RecheckFailedRules = []string{"device_battery"}
+		})},
+		{name: "failed rules without return", wantErr: "requires recheck_returned=true",
+			mutate: dispatchSample(func(s *Sample) {
+				s.Expect.Dispatch.RecheckReturned = false
+				s.Expect.Dispatch.RecheckFailedRules = []string{"device_battery"}
+			})},
+		{name: "empty failed rule id", wantErr: "recheck_failed_rules[0]",
+			mutate: dispatchSample(func(s *Sample) { s.Expect.Dispatch.RecheckFailedRules = []string{""} })},
+		{name: "too long failed rule id", wantErr: "recheck_failed_rules[0]",
+			mutate: dispatchSample(func(s *Sample) {
+				s.Expect.Dispatch.RecheckFailedRules = []string{strings.Repeat("x", 49)}
+			})},
 	}
 	v := NewValidator(DefaultRules(mustTaxonomy(t), repoKB(t))...)
 	for _, tt := range tests {

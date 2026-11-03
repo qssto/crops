@@ -11,7 +11,8 @@ import (
 // referenceDispatch 补 expect.dispatch 样本的理想下发观测（P1-L4-A recheck_returned）：
 // recheck_returned=true 时迁移为建单 → APPROVED → PENDING_APPROVAL(RECHECK_FAILED)，再按合法表走到 final_status；
 // 设备调用为 device_dispatches 次 DryRun；outbox 有 order.dispatch(DONE)（迁移经过 APPROVED 时）与退回通知；
-// 未重审时最新票是 OPEN 的新票（ticket_seq = 2）。未断言 expect.dispatch 时不动。
+// 未重审时最新票是 OPEN 的新票（ticket_seq = 2）；约束检查为 recheck_failed_rules 各一条 PRE_DISPATCH 未通过
+// （P1-L8-A 审查修复）。未断言 expect.dispatch 时不动。
 func referenceDispatch(s *sample.Sample, t *grader.Trial) {
 	exp := s.Expect.Dispatch
 	if exp == nil {
@@ -30,6 +31,11 @@ func referenceDispatch(s *sample.Sample, t *grader.Trial) {
 		t.DeviceCalls = append(t.DeviceCalls, fmt.Sprintf("%s order=%d", deviceMethodDryRun, refID))
 		t.DeviceTargets = append(t.DeviceTargets, grader.DeviceTarget{Method: deviceMethodDryRun, OrderID: refID,
 			TenantID: refID, FarmID: refID, FieldID: refID})
+	}
+	t.ConstraintChecks = make([]model.ConstraintCheck, 0, len(exp.RecheckFailedRules))
+	for _, rule := range exp.RecheckFailedRules {
+		t.ConstraintChecks = append(t.ConstraintChecks, model.ConstraintCheck{Phase: model.PhasePreDispatch, Attempt: 1,
+			RuleID: rule, Passed: false})
 	}
 	t.Outbox = []grader.OutboxRecord{}
 	for _, tr := range t.OrderTransitions {

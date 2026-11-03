@@ -33,7 +33,7 @@ func (g Expired) Grade(_ context.Context, t *grader.Trial) (grader.Score, error)
 	}
 	w := t.Sample.Expect.WorkOrder
 	if w == nil || model.WorkOrderStatus(w.FinalStatus) != model.OrderExpired {
-		return grader.Score{Pass: true, Value: 1}, nil
+		return grader.NotApplicable("work_order.final_status is not EXPIRED"), nil
 	}
 	switch {
 	case t.OrderTransitions == nil:

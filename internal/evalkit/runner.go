@@ -72,6 +72,9 @@ type Trial struct {
 	// P1-L4-B：WorkDone 是回执步骤后该 run 各作业单的完成态（样本声明 fixtures.device.steps 且 App.DB 非空时记录），
 	// 供 partially_done，不写入报告与 agri_eval。
 	WorkDone []grader.WorkDoneObs
+	// P1-L8-A 审查修复：ConstraintChecks 是该 run 作业单的全部约束检查（App.DB 非空且有作业单时，与 Outbox 同条件读取），
+	// recheck_returned 断言 expect.dispatch.recheck_failed_rules 使用，不写入报告与 agri_eval。
+	ConstraintChecks []model.ConstraintCheck
 }
 
 // ToolRecorder 是评测工具接缝的调用记录（env.FixtureMCP 实现）。
@@ -449,6 +452,9 @@ func (r *Runner) ask(ctx context.Context, t *Trial, a *app.App, s *sample.Sample
 	if err := recordOutbox(ctx, t, a, q.Scope, ans); err != nil {
 		return ans, err
 	}
+	if err := recordChecks(ctx, t, a, q.Scope, ans); err != nil {
+		return ans, err
+	}
 	if err := r.recordFields(ctx, t, a, q.Scope); err != nil {
 		return ans, err
 	}
@@ -516,20 +522,21 @@ func recordTransitions(ctx context.Context, t *Trial, a *app.App, scope model.Sc
 	return nil
 }
 
-// recordOutbox（P1-L4-A）读该 run 作业单的全部 outbox 消息（App.DB 为空或无作业单时不动；有单无消息时是空切片）。
-// 作业单取 Answer.Order，无单时取审批票据指向的单（同 recordApproval）。
-func recordOutbox(ctx context.Context, t *Trial, a *app.App, scope model.Scope, ans agent.Answer) error {
-	if a.DB == nil {
-		return nil
-	}
-	var orderID uint64
+// trialOrderID 返回该 run 的作业单 id：取 Answer.Order，无单时取审批票据指向的单（同 recordApproval）；都没有为 0。
+func trialOrderID(t *Trial, ans agent.Answer) uint64 {
 	switch {
 	case ans.Order != nil:
-		orderID = ans.Order.OrderID
+		return ans.Order.OrderID
 	case t.Approval != nil && t.Approval.Ticket != nil:
-		orderID = t.Approval.Ticket.OrderID
+		return t.Approval.Ticket.OrderID
 	}
-	if orderID == 0 {
+	return 0
+}
+
+// recordOutbox（P1-L4-A）读该 run 作业单的全部 outbox 消息（App.DB 为空或无作业单时不动；有单无消息时是空切片）。
+func recordOutbox(ctx context.Context, t *Trial, a *app.App, scope model.Scope, ans agent.Answer) error {
+	orderID := trialOrderID(t, ans)
+	if a.DB == nil || orderID == 0 {
 		return nil
 	}
 	rows, err := repository.OutboxRepo{}.OutboxByAggregate(ctx, a.DB, scope, orderID)
@@ -539,6 +546,24 @@ func recordOutbox(ctx context.Context, t *Trial, a *app.App, scope model.Scope, 
 	t.Outbox = make([]grader.OutboxRecord, 0, len(rows))
 	for _, r := range rows {
 		t.Outbox = append(t.Outbox, grader.OutboxRecord{Topic: r.Topic, DedupKey: r.DedupKey, Status: r.Status})
+	}
+	return nil
+}
+
+// recordChecks（P1-L8-A 审查修复）读该 run 作业单的全部约束检查（含 PRE_DISPATCH 复检；App.DB 为空或无作业单时不动，
+// 有单无检查时是空切片）。
+func recordChecks(ctx context.Context, t *Trial, a *app.App, scope model.Scope, ans agent.Answer) error {
+	orderID := trialOrderID(t, ans)
+	if a.DB == nil || orderID == 0 {
+		return nil
+	}
+	orders, err := repository.NewDecisionRepo(a.DB, a.Clock).OrdersWithChecks(ctx, scope, []uint64{orderID})
+	if err != nil {
+		return fmt.Errorf("record constraint checks: %w", err)
+	}
+	t.ConstraintChecks = []model.ConstraintCheck{}
+	if o, ok := orders[orderID]; ok {
+		t.ConstraintChecks = append(t.ConstraintChecks, o.ConstraintChecks...)
 	}
 	return nil
 }

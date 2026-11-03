@@ -30,6 +30,25 @@ func GateLine(r *reduce.Result) string {
 	return line
 }
 
+// stubNote 是 stub 模型的报告抬头标注（P1-L8-A 审查修复）：桩模型输出确定，n 次重复只复现同一结果。
+const stubNote = "确定性回归（stub 模型，n>1 不提供稳定性信息）"
+
+// noApplicable 标记没有一个适用 trial 的维度（全部默认放行）。
+const noApplicable = "无适用样本"
+
+// ProviderLine 是报告抬头第二行：模型 provider（快照未填为「未记录」），stub 时另标 stubNote。
+func ProviderLine(s evalkit.Snapshot) string {
+	provider := s.Model
+	if provider == "" {
+		provider = "未记录"
+	}
+	line := "模型 provider：" + provider
+	if s.Model == evalkit.ModelStub {
+		line += "；" + stubNote
+	}
+	return line
+}
+
 // renderSnapshot 输出配置快照；未填写时不输出。
 func renderSnapshot(ew *errWriter, s evalkit.Snapshot) {
 	if s.IsZero() {
@@ -104,11 +123,18 @@ func renderScores(ew *errWriter, r *reduce.Result) {
 		return
 	}
 	ew.printf("## 分项打分\n\n")
-	ew.printf("| 维度 | 红线 | 通过 | 失败 | grader_error | 平均 value（样本均值） |\n|------|------|------|------|--------------|------------------------|\n")
+	ew.printf("| 维度 | 红线 | 适用 trial | 通过 | 失败 | grader_error | 平均 value（样本均值） |\n")
+	ew.printf("|------|------|------------|------|------|--------------|------------------------|\n")
 	for _, d := range r.Dims {
-		ew.printf("| %s | %s | %d | %d | %d | %.2f |\n", d.Name, yesNo(d.RedLine), d.Pass, d.Fail, d.GraderErrors, d.Mean)
+		applicable := strconv.Itoa(d.Applicable)
+		if d.NoApplicable() {
+			applicable = noApplicable
+		}
+		ew.printf("| %s | %s | %s | %d | %d | %d | %.2f |\n", d.Name, yesNo(d.RedLine), applicable, d.Pass, d.Fail,
+			d.GraderErrors, d.Mean)
 	}
-	ew.printf("\n")
+	ew.printf("\n适用 trial 不含默认放行（样本未声明该维度期望）；标「%s」的维度在本次实验里全部默认放行，通过数不代表该项被验证。\n\n",
+		noApplicable)
 	if len(r.RedLines) == 0 {
 		return
 	}
@@ -123,6 +149,84 @@ func renderScores(ew *errWriter, r *reduce.Result) {
 		ew.printf("| %s | %s | %s |\n", s.ID, strings.Join(cells, " | "), fmtPassK(s.N, s.AllPass))
 	}
 	ew.printf("\n")
+}
+
+// suiteRedteam 是红队套件名：夜间全量中单列 pass^5（P1 L8）。
+const suiteRedteam = "redteam"
+
+// renderSuites 输出「按套件红线 pass^k」（P1 L8）：多套件或含 redteam 时才写，单套件报告不变。
+// P1-L8-A 审查修复：
+//   - pass^5 列只在套件内每个样本都跑满 5 次时判定，否则写「n<5 不判定」；套件内有 grader_error 时两列 pass^k 都写「不可判定」；
+//   - 只有 n 次全过样本数 = 样本数时写 1.00，否则四舍五入到 1.00 的值写「<1.00」；
+//   - 「隔离数」列是该套件声明 quarantine 未运行的样本数；「无适用样本」列是套件内全部默认放行的红线；
+//   - 按 tag 过滤的实验在 redteam 单列行标「子集」，不能读成全量结论。
+func renderSuites(ew *errWriter, r *reduce.Result, exp *evalkit.Experiment) {
+	if len(r.RedLines) == 0 || !(len(r.Suites) > 1 || hasSuite(r.Suites, suiteRedteam)) {
+		return
+	}
+	quarantined := map[string]int{}
+	for _, q := range exp.Quarantined {
+		quarantined[q.Suite]++
+	}
+	ew.printf("## 按套件红线 pass^k\n\n")
+	ew.printf("| 套件 | 样本 | trial | 最小 n | 隔离数 | 红线 pass^k 均值（k = n） | n 次全过样本 | pass^%d | 无适用样本的红线 |\n", reduce.NightlyK)
+	ew.printf("|------|------|-------|--------|--------|---------------------------|--------------|--------|------------------|\n")
+	for _, st := range r.Suites {
+		passKK := fmt.Sprintf("n<%d 不判定", reduce.NightlyK)
+		if st.Judged() || st.GraderErrors > 0 {
+			passKK = fmtSuiteValue(st, st.PassKK)
+		}
+		ew.printf("| %s | %d | %d | %d | %d | %s | %d / %d | %s | %s |\n", dash(st.Suite), st.Samples, st.Trials, st.MinN,
+			quarantined[st.Suite], fmtSuiteValue(st, st.MeanPassK), st.AllPassSamples, st.Samples, passKK,
+			dash(strings.Join(st.Inapplicable, ", ")))
+	}
+	ew.printf("\n")
+	subset := ""
+	if len(exp.Tags) > 0 {
+		subset = fmt.Sprintf("；子集（tag 过滤：%s），不代表全量", strings.Join(exp.Tags, ", "))
+	}
+	for _, st := range r.Suites {
+		if st.Suite != suiteRedteam {
+			continue
+		}
+		ew.printf("redteam 单列：%d 个样本 n 次红线全过 %d 个，pass^%d %s（夜间全量要求 N ≥ %d）%s。\n\n",
+			st.Samples, st.AllPassSamples, reduce.NightlyK, fmtRedteamPassKK(st), reduce.NightlyK, subset)
+		if len(st.Inapplicable) > 0 {
+			ew.printf("redteam 中%s的红线：%s（这些维度全部默认放行，pass^k 不覆盖它们）。\n\n", noApplicable,
+				strings.Join(st.Inapplicable, ", "))
+		}
+	}
+}
+
+// fmtSuiteValue 输出套件级 pass^k：有 grader_error 为「不可判定」；不是每个样本都全过却四舍五入成 1.00 时写「<1.00」。
+func fmtSuiteValue(st reduce.SuiteStat, v float64) string {
+	if st.GraderErrors > 0 {
+		return fmt.Sprintf("不可判定（grader_error %d）", st.GraderErrors)
+	}
+	s := fmt.Sprintf("%.2f", v)
+	if s == "1.00" && !st.AllPass() {
+		return "<1.00"
+	}
+	return s
+}
+
+func fmtRedteamPassKK(st reduce.SuiteStat) string {
+	switch {
+	case st.GraderErrors > 0:
+		return fmtSuiteValue(st, st.PassKK)
+	case !st.Judged():
+		return "不判定"
+	}
+	return "= " + fmtSuiteValue(st, st.PassKK)
+}
+
+func hasSuite(suites []reduce.SuiteStat, name string) bool {
+	for _, st := range suites {
+		if st.Suite == name {
+			return true
+		}
+	}
+	return false
 }
 
 // renderIssues 输出 flaky、unexpected_call 与 error 清单；为空时写「无」。

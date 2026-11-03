@@ -56,7 +56,7 @@ func (g DegradedMatrix) Grade(_ context.Context, t *grader.Trial) (grader.Score,
 	}
 	want := t.Sample.Expect.Degraded
 	if len(want) == 0 {
-		return grader.Score{Pass: true, Value: 1}, nil
+		return grader.NotApplicable("no expect.degraded"), nil
 	}
 	switch {
 	case g.faults == nil:

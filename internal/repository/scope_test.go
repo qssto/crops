@@ -25,6 +25,11 @@ func scopeRequiredCalls() map[string]func(model.Scope) error {
 	noFarmTicket := TicketRow{TenantID: 1, ID: 9}
 	noFarmRun := RunKey{TenantID: 1, ID: 1}
 	return map[string]func(model.Scope) error{
+		// P1 L8-B：关停报告按灰度农场计 DISPATCH_HELD
+		"KillSwitchRepo.HeldSince": func(s model.Scope) error {
+			_, err := KillSwitchRepo{}.HeldSince(ctx, s.TenantID, s.FarmID, now, nil)
+			return err
+		},
 		// P1 L7-B：告警去重与告警列表
 		"AlertRepo.AlertedRuns": func(s model.Scope) error {
 			_, err := AlertRepo{}.AlertedRuns(ctx, s, "ALERT.x", []uint64{1}, now)
@@ -287,6 +292,10 @@ func scopeRequiredCalls() map[string]func(model.Scope) error {
 			return DispatchAttemptRepo{}.UpdateReceiptTx(ctx, nil, model.OrderRef{TenantID: s.TenantID, FarmID: s.FarmID, OrderID: 1}, 1, 0,
 				model.AttemptDone, "", nil, now, now)
 		},
+		"DispatchAttemptRepo.RefreshSentTx": func(s model.Scope) error {
+			return DispatchAttemptRepo{}.RefreshSentTx(ctx, nil, model.OrderRef{TenantID: s.TenantID, FarmID: s.FarmID, OrderID: 1}, 1, 0,
+				now, now, now)
+		},
 		"DispatchAttemptRepo.ByOrder": func(s model.Scope) error {
 			_, err := DispatchAttemptRepo{}.ByOrder(ctx, model.OrderRef{TenantID: s.TenantID, FarmID: s.FarmID, OrderID: 1})
 			return err
@@ -425,6 +434,9 @@ func TestSystemScopeRequired(t *testing.T) {
 		},
 		"AlertRepo.OpenOrderTickets": func() error { _, err := AlertRepo{}.OpenOrderTickets(ctx, zero); return err },
 		"AlertRepo.KnownFarms":       func() error { _, err := AlertRepo{}.KnownFarms(ctx, zero); return err },
+		// P1-L8-B：关停报告跨农场读 dispatch_attempt
+		"KillSwitchRepo.RealSentAfter": func() error { _, _, err := KillSwitchRepo{}.RealSentAfter(ctx, zero, now, nil); return err },
+		"KillSwitchRepo.RealReadAfter": func() error { _, err := KillSwitchRepo{}.RealReadAfter(ctx, zero, now, nil); return err },
 	}
 	for name, call := range calls {
 		t.Run(name, func(t *testing.T) {

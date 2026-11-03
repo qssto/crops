@@ -60,6 +60,9 @@ type Trial struct {
 	// P1 L6：Events 是该 run 的 run_event 时间线（按 seq），degraded_matrix 使用；
 	// Runner 在 App 有库时从 RunDetail.Timeline 取，未记录为 nil。
 	Events []RunEvent
+	// P1-L8-A 审查修复：ConstraintChecks 是该 run 作业单的约束检查（含 PRE_DISPATCH 复检），recheck_returned 断言
+	// expect.dispatch.recheck_failed_rules 使用；Runner 在 App 有库且有作业单时读取，未记录为 nil。
+	ConstraintChecks []model.ConstraintCheck
 }
 
 // RunEvent 是一条 run_event（payload 原样，打分器按事件类型解码）。
@@ -133,4 +136,12 @@ type Score struct {
 	Value    float64 // 质量类维度的分值；红线类只看 Pass
 	Unknown  bool    // LLM-judge 无法判断，转人工
 	Evidence string  // 失败原因或引用原句
+	// NotApplicable 表示样本未声明该维度的期望，打分器按约定直接放行（P1-L8-A 审查修复）：报告据此区分
+	// 「通过」与「无适用样本」，避免某红线维度在套件里全部默认放行却显示 pass^k = 1.00。
+	NotApplicable bool
+}
+
+// NotApplicable 是样本未声明该维度期望时的放行分（Pass=true、NotApplicable=true）。
+func NotApplicable(why string) Score {
+	return Score{Pass: true, Value: 1, NotApplicable: true, Evidence: why}
 }

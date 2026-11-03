@@ -69,6 +69,7 @@ type RegulationMap struct {
 
 type regulationMapFile struct {
 	Version int               `yaml:"version"`
+	Signoff RegulationSignoff `yaml:"signoff"` // P1-L8-B：头部签字元数据，只给 gray-preflight 读，不参与条目校验
 	Entries []RegulationEntry `yaml:"entries"`
 }
 

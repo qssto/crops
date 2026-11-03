@@ -338,6 +338,13 @@ func TestValidator_DefaultRules(t *testing.T) {
 			}},
 		{name: "foreign not in question", wantRule: RuleExpect, wantID: "s-1",
 			mutate: func(s []*Sample) []*Sample { s[1].Expect.Foreign = []string{"uav-p100-09"}; return s }},
+		// P1-L8-A 审查修复：工具返回夹带的他场编码也可声明为 foreign
+		{name: "foreign in fixture return ok",
+			mutate: func(s []*Sample) []*Sample {
+				s[1].Fixtures.MCP = map[string][]ToolFixture{"field.history": {{Return: historyWithNote("抄送 field-201")}}}
+				s[1].Expect.Foreign = []string{"field-201"}
+				return s
+			}},
 		{name: "suite in parent of topic dir ok",
 			mutate: func(s []*Sample) []*Sample { s[1].Path = "eval/suites/regression/cross_farm/s-1.yaml"; return s }},
 		{name: "suite mismatches dir", wantRule: RuleEnums, wantID: "s-1",

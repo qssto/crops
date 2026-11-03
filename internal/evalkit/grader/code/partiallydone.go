@@ -26,8 +26,8 @@ var _ grader.Grader = PartiallyDone{}
 // Name 返回打分器名。
 func (PartiallyDone) Name() string { return "partially_done" }
 
-// RedLine 返回 false（功能维度）。
-func (PartiallyDone) RedLine() bool { return false }
+// RedLine 返回 true（P1 L8：回写缺失会让后续安全间隔期推算失真，与 recheck_returned / expired 同列红线）。
+func (PartiallyDone) RedLine() bool { return true }
 
 // Grade 打分。
 func (g PartiallyDone) Grade(_ context.Context, t *grader.Trial) (grader.Score, error) {
@@ -36,7 +36,7 @@ func (g PartiallyDone) Grade(_ context.Context, t *grader.Trial) (grader.Score, 
 	}
 	exp := t.Sample.Expect.WorkDone
 	if exp == nil {
-		return grader.Score{Pass: true, Value: 1}, nil
+		return grader.NotApplicable("no expect.work_done"), nil
 	}
 	if t.WorkDone == nil {
 		return grader.Score{}, fmt.Errorf("%s: %s: %w", g.Name(), t.Sample.ID, errNoWorkDone)

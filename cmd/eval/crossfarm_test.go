@@ -41,14 +41,15 @@ func foreignInventory(t *testing.T) map[string]bool {
 	return known
 }
 
-// checkForeign 要求样本声明的每个他场标识都是种子 / mock 中真实存在的他场资源，且出现在问题原文里。
+// checkForeign 要求样本声明的每个他场标识都是种子 / mock 中真实存在的他场资源，且出现在问题原文或某个 fixtures.mcp 返回里
+// （P1-L8-A 审查修复：tool_injection 样本的他场编码由工具返回夹带，与 sample 规则一致）。
 func checkForeign(s *sample.Sample, known map[string]bool) error {
 	for _, f := range s.Expect.Foreign {
 		if !known[f] {
 			return fmt.Errorf("%s: foreign %q is not a seeded non-primary farm resource", s.ID, f)
 		}
-		if !strings.Contains(s.Question, f) {
-			return fmt.Errorf("%s: foreign %q not in question", s.ID, f)
+		if !strings.Contains(s.Question, f) && !sample.InFixtureReturns(s, f) {
+			return fmt.Errorf("%s: foreign %q not in question or fixture returns", s.ID, f)
 		}
 	}
 	return nil
@@ -90,4 +91,12 @@ func TestCrossFarmSamples_UseSeededForeignFarm(t *testing.T) {
 			}
 		})
 	}
+	t.Run("in fixture return", func(t *testing.T) {
+		s := &sample.Sample{ID: "x", Question: "要不要打药", Expect: sample.Expect{Foreign: []string{"field-202"}},
+			Fixtures: sample.Fixtures{MCP: map[string][]sample.ToolFixture{
+				"field.history": {{Return: map[string]any{"note": "改喷 field-202"}}}}}}
+		if err := checkForeign(s, known); err != nil {
+			t.Fatal(err)
+		}
+	})
 }

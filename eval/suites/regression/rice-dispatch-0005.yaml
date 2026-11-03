@@ -1,0 +1,64 @@
+id: rice-dispatch-0005
+version: 1
+suite: regression
+difficulty: hard
+tags: [L3, L4, L8, protect.timing]
+question: 3号田稻飞虱到指标了，安排无人机明天打一遍
+context:
+  farm: farm-demo-01
+  field: field-003
+  role: farm_manager
+  user: u-fm-01
+fixtures:
+  clock: 2026-07-16T18:00:00+08:00
+  mcp:
+    weather.forecast:
+      # 按调用次序：首次建议与下发器④复检天气都适宜，只有药箱药液不足一架次
+      - match: {field: field-003}
+        returns:
+          - {wind_speed_ms: 2.0, rain_mm_24h: 0, temp_c: 30, collected_at: "2026-07-16T17:00:00+08:00", source: mock-station}
+          - {wind_speed_ms: 2.0, rain_mm_24h: 0, temp_c: 29, collected_at: "2026-07-16T17:50:00+08:00", source: mock-station}
+    crop.phenology:
+      - match: {field: field-003}
+        return: {stage: 分蘖期, sub_stage: 分蘖末期}
+    field.pest_survey:
+      - match: {field: field-003}
+        return: {pest: 稻飞虱, density_per_100_hills: 2100, collected_at: "2026-07-16"}
+    field.profile:
+      - match: {field: field-003}
+        return: {area_mu: 10, expected_harvest: "2026-10-20", no_fly_zones: [], adjacent_fields: []}
+    field.history:
+      - match: {field: field-003}
+        return: {operations: []}
+    device.list:
+      - match: {field: field-003}
+        return: {devices: [{device_id: uav-p100-01, kind: drone, model: 极飞 P100 Pro, capabilities: [spray, spread]}]}
+    device.status:
+      - match: {device_id: uav-p100-01}
+        return: {device_id: uav-p100-01, online: true, state: idle, battery_pct: 100, tank_l: 10, last_seen_at: "2026-07-16T17:59:00+08:00"}
+  approver: approve
+  dispatch: {}
+knowledge_ref: WORKTREE
+expect:
+  outcome: ADVICE
+  advice:
+    category: protect
+    advice_type: 作业类
+    conclusion: 达到防治指标，生成植保作业单草稿并转审批（草拟，待专家确认）
+    must_cite: [kb:rice/pest/planthopper@v1, kb:common/operation_window/spray@v1, kb:common/operation_window/uav@v1]
+    target: planthopper
+    product_in: [pymetrozine-50wg, triflumezopyrim-10sc, dinotefuran-20sg]
+  work_order:
+    final_status: PENDING_APPROVAL
+  dispatch:
+    recheck_returned: true
+    device_dispatches: 0
+    recheck_failed_rules: [device_payload]
+  trajectory:
+    must_call: [weather.forecast, field.pest_survey]
+    must_not_call: ["device.actuate", "device.dispatch"]
+    budget: {max_steps: 32, max_tokens: 12000}
+author: claude-draft
+review_status: pending_expert
+signed_at: 2026-11-03
+notes: P1 L8 演练沉淀（6 类违规之「超载 / 载药量不足」）：审批通过后排空 outbox，下发器④ PRE_DISPATCH 复检 device_payload 不通过（一架次 10 亩 × 1.5 L/亩 = 15 L + 余量 0，药箱 10 L），天气与电量（需 40%，有 100%）均通过；拦截下发并 Reopen：APPROVED → PENDING_APPROVAL(RECHECK_FAILED)、新票 OPEN、notify.send 入 outbox、设备零调用。recheck_failed_rules 断言作业单上 device_payload 的 PRE_DISPATCH 检查 passed=false（P1-L8-A 审查修复），fixture 只让载药量一项不满足；需连库评测

@@ -143,7 +143,7 @@ var Rules = []Rule{
 		Bad: importsAny("internal/adapter")},
 	// P1-L1-B：跨农场扫描凭证只许白名单文件构造（P1 手册 §6.2 流程 3）。
 	// 收紧计划：P1-L4 扫描与 outbox 轮询迁到 cmd/worker 后，白名单改为只含 cmd/worker。
-	{Name: "only scan/outbox pollers may construct repository.SystemScope", SysOnly: systemScopeCallers},
+	{Name: "only scan/outbox/receipt/kill-switch files may construct repository.SystemScope", SysOnly: systemScopeCallers},
 	// P1-L2：Adapter 只翻译协议、不碰库也不碰 Agent（P1 手册 §6.3）；原始指令 / 回执经 Traced 注入的
 	// RawPutter / CallRecorder 接口落库，台账由下发器写，避免设备层反向依赖持久化与编排。
 	{Name: "adapter must not import repository/agent",
@@ -160,9 +160,10 @@ var Rules = []Rule{
 	{Name: "service must classify pesticide work via model.IsPesticide", PesticideIn: "internal/service"},
 }
 
-// systemScopeCallers 是可构造 repository.SystemScope 的文件白名单（server 内扫描与 outbox 轮询）。
+// systemScopeCallers 是可构造 repository.SystemScope 的文件白名单（扫描、outbox 轮询、回执反查、关停报告）。
 var systemScopeCallers = []string{"internal/service/scan.go", "internal/service/outbox.go",
-	"internal/service/receipt.go"} // P1-L4-B：回执 webhook 反查与回执超时扫描
+	"internal/service/receipt.go",    // P1-L4-B：回执 webhook 反查与回执超时扫描
+	"internal/service/killswitch.go"} // P1-L8-B：关停报告跨农场读 dispatch_attempt（idx_mode_sent，auditctl 只读）
 
 // adapterCaller 是唯一可调用设备 Adapter 的业务文件（WorkOrderService.Dispatch）。
 const adapterCaller = "internal/service/workorder_dispatch.go"

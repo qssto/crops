@@ -35,6 +35,11 @@ func TestReferenceCheck_Dispatch(t *testing.T) {
 		{name: "re-dispatch after reopen", s: mk("redispatch", "DONE", true, "approve", 1)},
 		{name: "redelivery counts once", s: mk("redeliver", "DONE", false, "", 1)},
 		{name: "expired never dispatched", s: mk("expired", "EXPIRED", false, "", 0)},
+		{name: "returned by named rules", s: func() *sample.Sample {
+			s := mk("rules", "PENDING_APPROVAL", true, "", 0)
+			s.Expect.Dispatch.RecheckFailedRules = []string{"device_battery", "device_payload"}
+			return s
+		}()},
 		// 应失败：退回且未重审却期望设备已下发（与红线④矛盾）
 		{name: "returned but expects a dispatch fails", violation: "fails recheck_returned",
 			s: mk("contra", "PENDING_APPROVAL", true, "", 1)},

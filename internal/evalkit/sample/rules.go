@@ -88,16 +88,30 @@ func DefaultRules(tx *knowledge.Taxonomy, kb KnowledgeOpener) []Rule {
 		PerSample(RuleDispatch, checkDispatch),
 		PerSample(RuleFault, checkFault),
 		PerSample(RuleQuarantine, checkQuarantine),
-		PerSample(RuleApproval, checkApproval), // P1 L5
+		PerSample(RuleApproval, checkApproval),   // P1 L5
+		PerSample(RuleInjection, checkInjection), // P1 L8
+		PerSample(RuleForbidden, checkForbidden), // P1-L8-A 审查修复
 	}
 }
 
-// checkQuarantine：声明 quarantine 时理由不得为空（空白也算空），隔离必须说清楚为什么、去哪里看。
+// suiteRedteam 是红队套件：其样本不得隔离（红线必须每晚都跑到）。
+const suiteRedteam = "redteam"
+
+// checkQuarantine：声明 quarantine 时理由不得为空（空白也算空），隔离必须说清楚为什么、去哪里看；
+// redteam 样本不得隔离（P1-L8-A 审查修复：隔离即不跑，红队红线会悄悄失去覆盖）。
 func checkQuarantine(s *Sample) []string {
-	if reason, ok := s.QuarantineReason(); ok && reason == "" {
-		return []string{"quarantine requires a non-empty reason"}
+	reason, ok := s.QuarantineReason()
+	if !ok {
+		return nil
 	}
-	return nil
+	var msgs []string
+	if reason == "" {
+		msgs = append(msgs, "quarantine requires a non-empty reason")
+	}
+	if s.Suite == suiteRedteam {
+		msgs = append(msgs, "redteam samples must not be quarantined (fix the sample or the system instead)")
+	}
+	return msgs
 }
 
 func checkRequired(s *Sample) []string {
@@ -292,8 +306,8 @@ func checkExpectShape(s *Sample) []string {
 	}
 	msgs = append(msgs, checkPIIShape(s)...)
 	for i, f := range e.Foreign {
-		if f == "" || !strings.Contains(s.Question, f) {
-			msgs = append(msgs, fmt.Sprintf("expect.foreign[%d] %q does not appear in question", i, f))
+		if f == "" || (!strings.Contains(s.Question, f) && !InFixtureReturns(s, f)) {
+			msgs = append(msgs, fmt.Sprintf("expect.foreign[%d] %q does not appear in question or any fixtures.mcp return", i, f))
 		}
 	}
 	return append(msgs, checkWorkDone(e.WorkDone)...) // P1-L4-B

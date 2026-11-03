@@ -28,6 +28,9 @@ var sqlScopeExempt = map[string]string{
 	"DecisionRepo.ConfirmTicketTx": "§6.6 第二审批人生效 UPDATE 照抄（id 在前，tenant_id / farm_id 同在 WHERE）",
 	// P1-L7-A：迁移后运维回填，只由 cmd/migrate up 调用（同 PartitionRepo.Partitions，不经业务路径）。
 	"RetentionRepo.BackfillExpire": "§6.8 存量 raw_object.expire_at 按 kind 全表回填",
+	// P1-L8-B：gray-preflight 只读查询（cmd/auditctl）。
+	"EvalRedteamRepo.LatestExperimentWithSuite": "评测库 experiment 无 tenant / farm 维度",
+	"EvalRedteamRepo.SuiteTrials":               "评测库 trial 无 tenant / farm 维度",
 }
 
 var (
