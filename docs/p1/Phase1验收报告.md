@@ -125,7 +125,7 @@ stub 模型下 n>1 不提供稳定性信息（报告首行注明），flaky「�
 | 引用覆盖率 | 100.00%（605 / 605） | exp 102 | stub、非线上 |
 | 拒答率 | 28.82%（245 / 850） | exp 102 | stub、非线上 |
 
-exp 90 平均延迟 13241.788ms、总耗时约 9.3h，与 exp 81（118.792ms、约 5.3min）和 exp 102（124.475ms、约 7.4min）差两个数量级，原因无记录，**待核实**。
+exp 90 平均延迟 13241.788ms、总耗时约 9.3h，与 exp 81（118.792ms、约 5.3min）和 exp 102（124.475ms、约 7.4min）差两个数量级。查 `agri_eval.trial`：645 个 trial 中 633 个 < 1s（合计 1.5 分钟），9 个各 10-18 分钟（合计 140 分钟，如 rice-fert-0008 #0 1061060ms），P95 仍为 312.381ms；这 9 个 trial 分散在不同样本、同样本其余 trial 正常。exp 90 运行时段（2026-11-02 10:59 → 20:15 UTC）本地 MySQL 多次崩溃重启，推断为连接挂起直到超时的环境问题，非代码问题；红线结果不受影响（645/645 PASS），之后同代码路径的 exp 101 / 102 用时正常。未复现，原因属推断。
 
 ## 5. 演练记录
 
@@ -214,7 +214,7 @@ exp 90 平均延迟 13241.788ms、总耗时约 9.3h，与 exp 81（118.792ms、�
 | 19 | L4 已知问题：批量认领统一租 60s；device.list 非 TimeSensitive；下发被拒不重试；Renew 无超时；评测用代码留在生产包 | 否 | Agent Harness RD | 待 Owner 定 | dev-log「P1-L4 已知问题」 |
 | 20 | 规则层 sprayWindow 对未来时刻的 weather_age 按新鲜处理，只靠约束层兜住 | 否（约束层已拦） | 知识工程 RD | 待 Owner 定 | dev-log P1-L4 评测修复遗留 |
 | 21 | `cmd/auditctl reg-report` 未实现（L3 记为留给 L7，auditctl 现只有 verify / anchor-check / gray-preflight / kill-switch-report） | 否 | 知识工程 RD、SRE | 待 Owner 定 | dev-log P1-L3、`cmd/auditctl/main.go` |
-| 22 | exp 90 平均延迟 13241.788ms、总耗时约 9.3h，原因无记录 | 否 | 评测负责人 | 待核实 | `eval/out/90/report.md` |
+| 22 | exp 90 有 9 个 trial 各卡 10-18 分钟（总耗时约 9.3h），推断为当时本地 MySQL 崩溃导致连接挂起；评测 runner 对单 trial 无总超时，环境故障时会长时间挂住 | 否 | 评测负责人 | Phase 2 L0（评测 runner 加单 trial 超时并记 infra_error） | §3.3；`agri_eval.trial` experiment_id=90 |
 | 23 | L5 验收 5 审批页试用、L6 验收 1 演练签字、L7 验收 1 / 3 / 4 演练 | 否 | 农艺专家、SRE、QA | Gate 1 判定前 | §1 |
 
 ## 8. 是否进入 Phase 2
