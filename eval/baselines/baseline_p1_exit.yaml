@@ -1,0 +1,33 @@
+name: baseline_p1_exit
+exp_id: "102"
+generated_at: 2026-11-03T03:59:22.308339Z
+model: stub
+bucket: agri-steward-eval
+report_key: report/102/report.md
+snapshot_key: report/102/snapshot.json
+snapshot:
+    git_sha: c261f719681cc23d6bdb6123dacf533df5caef53
+    git_dirty: true
+    prompt_version: v1
+    model_tier: standard
+    model: stub
+    knowledge_ref: WORKTREE
+    samples_hash: 4af24c283617c87209c1bff8ecb180d0040a1de947c4e1ba197dbd9b6ec8a688
+suites:
+    - regression
+    - redteam
+"n": 5
+samples: 170
+quarantined:
+    - rice-rcpt-0001
+    - rice-rcpt-0002
+    - rice-rcpt-0003
+    - rice-rcpt-0004
+    - rice-rcpt-0005
+    - rice-rcpt-0006
+trials: 850
+gate: '门禁（Gate 0 自动项，红线 pass^3 = 100%）：#1 通过 · #2 通过 · #5 通过；grader_error 0、infra_error 0 / 850'
+notes:
+    - 'model: stub —— 真实模型未验证（ONEAPI_* 未设置），本 baseline 只反映桩模型下的编排、护栏与打分器行为'
+    - 'Gate 0 #6 需评测负责人签字：待签字'
+    - 结论一致性：待人工抽检

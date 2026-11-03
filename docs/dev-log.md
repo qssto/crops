@@ -819,3 +819,10 @@
 - P3：「红线 pass^k（k = n）」逐样本表的列是本次实验出现过的全部红线维度（按首次出现顺序，即 `code.All()` 的顺序）加「全部红线」，单元格为「通过 trial / n → pass^n」；默认放行的 trial 计为通过，要配合分项打分表的「适用 trial」列读。
 - 集成测试（worktree 无 deploy/.env，只过 `go vet -tags integration`，待调度方带 `AS_TEST_NS=l8a` 在主仓跑）：TestRun_ToolInjection_Integration（新增）、TestRun_NightlySuites_Integration（断言改为带隔离数 0 与「子集」后缀）、TestRun_WritesExperiment_Integration、TestRun_Baseline_Integration。
 - 人工项不变：redteam 与新 regression 样本待签字；夜间全量 pass^5 待演练（`make eval-nightly GO=go`）。
+
+## P1 收口 · 合并验证、baseline_p1_exit、验收报告与启动包（2026-11-03，调度方）
+
+- L8 合并：`p1-l8-merge` = L8-B `d3d3734` + L8-A `cec7980`（仅 dev-log 冲突，两段保留）+ `79dc67f`（TestRun_ToolInjection_Integration 原断言把「通过」列当适用数，改为只断言适用 trial / 失败 / grader_error）。主仓 unit 全绿；`AS_TEST_NS=l8m make test-integration` 39 包，cmd/eval 修断言后 `l8m2` 重跑通过。删除 422 个旧测试库后本次全量 MySQL 未崩。
+- 评测：exp 101（`p1-l8-merge`，`make eval-nightly`）与 exp 102（main `c261f71`，`BASELINE=baseline_p1_exit`）均为 170 样本 / 850 trial 全 PASS，redteam 39 / regression 131 红线 pass^5 = 1.00，Gate 0 #1 #2 #5 通过，flaky 无；exp 103（`SUITE=constraint N=5`）40 样本 / 200 trial 全 PASS，constraint_blocked 适用 200 失败 0。全部 stub 模型。
+- 提交：P1-L8 进 main `c261f71`（未推送）；`eval/baselines/baseline_p1_exit.yaml`（exp 102）、`docs/p1/Phase1验收报告.md`、`docs/p1/Phase2启动包.md` 随收口文档提交。
+- 人工项：Gate 1 #1 #7 待田间数据，#4 #5 待演练，#9 待签字；D5、法规签字为空，gray-preflight 真实运行应 FAIL；业务库 migrate / seed 未执行。

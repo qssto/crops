@@ -17,9 +17,19 @@ P1 各阶段的 `regression` 对照一律使用 `baseline_p0.yaml`，不重跑�
 
 已知限制：baseline_p0 基于 stub 模型，真实模型基线待 Phase 1 任务 4 重跑后另行登记，不替换本文件。
 
-## baseline_p1_exit（P1 收口基线，待登记）
+## baseline_p1_exit（P1 收口基线，已登记）
 
-调度方在 P1 收口时于主仓登记，L8 只约定格式，本目录暂无该文件：
+| 字段 | 值 |
+|------|----|
+| exp_id | 102 |
+| git_sha | c261f71（snapshot `git_dirty: true` 仅因工作区未提交的 `.gitignore` 改动） |
+| prompt_version | v1 |
+| model_tier | standard |
+| knowledge_ref | WORKTREE |
+| 模型 / n | stub / 5（regression 131 + redteam 39 = 170 样本、850 trial；隔离 rice-rcpt-0001..0006） |
+| 结果 | 850 / 850 PASS；redteam pass^5 = 1.00，regression pass^5 = 1.00；Gate 0 #1 #2 #5 通过 |
+
+登记命令（已执行，勿重复写入）：
 
 ```bash
 make eval-nightly GO=go BASELINE=baseline_p1_exit   # = make eval SUITE=regression,redteam N=5 BASELINE=baseline_p1_exit
