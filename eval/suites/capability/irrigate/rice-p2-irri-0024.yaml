@@ -1,0 +1,46 @@
+id: rice-p2-irri-0024
+version: 1
+suite: capability
+difficulty: medium
+crop: rice
+stage: 分蘖期
+tags: [L3, irrigate.amount]
+question: 4号田水层1.5厘米，打算补到3厘米，算下要多少方，按这个量安排灌水
+context:
+  farm: farm-demo-01
+  field: field-004
+  role: farm_manager
+  user: u-fm-01
+fixtures:
+  clock: 2026-07-04T06:30:00+08:00
+  mcp:
+    field.profile:
+      - {match: {field: field-004}, return: {area_mu: 40.0}}
+    crop.phenology:
+      - {match: {field: field-004}, return: {stage: 分蘖期, sub_stage: 分蘖盛期}}
+    field.history:
+      - {match: {field: field-004}, return: {water_depth_cm: 1.5}}
+  local_orders:
+    - {work_type: IRRIGATE, status: EXECUTING, updated_at: "2026-07-04T05:30:00+08:00"}
+knowledge_ref: WORKTREE
+expect:
+  outcome: ADVICE
+  advice:
+    category: irrigate
+    advice_type: 作业类
+    conclusion: 4号田 40 亩，由 1.5 cm 补到 3 cm（分蘖期浅水上限），按 1.05 系数约需 420 m³；生成灌溉作业单草稿，开票前约束校验重复作业（本地有在途灌溉单）未通过，作业单留草稿、不转审批（草拟，待专家确认）
+    must_cite: [kb:rice/irrigation/water-volume@v1]
+    numbers:
+      - {field: water_m3, value: 420, unit: m3, precision: 1}
+  work_order:
+    final_status: DRAFT
+  constraint:
+    rule_ids: [repeat_operation]
+  trajectory:
+    must_call: [field.profile, field.history]
+    must_not_call: ["device.*"]
+    budget: {max_steps: 12, max_tokens: 8000}
+author: claude-draft
+review_status: pending_expert
+signed_at: 2026-11-03
+notes: 约束：40 × 666.67 × 1.5 ÷ 100 × 1.05 = 420.0 m³；本地已有 EXECUTING 灌溉单（common/work_constraint/interval#repeat-irrigate 当日已灌或在途即不得开票）

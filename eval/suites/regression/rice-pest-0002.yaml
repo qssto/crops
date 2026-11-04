@@ -2,6 +2,8 @@ id: rice-pest-0002
 version: 2
 suite: regression
 difficulty: medium
+crop: rice
+stage: 分蘖期
 tags: [L4, protect.identify]
 question: 6号田叶片上有梭形褐色病斑，中间灰白，是什么病？
 context:

@@ -1,0 +1,46 @@
+id: rice-p2-prot-0016
+version: 1
+suite: capability
+difficulty: easy
+crop: rice
+stage: 返青期
+tags: [L4, protect.product]
+question: 2号田插秧第6天，准备做封闭除草，用什么药？怎么撒？
+context:
+  farm: farm-demo-01
+  field: field-002
+  role: operator
+  user: u-op-01
+fixtures:
+  clock: 2026-06-22T08:30:00+08:00
+  mcp:
+    crop.phenology:
+      - match: {field: field-002}
+        return: {stage: 返青期}
+    field.history:
+      - match: {field: field-002}
+        return: {transplant_date: "2026-06-16"}
+    weather.forecast:
+      - match: {field: field-002}
+        return: {wind_speed_ms: 1.5, rain_mm_24h: 0, temp_c: 26, collected_at: "2026-06-22T07:30:00+08:00", source: mock-station}
+    field.profile:
+      - match: {field: field-002}
+        return: {expected_harvest: "2026-10-20", no_fly_zones: [], adjacent_fields: []}
+knowledge_ref: WORKTREE
+expect:
+  outcome: ADVICE
+  advice:
+    category: protect
+    advice_type: 作业类
+    conclusion: 封闭处理选苄嘧磺隆药土法，拌细土撒施，田间保水 3–5 cm 保持 5–7 天（草拟，待专家确认）
+    must_cite: [kb:rice/pest/weeds@v1, kb:rice/irrigation/spray-water@v1]
+    target: weeds
+    product_in: [bensulfuron-methyl-10wp]
+  trajectory:
+    must_call: [crop.phenology, field.history]
+    must_not_call: ["device.*"]
+    budget: {max_steps: 12, max_tokens: 8000}
+author: claude-draft
+review_status: pending_expert
+signed_at: 2026-11-03
+notes: 问题含「封闭」→ 规则层限定药土法；茎叶处理药剂不在期望内

@@ -1,0 +1,49 @@
+id: rice-p2-prot-0062
+version: 1
+suite: capability
+difficulty: easy
+crop: rice
+stage: 抽穗扬花期
+tags: [L4, protect.product]
+question: 4号田齐穗了，穗瘟第二遍药该用哪些？
+context:
+  farm: farm-demo-01
+  field: field-004
+  role: operator
+  user: u-op-01
+fixtures:
+  clock: 2026-08-31T07:30:00+08:00
+  mcp:
+    crop.phenology:
+      - match: {field: field-004}
+        return: {stage: 抽穗扬花期, sub_stage: 齐穗期}
+    field.pest_survey:
+      - match: {field: field-004}
+        return: {pest: 稻瘟病, panicle_emerged_rate: 0.92, collected_at: "2026-08-30"}
+    weather.forecast:
+      - match: {field: field-004}
+        return: {wind_speed_ms: 2.0, rain_mm_24h: 0, temp_c: 28, collected_at: "2026-08-31T06:30:00+08:00", source: mock-station}
+    field.history:
+      - match: {field: field-004}
+        return: {operations: []}
+    field.profile:
+      - match: {field: field-004}
+        return: {expected_harvest: "2026-10-18", no_fly_zones: [], adjacent_fields: []}
+knowledge_ref: WORKTREE
+expect:
+  outcome: ADVICE
+  advice:
+    category: protect
+    advice_type: 作业类
+    conclusion: 已到齐穗期，按穗瘟预防在齐穗期施第二次药，可在三环唑、稻瘟灵、春雷霉素中选用（草拟，待专家确认）
+    must_cite: [kb:rice/pest/blast@v1, kb:common/operation_window/spray@v1]
+    target: blast
+    product_in: [tricyclazole-75wp, isoprothiolane-40ec, kasugamycin-2sl]
+  trajectory:
+    must_call: [field.pest_survey]
+    must_not_call: ["device.*"]
+    budget: {max_steps: 14, max_tokens: 10000}
+author: claude-draft
+review_status: pending_expert
+signed_at: 2026-11-03
+notes: panicle_emerged_rate 0.92 ≥0.05；农事记录未登记首遍用药，候选全集

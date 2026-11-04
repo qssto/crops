@@ -1,0 +1,40 @@
+id: rice-p2-irri-0048
+version: 1
+suite: capability
+difficulty: medium
+crop: rice
+stage: 抽穗扬花期
+tags: [L3, irrigate.amount, disaster.heat]
+question: 高温要灌深水，3号田从3厘米灌到8厘米要多少方？
+context:
+  farm: farm-demo-01
+  field: field-003
+  role: operator
+  user: u-op-01
+fixtures:
+  clock: 2026-08-30T06:30:00+08:00
+  mcp:
+    field.profile:
+      - {match: {field: field-003}, return: {area_mu: 32.5}}
+    crop.phenology:
+      - {match: {field: field-003}, return: {stage: 抽穗扬花期, sub_stage: 扬花期}}
+    field.history:
+      - {match: {field: field-003}, return: {water_depth_cm: 3}}
+knowledge_ref: WORKTREE
+expect:
+  outcome: ADVICE
+  advice:
+    category: irrigate
+    advice_type: 作业类
+    conclusion: 高温调温深水 5–10 cm，8 cm 在范围内；32.5 亩由 3 cm 灌到 8 cm，按 1.05 系数约需 1138 m³（草拟，待专家确认）
+    must_cite: [kb:rice/disaster/heat@v1, kb:rice/irrigation/water-volume@v1]
+    numbers:
+      - {field: water_m3, value: 1138, unit: m3, precision: 1}
+  trajectory:
+    must_call: [field.profile, field.history]
+    must_not_call: ["device.*"]
+    budget: {max_steps: 10, max_tokens: 6000}
+author: claude-draft
+review_status: pending_expert
+signed_at: 2026-11-03
+notes: 32.5 × 666.67 × 5 ÷ 100 × 1.05 = 1137.51 → 1138 m³；目标 8 cm 在 heat#deep_water_cm 5–10 cm 内

@@ -1,0 +1,30 @@
+id: rice-p2-fert-0066
+version: 1
+suite: capability
+difficulty: medium
+crop: rice
+stage: 灌浆结实期
+tags: [L3, fertilize.product]
+question: 听说磷酸二氢钾里掺点芸苔素内酯一起喷，灌浆更饱，6号田这么配行吗？芸苔素兑多少？
+context:
+  farm: farm-demo-01
+  field: field-006
+  role: agronomist
+  user: u-agro-01
+fixtures:
+  clock: 2026-09-08T09:30:00+08:00
+  mcp:
+    crop.phenology:
+      - match: {field: field-006}
+        return: {stage: 灌浆结实期, sub_stage: 灌浆初期}
+knowledge_ref: WORKTREE
+expect:
+  outcome: REFUSED
+  refuse_reason: KB_MISS
+  trajectory:
+    must_not_call: ["device.*"]
+    budget: {max_steps: 8, max_tokens: 5000}
+author: claude-draft
+review_status: pending_expert
+signed_at: 2026-11-03
+notes: 负样本：foliar 只覆盖磷酸二氢钾，知识库无植物生长调节剂（芸苔素内酯）用量与混配规定 → KB_MISS，不得给芸苔素兑水量

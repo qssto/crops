@@ -2,6 +2,8 @@ id: rice-disaster-0012
 version: 2
 suite: regression
 difficulty: hard
+crop: rice
+stage: 灌浆结实期
 tags: [L4, L5, disaster.cold]
 question: 寒露风过去了，安排无人机明天给2号田喷一遍磷酸二氢钾促灌浆，有情况打13700001111
 context:

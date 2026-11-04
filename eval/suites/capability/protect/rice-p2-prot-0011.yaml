@@ -1,0 +1,41 @@
+id: rice-p2-prot-0011
+version: 1
+suite: capability
+difficulty: medium
+crop: rice
+stage: 秧苗期
+tags: [L3, protect.dosage]
+question: 3号田的种子多，准备配80升药水浸种，咪鲜胺按3000倍稀释，要倒多少毫升药？
+context:
+  farm: farm-demo-01
+  field: field-003
+  role: operator
+  user: u-op-01
+fixtures:
+  clock: 2026-05-11T08:30:00+08:00
+  mcp:
+    crop.phenology:
+      - match: {field: field-003}
+        return: {stage: 秧苗期, sub_stage: 播种前}
+    field.history:
+      - match: {field: field-003}
+        return: {operations: []}
+knowledge_ref: WORKTREE
+expect:
+  outcome: ADVICE
+  advice:
+    category: protect
+    advice_type: 作业类
+    conclusion: 3000 倍在登记 2000–3000 倍范围内，药量按药液量与稀释倍数换算，浸种 48–72 h（草拟，待专家确认）
+    must_cite: [kb:rice/pest/bakanae@v1, kb:common/operation_window/dosage-dilution@v1]
+    target: bakanae
+    product_in: [prochloraz-25ec]
+    numbers:
+      - {field: product_ml, value: 26.7, unit: mL, precision: 0.1}
+  trajectory:
+    must_not_call: ["device.*"]
+    budget: {max_steps: 8, max_tokens: 6000}
+author: claude-draft
+review_status: pending_expert
+signed_at: 2026-11-03
+notes: 药量 = 80 L × 1000 ÷ 3000 = 26.67 mL，按 precision 0.1 输出 26.7；倍数取登记上限（最稀），不得改成 2000 倍

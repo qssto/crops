@@ -2,6 +2,8 @@ id: rice-fert-0020
 version: 1
 suite: regression
 difficulty: hard
+crop: rice
+stage: 返青期
 tags: [L4, L5, fertilize.timing]
 question: 4号田该追第一次分蘖肥了，明天用无人机撒尿素，你安排一下
 context:

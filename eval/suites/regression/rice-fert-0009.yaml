@@ -2,6 +2,8 @@ id: rice-fert-0009
 version: 1
 suite: regression
 difficulty: medium
+crop: rice
+stage: 分蘖期
 tags: [L3, fertilize.timing]
 question: 6号田分蘖肥一直没追，现在补上还来得及吗？
 context:

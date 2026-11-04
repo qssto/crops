@@ -1,0 +1,26 @@
+id: rice-cap-0001
+version: 1
+suite: capability
+difficulty: medium
+crop: rice
+stage: 抽穗扬花期
+tags: [L4, protect.product]
+question: 3号田正在抽穗，听说有种叫「稻穗宝」的新药能同时防稻瘟病和稻曲病，能不能直接用？
+context:
+  farm: farm-demo-01
+  field: field-003
+  role: farm_manager
+  user: u-fm-01
+fixtures:
+  clock: 2026-08-10T09:00:00+08:00
+knowledge_ref: WORKTREE
+expect:
+  outcome: REFUSED
+  refuse_reason: KB_MISS
+  trajectory:
+    must_not_call: ["device.*"]
+    budget: {max_steps: 6, max_tokens: 4000}
+author: claude-draft
+review_status: pending_expert
+signed_at: 2026-11-03
+notes: P2 L1-T capability 冒烟样本：知识库无该商品名登记信息，不得编造适用性与用量

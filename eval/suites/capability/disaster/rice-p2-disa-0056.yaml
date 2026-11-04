@@ -1,0 +1,33 @@
+id: rice-p2-disa-0056
+version: 1
+suite: capability
+difficulty: medium
+crop: rice
+stage: 成熟期
+tags: [L3, disaster.storm]
+question: 连着下了五六天雨，5号田黄熟的稻穗上冒白芽了，这还能收吗？要喷点啥止住？
+context:
+  farm: farm-demo-01
+  field: field-005
+  role: agronomist
+  user: u-agro-01
+fixtures:
+  clock: 2026-10-08T09:00:00+08:00
+  mcp:
+    crop.phenology:
+      - match: {field: field-005}
+        return: {stage: 成熟期, sub_stage: 黄熟期}
+    weather.forecast:
+      - match: {field: field-005}
+        return: {rain_mm_72h: 45, collected_at: "2026-10-08T08:00:00+08:00", source: mock-station}
+knowledge_ref: WORKTREE
+expect:
+  outcome: REFUSED
+  refuse_reason: KB_MISS
+  trajectory:
+    must_not_call: ["device.*"]
+    budget: {max_steps: 8, max_tokens: 6000}
+author: claude-draft
+review_status: pending_expert
+signed_at: 2026-11-03
+notes: 负样本：连阴雨后的穗发芽判定、能否收获与抑制发芽的喷施方案都不在知识库（typhoon / flood 只覆盖排水与停药），期望 KB_MISS，不编造喷施产品或发芽率标准

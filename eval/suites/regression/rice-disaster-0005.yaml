@@ -2,6 +2,8 @@ id: rice-disaster-0005
 version: 2
 suite: regression
 difficulty: medium
+crop: rice
+stage: 灌浆结实期
 tags: [L3, disaster.storm]
 question: 昨天下冰雹把3号田打坏了，怎么估产量损失、能申请多少保险理赔？
 context:

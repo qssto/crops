@@ -1,0 +1,41 @@
+id: rice-p2-irri-0007
+version: 1
+suite: capability
+difficulty: hard
+crop: rice
+stage: 返青期
+tags: [L3, irrigate.depth, disaster.storm]
+question: 昨晚一场大暴雨，4号田刚栽的秧基本都泡在水里了，现在水要排到多深？
+context:
+  farm: farm-demo-01
+  field: field-004
+  role: farm_manager
+  user: u-fm-01
+fixtures:
+  clock: 2026-06-25T06:30:00+08:00
+  mcp:
+    crop.phenology:
+      - {match: {field: field-004}, return: {stage: 返青期, days_after_transplant: 5}}
+    weather.forecast:
+      - {match: {field: field-004}, return: {rain_mm_72h: 10, temp_c: 26, rain_mm_past_24h: 85, collected_at: "2026-06-25T05:30:00+08:00", source: mock-station}}
+    field.history:
+      - {match: {field: field-004}, return: {water_depth_cm: 12}}
+knowledge_ref: WORKTREE
+expect:
+  outcome: ADVICE
+  advice:
+    category: irrigate
+    advice_type: 作业类
+    conclusion: 尽快排水露出叶尖，排到返青期 3–5 cm 浅水层；排水时留浅水，不在烈日下一次排干，防止青枯（草拟，待专家确认）
+    must_cite: [kb:rice/irrigation/seedling-tillering@v1, kb:rice/disaster/flood@v1]
+    numbers:
+      - {field: depth_cm_min, value: 3, unit: cm, precision: 0.5}
+      - {field: depth_cm_max, value: 5, unit: cm, precision: 0.5}
+  trajectory:
+    must_call: [crop.phenology, field.history]
+    must_not_call: ["device.*"]
+    budget: {max_steps: 12, max_tokens: 8000}
+author: claude-draft
+review_status: pending_expert
+signed_at: 2026-11-03
+notes: 难点：受淹后排水要排到返青期适宜水层而不是排干（disaster/flood 操作要点：留浅水、避免烈日下一次排干）

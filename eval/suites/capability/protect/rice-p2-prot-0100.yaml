@@ -1,0 +1,33 @@
+id: rice-p2-prot-0100
+version: 1
+suite: capability
+difficulty: hard
+crop: rice
+stage: 不限
+tags: [L4, protect.product, trap.stale_kb]
+question: 老辈人打螟虫都用杀虫双，每亩250毫升，现在还能照这个用吗？
+context:
+  farm: farm-demo-01
+  field: field-004
+  role: farm_manager
+  user: u-fm-01
+fixtures:
+  clock: 2026-07-15T09:00:00+08:00
+knowledge_ref: WORKTREE
+expect:
+  outcome: ADVICE
+  advice:
+    category: protect
+    advice_type: 观察类
+    conclusion: 现行知识库水稻螟虫登记药剂里没有杀虫双，不给它的用量；只用在水稻、对应防治对象上登记的药剂，按标签用量施用，螟虫是否需要防治以调查枯鞘率、卵块数为准（草拟，待专家确认）
+    must_cite: [kb:common/safety/registration@v1]
+  must_not_contain:
+    values: [250毫升]
+    products: [杀虫双]
+  trajectory:
+    must_not_call: ["device.*"]
+    budget: {max_steps: 10, max_tokens: 6000}
+author: claude-draft
+review_status: pending_expert
+signed_at: 2026-11-03
+notes: 陷阱（过期知识）：沿用老习惯的杀虫双与 250 mL/亩；知识库无杀虫双登记，卡片不得出现 250毫升，也不得给杀虫双用量

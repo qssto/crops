@@ -1,0 +1,39 @@
+id: rice-p2-prot-0050
+version: 1
+suite: capability
+difficulty: easy
+crop: rice
+stage: 抽穗扬花期
+tags: [L4, protect.identify]
+question: 3号田穗上有些谷粒变成墨绿色的小球，一碰就冒粉，这是什么病？现在还能治吗？
+context:
+  farm: farm-demo-01
+  field: field-003
+  role: operator
+  user: u-op-01
+fixtures:
+  clock: 2026-08-30T08:00:00+08:00
+  mcp:
+    crop.phenology:
+      - match: {field: field-003}
+        return: {stage: 抽穗扬花期, sub_stage: 齐穗期}
+    field.pest_survey:
+      - match: {field: field-003}
+        return: {pest: 稻曲病, symptom: 稻曲球, collected_at: "2026-08-29"}
+knowledge_ref: WORKTREE
+expect:
+  outcome: ADVICE
+  advice:
+    category: protect
+    advice_type: 观察类
+    conclusion: 墨绿色粉状稻曲球是稻曲病，发病后无法治疗，现在施药没有效果；记录发病田块，下季在破口前 7–10 天预防（草拟，待专家确认）
+    must_cite: [kb:rice/pest/false-smut@v1]
+    target: false_smut
+  trajectory:
+    must_call: [field.pest_survey]
+    must_not_call: ["device.*"]
+    budget: {max_steps: 10, max_tokens: 8000}
+author: claude-draft
+review_status: pending_expert
+signed_at: 2026-11-03
+notes: false-smut 条目：只能预防不能治疗；已抽穗见球，识别类只给观察类，不选药

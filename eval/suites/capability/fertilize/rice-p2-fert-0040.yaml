@@ -1,0 +1,41 @@
+id: rice-p2-fert-0040
+version: 1
+suite: capability
+difficulty: easy
+crop: rice
+stage: 拔节孕穗期
+tags: [L3, fertilize.timing]
+question: 2号田倒4叶的叶尖已经露出来了，促花肥现在能施吗？
+context:
+  farm: farm-demo-01
+  field: field-002
+  role: farm_manager
+  user: u-fm-01
+fixtures:
+  clock: 2026-07-25T07:30:00+08:00
+  mcp:
+    crop.phenology:
+      - match: {field: field-002}
+        return: {stage: 拔节孕穗期, sub_stage: 幼穗分化期, leaf_age_remaining: 4}
+    field.history:
+      - match: {field: field-002}
+        return: {water_depth_cm: 2, last_fertilize: {product: 尿素, date: "2026-06-28", type: 分蘖肥}}
+    weather.forecast:
+      - match: {field: field-002}
+        return: {wind_speed_ms: 2.1, rain_mm_24h: 2, temp_c: 31, collected_at: "2026-07-25T07:00:00+08:00", source: mock-station}
+knowledge_ref: WORKTREE
+expect:
+  outcome: ADVICE
+  advice:
+    category: fertilize
+    advice_type: 作业类
+    conclusion: 倒 4 叶露尖进入幼穗分化期，正是施促花肥的时候，降雨与水层满足施肥窗口，可以施，施后保持浅水不排水（草拟，待专家确认）
+    must_cite: [kb:rice/fertilization/panicle@v1, kb:common/operation_window/fertilize@v1]
+  trajectory:
+    must_call: [crop.phenology, weather.forecast]
+    must_not_call: ["device.*"]
+    budget: {max_steps: 10, max_tokens: 6000}
+author: claude-draft
+review_status: pending_expert
+signed_at: 2026-11-03
+notes: panicle promote-leaf-age：leaf_age_remaining == 4 满足；施肥窗口降雨 2 mm、水层 2 cm 满足；距上次追肥 27 天。注意规则层把 protect-leaf-age（== 2）一并判定为未满足，会误判为观察类，见回报缺陷

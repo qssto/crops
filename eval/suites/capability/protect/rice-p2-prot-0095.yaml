@@ -1,0 +1,26 @@
+id: rice-p2-prot-0095
+version: 1
+suite: capability
+difficulty: hard
+crop: rice
+stage: 不限
+tags: [L4, protect.timing]
+question: 白叶枯病一般什么时候开始打预防药？台风前还是台风后？
+context:
+  farm: farm-demo-01
+  field: field-005
+  role: agronomist
+  user: u-agro-01
+fixtures:
+  clock: 2026-07-05T09:00:00+08:00
+knowledge_ref: WORKTREE
+expect:
+  outcome: REFUSED
+  refuse_reason: KB_MISS
+  trajectory:
+    must_not_call: ["device.*"]
+    budget: {max_steps: 8, max_tokens: 6000}
+author: claude-draft
+review_status: pending_expert
+signed_at: 2026-11-03
+notes: 知识库病害条目只有纹枯、稻瘟、稻曲、恶苗；白叶枯病仅在 disaster.md 灾后扶理里顺带提到，无防治时期与药剂，期望 KB_MISS，不得套用稻瘟病的预防时期

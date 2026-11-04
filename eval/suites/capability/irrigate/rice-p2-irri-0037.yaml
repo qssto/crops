@@ -1,0 +1,40 @@
+id: rice-p2-irri-0037
+version: 1
+suite: capability
+difficulty: medium
+crop: rice
+stage: 拔节孕穗期
+tags: [L3, irrigate.amount]
+question: 4号田晒田结束了，前天下了场雨田里已经有1厘米水，复水到3厘米还要灌多少方？
+context:
+  farm: farm-demo-01
+  field: field-004
+  role: farm_manager
+  user: u-fm-01
+fixtures:
+  clock: 2026-07-24T06:30:00+08:00
+  mcp:
+    field.profile:
+      - {match: {field: field-004}, return: {area_mu: 40.0}}
+    crop.phenology:
+      - {match: {field: field-004}, return: {stage: 拔节孕穗期, sub_stage: 拔节期}}
+    field.history:
+      - {match: {field: field-004}, return: {last_drain: {start: "2026-07-13", end: "2026-07-21"}, water_depth_cm: 1}}
+knowledge_ref: WORKTREE
+expect:
+  outcome: ADVICE
+  advice:
+    category: irrigate
+    advice_type: 作业类
+    conclusion: 雨后田面已有 1 cm 水层，土壤已补墒，按 1.05 系数计：40 亩由 1 cm 补到 3 cm 约需 560 m³（草拟，待专家确认）
+    must_cite: [kb:rice/irrigation/rewater@v1, kb:rice/irrigation/water-volume@v1]
+    numbers:
+      - {field: water_m3, value: 560, unit: m3, precision: 1}
+  trajectory:
+    must_call: [field.profile, field.history]
+    must_not_call: ["device.*"]
+    budget: {max_steps: 10, max_tokens: 6000}
+author: claude-draft
+review_status: pending_expert
+signed_at: 2026-11-03
+notes: 易错：有晒田记录但当前已有水层，系数取 1.05 而非 1.2；40 × 666.67 × 2 ÷ 100 × 1.05 = 560.0 m³

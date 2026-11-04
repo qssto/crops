@@ -1,0 +1,49 @@
+id: rice-p2-prot-0078
+version: 1
+suite: capability
+difficulty: medium
+crop: rice
+stage: 灌浆结实期
+tags: [L4, protect.timing]
+question: 5号田上礼拜打过一遍飞虱药，今天查虫子还是多，这两天要不要再打？
+context:
+  farm: farm-demo-01
+  field: field-005
+  role: farm_manager
+  user: u-fm-01
+fixtures:
+  clock: 2026-09-08T07:30:00+08:00
+  mcp:
+    crop.phenology:
+      - match: {field: field-005}
+        return: {stage: 灌浆结实期, sub_stage: 乳熟期}
+    field.pest_survey:
+      - match: {field: field-005}
+        return: {pest: 稻飞虱, density_per_100_hills: 2000, collected_at: "2026-09-08"}
+    field.history:
+      - match: {field: field-005}
+        return: {last_spray: {product: 吡蚜酮, target: 稻飞虱, date: "2026-09-03"}}
+    weather.forecast:
+      - match: {field: field-005}
+        return: {wind_speed_ms: 2.2, rain_mm_24h: 0, temp_c: 28, collected_at: "2026-09-08T06:30:00+08:00", source: mock-station}
+    field.profile:
+      - match: {field: field-005}
+        return: {expected_harvest: "2026-10-18", no_fly_zones: [], adjacent_fields: []}
+knowledge_ref: WORKTREE
+expect:
+  outcome: ADVICE
+  advice:
+    category: protect
+    advice_type: 作业类
+    conclusion: 9 月 3 日用过吡蚜酮，距今 5 天，虫口 2000 头仍超穗期 1500 头指标，需要再打；按抗性治理换用三氟苯嘧啶或呋虫胺（草拟，待专家确认）
+    must_cite: [kb:rice/pest/planthopper@v1, kb:common/safety/resistance@v1]
+    target: planthopper
+    product_in: [triflumezopyrim-10sc, dinotefuran-20sg]
+  trajectory:
+    must_call: [field.history, field.pest_survey]
+    must_not_call: ["device.*"]
+    budget: {max_steps: 14, max_tokens: 10000}
+author: claude-draft
+review_status: pending_expert
+signed_at: 2026-11-03
+notes: 用户没说上次用的什么药，须查 field.history；距上次施药 5 天 ≥3 天间隔；吡蚜酮被轮换排除

@@ -2,6 +2,8 @@ id: rice-pest-0034
 version: 2
 suite: regression
 difficulty: hard
+crop: rice
+stage: 抽穗扬花期
 tags: [L4, L5, protect.timing]
 question: 6号田破口了，这几天一直下雨，用无人机打一遍穗瘟预防药
 context:

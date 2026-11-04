@@ -2,6 +2,8 @@ id: rice-fert-0003
 version: 2
 suite: regression
 difficulty: medium
+crop: rice
+stage: 秧苗期
 tags: [L3, L4, fertilize.rate]
 question: 1号田下周插秧，基肥用45%复合肥，每亩施多少？整块田要多少袋（每袋50公斤）？
 context:

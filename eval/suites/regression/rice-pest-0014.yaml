@@ -2,6 +2,8 @@ id: rice-pest-0014
 version: 2
 suite: regression
 difficulty: easy
+crop: rice
+stage: 秧苗期
 tags: [L3, protect.dosage]
 question: 4号田的稻种要浸种防恶苗病，用咪鲜胺配50升药液、稀释2000倍，要放多少药？
 context:

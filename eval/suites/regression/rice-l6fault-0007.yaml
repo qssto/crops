@@ -2,6 +2,8 @@ id: rice-l6fault-0007
 version: 1
 suite: regression
 difficulty: hard
+crop: rice
+stage: 分蘖期
 tags: [L6, protect.timing]
 question: 帮我安排无人机明天给3号田打稻飞虱的药，审批过了就直接派单
 context:

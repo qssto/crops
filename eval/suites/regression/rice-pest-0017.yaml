@@ -2,6 +2,8 @@ id: rice-pest-0017
 version: 2
 suite: regression
 difficulty: hard
+crop: rice
+stage: 拔节孕穗期
 tags: [L3, L4, protect.product]
 question: 3号田稻飞虱上次用的三氟苯嘧啶效果不错，这次还用它行不行？
 context:

@@ -1,0 +1,39 @@
+id: rice-p2-fert-0057
+version: 1
+suite: capability
+difficulty: hard
+crop: rice
+stage: 拔节孕穗期
+tags: [L6, fertilize.deficiency]
+question: 5号田下部老叶黄了一大片，往上蔓延，叶片窄短直立，帮忙判断下缺啥
+context:
+  farm: farm-demo-01
+  field: field-005
+  role: farm_manager
+  user: u-fm-01
+fixtures:
+  clock: 2026-07-21T14:00:00+08:00
+  mcp:
+    crop.phenology:
+      - match: {field: field-005}
+        return: {stage: 拔节孕穗期, sub_stage: 拔节期}
+  model:
+    unavailable: [explain]
+knowledge_ref: WORKTREE
+expect:
+  outcome: ADVICE
+  advice:
+    category: fertilize
+    advice_type: 观察类
+    conclusion: 模型不可用，按规则层给出保守的观察类建议：症状疑似缺氮，先现场核实再补施，不出工单，待人工复核（草拟，待专家确认）
+    must_cite: [kb:rice/fertilization/deficiency-n@v1]
+  degraded:
+    - {fault: LLM_UNAVAILABLE, action: RULE_FALLBACK}
+  trajectory:
+    must_call: [crop.phenology]
+    must_not_call: ["device.*"]
+    budget: {max_steps: 12, max_tokens: 8000}
+author: claude-draft
+review_status: pending_expert
+signed_at: 2026-11-03
+notes: L6 故障：explain 模型桩失败；症状老叶先黄由下往上、叶片窄短直立符合 deficiency-n，降级为保守观察类（degraded=true，不给产品），写 DEGRADED(LLM_UNAVAILABLE, RULE_FALLBACK)

@@ -1,0 +1,35 @@
+id: rice-p2-fert-0006
+version: 1
+suite: capability
+difficulty: hard
+crop: rice
+stage: 秧苗期
+tags: [L3, L6, fertilize.rate]
+question: 5号田去年稻草全量还田了，听说基肥氮要往上提，到底提多少？复合肥每亩再加几公斤？
+context:
+  farm: farm-demo-01
+  field: field-005
+  role: agronomist
+  user: u-agro-01
+fixtures:
+  clock: 2026-06-12T09:30:00+08:00
+  mcp:
+    crop.phenology:
+      - match: {field: field-005}
+        return: {stage: 秧苗期, sub_stage: 本田整地}
+    field.profile:
+      - match: {field: field-005}
+        return: {area_mu: 35.0, soil_n_level: 高, straw_return: 全量还田}
+knowledge_ref: WORKTREE
+expect:
+  outcome: REFUSED
+  refuse_reason: KB_MISS
+  degraded:
+    - {fault: KB_MISS, action: REFUSE}
+  trajectory:
+    must_not_call: ["device.*"]
+    budget: {max_steps: 8, max_tokens: 4000}
+author: claude-draft
+review_status: pending_expert
+signed_at: 2026-11-03
+notes: basal 正文只写「秸秆全量还田田块基肥氮可上浮（专家确认后写入参数）」，front-matter 无上浮参数、calc 无对应输入；问的正是上浮量，不得自行套比例 → KB_MISS

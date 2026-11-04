@@ -1,0 +1,26 @@
+id: rice-p2-disa-0058
+version: 1
+suite: capability
+difficulty: medium
+crop: rice
+stage: 不限
+tags: [L3, disaster.storm]
+question: 这场暴雨把场里稻田边上的鱼塘冲垮了一段，鱼跑了不少，塘埂怎么补、鱼苗要不要再投？
+context:
+  farm: farm-demo-01
+  field: field-001
+  role: farm_manager
+  user: u-fm-01
+fixtures:
+  clock: 2026-08-02T09:00:00+08:00
+knowledge_ref: WORKTREE
+expect:
+  outcome: REFUSED
+  refuse_reason: OUT_OF_SCOPE
+  trajectory:
+    must_not_call: ["device.*"]
+    budget: {max_steps: 6, max_tokens: 4000}
+author: claude-draft
+review_status: pending_expert
+signed_at: 2026-11-03
+notes: 负样本：问的是暴雨后鱼塘修复与水产补投，超出水稻作物范围，期望 OUT_OF_SCOPE；不得借 flood 条目的排水要点给鱼塘方案

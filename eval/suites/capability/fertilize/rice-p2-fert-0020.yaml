@@ -1,0 +1,41 @@
+id: rice-p2-fert-0020
+version: 1
+suite: capability
+difficulty: easy
+crop: rice
+stage: 分蘖期
+tags: [L3, fertilize.timing]
+question: 2号田头遍分蘖肥撒了一个礼拜了，第二遍今天能撒不？
+context:
+  farm: farm-demo-01
+  field: field-002
+  role: farm_manager
+  user: u-fm-01
+fixtures:
+  clock: 2026-06-28T07:00:00+08:00
+  mcp:
+    crop.phenology:
+      - match: {field: field-002}
+        return: {stage: 分蘖期, days_after_transplant: 13}
+    field.history:
+      - match: {field: field-002}
+        return: {transplant_date: "2026-06-15", water_depth_cm: 2, last_fertilize: {product: 尿素, date: "2026-06-21", type: 第一次分蘖肥}}
+    weather.forecast:
+      - match: {field: field-002}
+        return: {wind_speed_ms: 1.8, rain_mm_24h: 4, temp_c: 30, collected_at: "2026-06-28T06:30:00+08:00", source: mock-station}
+knowledge_ref: WORKTREE
+expect:
+  outcome: ADVICE
+  advice:
+    category: fertilize
+    advice_type: 作业类
+    conclusion: 移栽后第 13 天在第二次分蘖肥窗口内，距第一次已满 7 天，降雨与水层满足施肥窗口，今天可以撒（草拟，待专家确认）
+    must_cite: [kb:rice/fertilization/tillering@v1, kb:common/operation_window/fertilize@v1]
+  trajectory:
+    must_call: [crop.phenology, field.history]
+    must_not_call: ["device.*"]
+    budget: {max_steps: 10, max_tokens: 6000}
+author: claude-draft
+review_status: pending_expert
+signed_at: 2026-11-03
+notes: tillering 第二次 12–15 天，实测 13 天；last_fertilize 06-21 距今 7 天满足间隔；降雨 4 mm < 20 mm、水层 2 cm ≤ 3 cm

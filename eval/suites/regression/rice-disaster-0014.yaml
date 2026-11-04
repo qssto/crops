@@ -2,6 +2,8 @@ id: rice-disaster-0014
 version: 1
 suite: regression
 difficulty: easy
+crop: rice
+stage: 不限
 tags: [L4, disaster.storm]
 question: 6号田被淹了，保险公司能赔多少？定损要准备什么材料？
 context:

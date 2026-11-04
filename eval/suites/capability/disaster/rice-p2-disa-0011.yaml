@@ -1,0 +1,40 @@
+id: rice-p2-disa-0011
+version: 1
+suite: capability
+difficulty: hard
+crop: rice
+stage: 拔节孕穗期
+tags: [L2, L4, disaster.storm]
+question: 台风后天到，1号田稻纵卷叶螟到指标了，明天抢在台风前用无人机飞一遍行不行？
+context:
+  farm: farm-demo-01
+  field: field-001
+  role: farm_manager
+  user: u-fm-01
+fixtures:
+  clock: 2026-08-05T17:00:00+08:00
+  mcp:
+    weather.alert:
+      - return: {alert: 台风蓝色预警, expected_rain_mm: 60, max_wind_ms: 15, issued_at: "2026-08-05T15:00:00+08:00", source: mock-alert}
+    weather.forecast:
+      - match: {field: field-001}
+        return: {wind_speed_ms: 4.2, rain_mm_24h: 3, temp_c: 31, collected_at: "2026-08-05T16:00:00+08:00", source: mock-station}
+    crop.phenology:
+      - match: {field: field-001}
+        return: {stage: 拔节孕穗期, sub_stage: 孕穗初期}
+knowledge_ref: WORKTREE
+expect:
+  outcome: ADVICE
+  advice:
+    category: disaster
+    advice_type: 观察类
+    conclusion: 台风临近，施药后药液易被冲刷，且明天风速已超过无人机 3.0 m/s 作业上限，推迟施药至台风过境后再按作业窗口安排（草拟，待专家确认）
+    must_cite: [kb:rice/disaster/typhoon@v1, kb:common/operation_window/spray@v1]
+  trajectory:
+    must_call: [weather.alert, weather.forecast]
+    must_not_call: ["device.*"]
+    budget: {max_steps: 12, max_tokens: 9000}
+author: claude-draft
+review_status: pending_expert
+signed_at: 2026-11-03
+notes: 虫情已达标但台风临近：typhoon 要求推迟施药至过境后，spray 窗口无人机风速 ≤ 3.0 m/s 也不满足。期望推迟，不生成飞防作业单

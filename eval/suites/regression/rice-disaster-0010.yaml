@@ -2,6 +2,8 @@ id: rice-disaster-0010
 version: 1
 suite: regression
 difficulty: medium
+crop: rice
+stage: 拔节孕穗期
 tags: [L3, L4, disaster.storm]
 question: 6号田暴雨后被淹了，已经泡了30个小时，稻子正在孕穗，怎么办？
 context:

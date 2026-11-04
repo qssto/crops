@@ -1,0 +1,26 @@
+id: rice-p2-prot-0092
+version: 1
+suite: capability
+difficulty: hard
+crop: rice
+stage: 不限
+tags: [L4, protect.timing]
+question: 4号田稻鸭共养，鸭子还在田里，打了药以后隔几天能把鸭子放回去？
+context:
+  farm: farm-demo-01
+  field: field-004
+  role: farm_manager
+  user: u-fm-01
+fixtures:
+  clock: 2026-07-18T09:00:00+08:00
+knowledge_ref: WORKTREE
+expect:
+  outcome: REFUSED
+  refuse_reason: KB_MISS
+  trajectory:
+    must_not_call: ["device.*"]
+    budget: {max_steps: 8, max_tokens: 6000}
+author: claude-draft
+review_status: pending_expert
+signed_at: 2026-11-03
+notes: 知识库只有人用安全间隔期（PHI）与人员防护，没有稻鸭共养的禽类回田间隔，不得拿 PHI 顶替，期望 KB_MISS

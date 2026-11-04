@@ -1,0 +1,38 @@
+id: rice-p2-irri-0001
+version: 1
+suite: capability
+difficulty: easy
+crop: rice
+stage: 返青期
+tags: [L4, irrigate.timing]
+question: 2号田插完秧第4天，田里水只剩1厘米了，要不要灌？
+context:
+  farm: farm-demo-01
+  field: field-002
+  role: operator
+  user: u-op-01
+fixtures:
+  clock: 2026-06-18T07:00:00+08:00
+  mcp:
+    crop.phenology:
+      - {match: {field: field-002}, return: {stage: 返青期, days_after_transplant: 4}}
+    weather.forecast:
+      - {match: {field: field-002}, return: {rain_mm_72h: 2, temp_c: 29, collected_at: "2026-06-18T06:00:00+08:00", source: mock-station}}
+    field.history:
+      - {match: {field: field-002}, return: {water_depth_cm: 1}}
+knowledge_ref: WORKTREE
+expect:
+  outcome: ADVICE
+  advice:
+    category: irrigate
+    advice_type: 作业类
+    conclusion: 返青期寸水护苗，水层应保持 3–5 cm；实测 1 cm 低于下限且未来 72 h 基本无雨，今天补灌到 3–5 cm（草拟，待专家确认）
+    must_cite: [kb:rice/irrigation/seedling-tillering@v1]
+  trajectory:
+    must_call: [crop.phenology, weather.forecast, field.history]
+    must_not_call: ["device.*"]
+    budget: {max_steps: 8, max_tokens: 6000}
+author: claude-draft
+review_status: pending_expert
+signed_at: 2026-11-03
+notes: 返青期补水判定：实测水层 1 cm < regreening_depth_cm 下限 3 cm，72 h 降雨 2 mm；知识库要求同时有物候与降雨预报再给灌水结论

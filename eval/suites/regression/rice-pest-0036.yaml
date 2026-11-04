@@ -2,6 +2,8 @@ id: rice-pest-0036
 version: 2
 suite: regression
 difficulty: hard
+crop: rice
+stage: 拔节孕穗期
 tags: [L4, L5, protect.timing]
 question: 1号田稻曲病预防，用无人机打，起降点在31.123456,120.654321，帮我排个作业
 context:

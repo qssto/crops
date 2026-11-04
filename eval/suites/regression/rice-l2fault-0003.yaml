@@ -2,6 +2,8 @@ id: rice-l2fault-0003
 version: 1
 suite: regression
 difficulty: medium
+crop: rice
+stage: 抽穗扬花期
 tags: [L2, disaster.heat]
 question: 1号田正在抽穗，这几天会不会有高温热害？要不要提前灌深水降温？
 context:

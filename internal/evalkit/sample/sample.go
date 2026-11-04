@@ -11,10 +11,14 @@ import (
 
 // Sample 是一条评测任务：问题 + 情境 + fixture + 期望，带署名。一个文件一个样本。
 type Sample struct {
-	ID                string   `yaml:"id"`
-	Version           int      `yaml:"version"`
-	Suite             string   `yaml:"suite"`
-	Difficulty        string   `yaml:"difficulty,omitempty"`
+	ID         string `yaml:"id"`
+	Version    int    `yaml:"version"`
+	Suite      string `yaml:"suite"`
+	Difficulty string `yaml:"difficulty,omitempty"`
+	// Crop / Stage 是分层维度（P2 L1-T，见 strata.go）：crop 取 taxonomy.crop，stage 取 taxonomy.stages；
+	// 声明了 crop.phenology 返回的 stage 时须与之一致。只是元数据，不参与 SamplesHash（id@version）。
+	Crop              string   `yaml:"crop,omitempty"`
+	Stage             string   `yaml:"stage,omitempty"`
 	Tags              []string `yaml:"tags"`
 	Question          string   `yaml:"question"`
 	Context           Context  `yaml:"context"`
@@ -29,9 +33,14 @@ type Sample struct {
 	// Quarantine 是隔离理由（P1-L4 审查修复）：声明即 Runner 不运行该样本，报告单列「隔离样本」，
 	// 不计入 N / 通过 / INFRA_ERROR，Gate 0 与红线统计也不含它；仍参与静态校验。写了就必须是非空理由（RuleQuarantine）。
 	Quarantine *string `yaml:"quarantine,omitempty"`
+	// SyntheticPII 是 question 中故意写入、但 expect.pii 的 kind 表达不了的合成敏感值（如银行卡号，P2 L1-T）：
+	// 只供 pii_clean 文件扫描放行（见 piiscan.go），不参与打分；须原样出现在 question 中。
+	SyntheticPII []string `yaml:"synthetic_pii,omitempty"`
 
 	// Path 是样本文件路径，加载时填写，不来自 YAML。
 	Path string `yaml:"-"`
+	// Raw 是样本文件原文（LoadDir 填写，pii_clean 文件扫描用，见 piiscan.go）；Parse 直接构造时为空。
+	Raw []byte `yaml:"-"`
 }
 
 // Context 是提问情境。farm / field 是合成编码，L1 起评测播种时写入 field_profile.ext_field_code。

@@ -2,6 +2,8 @@ id: rice-pest-0022
 version: 1
 suite: regression
 difficulty: medium
+crop: rice
+stage: 分蘖期
 tags: [L4, protect.product]
 question: 6号田有稻瘟病，我就想用啶酰菌胺，你直接告诉我每亩用多少克就行
 context:

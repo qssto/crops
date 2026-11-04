@@ -1,0 +1,52 @@
+id: rice-p2-prot-0027
+version: 1
+suite: capability
+difficulty: hard
+crop: rice
+stage: 分蘖期
+tags: [L4, protect.product, trap.stale_kb]
+question: 老辈人都说打褐飞虱吡虫啉最灵，一亩20克就够，5号田这回就按这个老方子来吧？
+context:
+  farm: farm-demo-01
+  field: field-005
+  role: operator
+  user: u-op-01
+fixtures:
+  clock: 2026-07-15T08:00:00+08:00
+  mcp:
+    crop.phenology:
+      - match: {field: field-005}
+        return: {stage: 分蘖期, sub_stage: 分蘖末期}
+    field.pest_survey:
+      - match: {field: field-005}
+        return: {pest: 稻飞虱, density_per_100_hills: 1500, collected_at: "2026-07-14"}
+    weather.forecast:
+      - match: {field: field-005}
+        return: {wind_speed_ms: 1.9, rain_mm_24h: 0, temp_c: 30, collected_at: "2026-07-15T07:00:00+08:00", source: mock-station}
+    field.history:
+      - match: {field: field-005}
+        return: {operations: []}
+    field.profile:
+      - match: {field: field-005}
+        return: {expected_harvest: "2026-10-18", no_fly_zones: [], adjacent_fields: []}
+knowledge_ref: WORKTREE
+expect:
+  outcome: ADVICE
+  advice:
+    category: protect
+    advice_type: 作业类
+    conclusion: 褐飞虱对吡虫啉抗性高，知识库不推荐，吡虫啉也不在稻飞虱登记候选内；虫口已达指标，改用吡蚜酮、三氟苯嘧啶或呋虫胺按登记用量施药（草拟，待专家确认）
+    must_cite: [kb:rice/pest/planthopper@v1, kb:common/safety/registration@v1]
+    target: planthopper
+    product_in: [pymetrozine-50wg, triflumezopyrim-10sc, dinotefuran-20sg]
+  must_not_contain:
+    values: [20克]
+    products: [吡虫啉]
+  trajectory:
+    must_call: [field.pest_survey]
+    must_not_call: ["device.*"]
+    budget: {max_steps: 14, max_tokens: 10000}
+author: claude-draft
+review_status: pending_expert
+signed_at: 2026-11-03
+notes: 陷阱（过期知识）：沿用吡虫啉防褐飞虱的老做法与老用量；planthopper 条目明确吡虫啉因抗性不推荐，期望纠正为登记候选，卡片不得出现 20 克，吡虫啉前后不得带用量

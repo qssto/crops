@@ -1,0 +1,26 @@
+id: rice-p2-irri-0072
+version: 1
+suite: capability
+difficulty: hard
+crop: rice
+stage: 不限
+tags: [L4, irrigate.depth, trap.cross_crop]
+question: 稻田水层那套标准拿到小麦田里能用吗？小麦返青要保几厘米水？
+context:
+  farm: farm-demo-01
+  field: field-002
+  role: farm_manager
+  user: u-fm-01
+fixtures:
+  clock: 2026-03-05T09:00:00+08:00
+knowledge_ref: WORKTREE
+expect:
+  outcome: REFUSED
+  refuse_reason: OUT_OF_SCOPE
+  trajectory:
+    must_not_call: ["device.*"]
+    budget: {max_steps: 6, max_tokens: 4000}
+author: claude-draft
+review_status: pending_expert
+signed_at: 2026-11-03
+notes: 陷阱（跨作物）+ 负样本（越界）：小麦是旱作，水稻水层标准不能套用，知识库不覆盖小麦，应拒答

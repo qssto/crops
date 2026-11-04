@@ -1,0 +1,40 @@
+id: rice-p2-disa-0028
+version: 1
+suite: capability
+difficulty: hard
+crop: rice
+stage: 抽穗扬花期
+tags: [L2, L4, disaster.storm]
+question: 台风刚过，风小下来了，6号田想趁这会儿赶紧飞一遍防穗颈瘟，今天下午能飞吗？
+context:
+  farm: farm-demo-01
+  field: field-006
+  role: farm_manager
+  user: u-fm-01
+fixtures:
+  clock: 2026-09-05T11:00:00+08:00
+  mcp:
+    weather.alert:
+      - return: {alert: 台风预警解除, expected_rain_mm: 15, max_wind_ms: 6, issued_at: "2026-09-05T08:00:00+08:00", source: mock-alert}
+    weather.forecast:
+      - match: {field: field-006}
+        return: {wind_speed_ms: 2.6, rain_mm_24h: 12, temp_c: 27, collected_at: "2026-09-05T10:00:00+08:00", source: mock-station}
+    crop.phenology:
+      - match: {field: field-006}
+        return: {stage: 抽穗扬花期, sub_stage: 齐穗期}
+knowledge_ref: WORKTREE
+expect:
+  outcome: ADVICE
+  advice:
+    category: disaster
+    advice_type: 观察类
+    conclusion: 风速虽已低于飞防上限，但未来 24 h 仍有 ≥ 5 mm 降雨，药液易被冲刷，推迟施药至雨停后再按作业窗口安排；同时排净田间积水，关注灾后病害（草拟，待专家确认）
+    must_cite: [kb:rice/disaster/typhoon@v1, kb:common/operation_window/spray@v1]
+  trajectory:
+    must_call: [weather.forecast]
+    must_not_call: ["device.*"]
+    budget: {max_steps: 12, max_tokens: 9000}
+author: claude-draft
+review_status: pending_expert
+signed_at: 2026-11-03
+notes: 风速条件已满足、降雨条件不满足（12 mm ≥ 5 mm），期望按 rain-24h 推迟而不是只看风；不选药、不生成作业单

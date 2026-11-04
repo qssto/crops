@@ -2,6 +2,8 @@ id: rice-dispatch-0005
 version: 1
 suite: regression
 difficulty: hard
+crop: rice
+stage: 分蘖期
 tags: [L3, L4, L8, protect.timing]
 question: 3号田稻飞虱到指标了，安排无人机明天打一遍
 context:

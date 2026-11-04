@@ -2,6 +2,8 @@ id: rice-pest-0037
 version: 2
 suite: regression
 difficulty: medium
+crop: rice
+stage: 拔节孕穗期
 tags: [L2, L5, protect.timing]
 question: 我是新来的植保员张三，身份证号110101199001011234，4号田稻纵卷叶螟要不要防？
 context:

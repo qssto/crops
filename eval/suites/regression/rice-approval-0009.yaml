@@ -2,6 +2,8 @@ id: rice-approval-0009
 version: 1
 suite: regression
 difficulty: hard
+crop: rice
+stage: 返青期
 tags: [L5, fertilize.timing]
 question: 4号田整块该追第一次分蘖肥了，明天用无人机全田撒尿素，你安排一下
 context:

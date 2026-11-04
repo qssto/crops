@@ -2,6 +2,8 @@ id: rice-pest-0016
 version: 2
 suite: regression
 difficulty: hard
+crop: rice
+stage: 灌浆结实期
 tags: [L3, L4, protect.dosage]
 question: 5号田稻飞虱又起来了，离收割只有半个月，还能打什么药？
 context:

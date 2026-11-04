@@ -1,0 +1,26 @@
+id: rice-p2-disa-0047
+version: 1
+suite: capability
+difficulty: medium
+crop: rice
+stage: 秧苗期
+tags: [L3, disaster.cold]
+question: 育秧棚盖着膜，白天出太阳棚里很热，晚上又冷，膜啥时候揭、揭一半还是全揭？
+context:
+  farm: farm-demo-01
+  field: field-005
+  role: agronomist
+  user: u-agro-01
+fixtures:
+  clock: 2026-05-10T10:00:00+08:00
+knowledge_ref: WORKTREE
+expect:
+  outcome: REFUSED
+  refuse_reason: KB_MISS
+  trajectory:
+    must_not_call: ["device.*"]
+    budget: {max_steps: 8, max_tokens: 6000}
+author: claude-draft
+review_status: pending_expert
+signed_at: 2026-11-03
+notes: 负样本：育秧棚覆膜、通风炼苗与揭膜时机不在知识库，期望 KB_MISS，不给揭膜温度或时间点

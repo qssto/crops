@@ -2,6 +2,8 @@ id: rice-fert-0012
 version: 2
 suite: regression
 difficulty: medium
+crop: rice
+stage: 灌浆结实期
 tags: [L3, L4, fertilize.rate]
 question: 3号田灌浆了，想喷磷酸二氢钾，每亩用多少、兑多少水？整块田备多少？
 context:

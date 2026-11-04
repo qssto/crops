@@ -1,0 +1,42 @@
+id: rice-p2-fert-0019
+version: 1
+suite: capability
+difficulty: hard
+crop: rice
+stage: 返青期
+tags: [L6, fertilize.deficiency]
+question: 3号田冷浸田，插后一个星期苗老不发，叶子基部发白，给个处理意见
+context:
+  farm: farm-demo-01
+  field: field-003
+  role: agronomist
+  user: u-agro-01
+fixtures:
+  clock: 2026-06-23T10:00:00+08:00
+  mcp:
+    crop.phenology:
+      - match: {field: field-003}
+        return: {stage: 返青期, days_after_transplant: 6}
+    field.soil:
+      - match: {field: field-003}
+        return: {soil_type: 冷浸田, ph: 6.0, collected_at: "2026-04-10"}
+  model:
+    unavailable: [explain]
+knowledge_ref: WORKTREE
+expect:
+  outcome: ADVICE
+  advice:
+    category: fertilize
+    advice_type: 观察类
+    conclusion: 模型不可用，按规则层给出保守的观察类建议：疑似缺锌，先现场核实，不选肥料、不出工单，待人工复核（草拟，待专家确认）
+    must_cite: [kb:rice/fertilization/deficiency-zn@v1]
+  degraded:
+    - {fault: LLM_UNAVAILABLE, action: RULE_FALLBACK}
+  trajectory:
+    must_call: [crop.phenology]
+    must_not_call: ["device.*"]
+    budget: {max_steps: 12, max_tokens: 8000}
+author: claude-draft
+review_status: pending_expert
+signed_at: 2026-11-03
+notes: L6 故障：explain 模型桩失败，知识命中 deficiency-zn，降级为保守观察类（degraded=true，不给产品），写 DEGRADED(LLM_UNAVAILABLE, RULE_FALLBACK)

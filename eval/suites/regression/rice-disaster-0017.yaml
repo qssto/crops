@@ -2,6 +2,8 @@ id: rice-disaster-0017
 version: 1
 suite: regression
 difficulty: easy
+crop: rice
+stage: 不限
 tags: [L4, disaster.storm]
 question: 我亲戚在黑龙江种的稻子遭了霜冻，你帮他出个补救方案
 context:

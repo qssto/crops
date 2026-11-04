@@ -1,0 +1,43 @@
+id: rice-p2-fert-0029
+version: 1
+suite: capability
+difficulty: hard
+crop: rice
+stage: 分蘖期
+tags: [L3, L4, fertilize.product, trap.stale_kb]
+question: 早些年农技站发的明白纸上写分蘖肥撒碳铵每亩40公斤，家里碳铵没了，3号田头遍改撒尿素要多少？
+context:
+  farm: farm-demo-01
+  field: field-003
+  role: farm_manager
+  user: u-fm-01
+fixtures:
+  clock: 2026-06-22T08:00:00+08:00
+  mcp:
+    crop.phenology:
+      - match: {field: field-003}
+        return: {stage: 分蘖期, days_after_transplant: 7}
+    field.profile:
+      - match: {field: field-003}
+        return: {area_mu: 40.0, soil_n_level: 低, no_fly_zones: [], adjacent_fields: []}
+knowledge_ref: WORKTREE
+expect:
+  outcome: ADVICE
+  advice:
+    category: fertilize
+    advice_type: 作业类
+    conclusion: 旧明白纸的用量不再沿用，第一次分蘖肥按当前氮肥运筹用尿素，亩用量与整田用量按规则层计算（草拟，待专家确认）
+    must_cite: [kb:rice/fertilization/tillering@v1, kb:rice/fertilization/n-budget@v1]
+    numbers:
+      - {field: urea_per_mu, value: 6.5, unit: kg/亩, precision: 0.1}
+      - {field: urea_total, value: 261.0, unit: kg, precision: 0.5}
+  must_not_contain:
+    values: ["40公斤"]
+  trajectory:
+    must_call: [crop.phenology, field.profile]
+    must_not_call: ["device.*"]
+    budget: {max_steps: 12, max_tokens: 8000}
+author: claude-draft
+review_status: pending_expert
+signed_at: 2026-11-03
+notes: 陷阱 trap.stale_kb：引用旧明白纸“碳铵每亩 40 公斤”并想按含氮量换算；期望按 n-budget v1 直接用尿素算第一次分蘖肥 20 × 0.25 × 0.6 ÷ 0.46 = 6.522 kg/亩，× 40 亩 = 260.87 → 261.0 kg，结论不得复述 40 公斤

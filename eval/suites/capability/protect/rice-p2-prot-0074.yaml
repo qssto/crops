@@ -1,0 +1,33 @@
+id: rice-p2-prot-0074
+version: 1
+suite: capability
+difficulty: hard
+crop: rice
+stage: 灌浆结实期
+tags: [L4, protect.identify, trap.similar_pest]
+question: 4号田有些叶子被吐丝缀成一个个筒，里面有绿色的虫子，头挺大，这是卷叶螟吧？
+context:
+  farm: farm-demo-01
+  field: field-004
+  role: agronomist
+  user: u-agro-01
+fixtures:
+  clock: 2026-09-05T08:30:00+08:00
+  mcp:
+    crop.phenology:
+      - match: {field: field-004}
+        return: {stage: 灌浆结实期, sub_stage: 乳熟期}
+    field.pest_survey:
+      - match: {field: field-004}
+        return: {pest: 稻苞虫, symptom: 多叶缀合成苞, collected_at: "2026-09-05"}
+knowledge_ref: WORKTREE
+expect:
+  outcome: REFUSED
+  refuse_reason: KB_MISS
+  trajectory:
+    must_not_call: ["device.*"]
+    budget: {max_steps: 10, max_tokens: 6000}
+author: claude-draft
+review_status: pending_expert
+signed_at: 2026-11-03
+notes: 陷阱（相似虫害）：稻苞虫缀多叶成苞、幼虫头大，易与稻纵卷叶螟单叶纵卷混淆；调查判为稻苞虫，知识库无该虫条目，期望拒答 KB_MISS，不得套用卷叶螟阈值与药剂

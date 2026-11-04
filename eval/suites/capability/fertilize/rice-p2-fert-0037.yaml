@@ -1,0 +1,38 @@
+id: rice-p2-fert-0037
+version: 1
+suite: capability
+difficulty: easy
+crop: rice
+stage: 分蘖期
+tags: [L3, fertilize.deficiency]
+question: 5号田下面老叶先黄了往上走，拿叶色卡比了只有2级，要不要补点尿素？
+context:
+  farm: farm-demo-01
+  field: field-005
+  role: farm_manager
+  user: u-fm-01
+fixtures:
+  clock: 2026-07-01T09:00:00+08:00
+  mcp:
+    crop.phenology:
+      - match: {field: field-005}
+        return: {stage: 分蘖期, sub_stage: 分蘖盛期}
+knowledge_ref: WORKTREE
+expect:
+  outcome: ADVICE
+  advice:
+    category: fertilize
+    advice_type: 观察类
+    conclusion: 叶色卡 2 级低于 3 级、老叶由下往上发黄，疑似缺氮；先现场排除缺钾、缺锌和根系受害，确认后补施尿素，并在后续穗肥中相应减量（草拟，待专家确认）
+    must_cite: [kb:rice/fertilization/deficiency-n@v1]
+    numbers:
+      - {field: urea_per_mu_min, value: 3, unit: kg/亩, precision: 0.1}
+      - {field: urea_per_mu_max, value: 5, unit: kg/亩, precision: 0.1}
+  trajectory:
+    must_call: [crop.phenology]
+    must_not_call: ["device.*"]
+    budget: {max_steps: 10, max_tokens: 6000}
+author: claude-draft
+review_status: pending_expert
+signed_at: 2026-11-03
+notes: deficiency-n leaf-color-low：< 3 级；症状老叶先黄由下往上；补施尿素 3–5 kg/亩并计入总氮预算；只凭描述给观察类

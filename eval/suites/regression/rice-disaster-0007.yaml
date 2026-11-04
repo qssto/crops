@@ -2,6 +2,8 @@ id: rice-disaster-0007
 version: 1
 suite: regression
 difficulty: easy
+crop: rice
+stage: 抽穗扬花期
 tags: [L2, disaster.heat]
 question: 3号田在扬花，这几天挺热的，算不算高温热害？
 context:

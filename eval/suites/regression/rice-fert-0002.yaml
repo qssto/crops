@@ -2,6 +2,8 @@ id: rice-fert-0002
 version: 3
 suite: regression
 difficulty: medium
+crop: rice
+stage: 拔节孕穗期
 tags: [L3, L4, fertilize.rate]
 question: 2号田要施穗肥，尿素每亩用多少、整块田一共要多少？
 context:

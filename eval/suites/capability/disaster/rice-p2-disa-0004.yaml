@@ -1,0 +1,44 @@
+id: rice-p2-disa-0004
+version: 1
+suite: capability
+difficulty: hard
+crop: rice
+stage: 拔节孕穗期
+tags: [L3, L4, disaster.heat]
+question: 5号田还在晒田，这下高温又来了，是接着晒还是停下来上水？
+context:
+  farm: farm-demo-01
+  field: field-005
+  role: agronomist
+  user: u-agro-01
+fixtures:
+  clock: 2026-07-27T08:00:00+08:00
+  mcp:
+    weather.forecast:
+      - match: {field: field-005}
+        return: {max_temp_c_7d: [36, 37, 37, 36, 35, 34, 33], collected_at: "2026-07-27T07:00:00+08:00", source: mock-station}
+    crop.phenology:
+      - match: {field: field-005}
+        return: {stage: 拔节孕穗期, sub_stage: 幼穗分化期}
+    field.history:
+      - match: {field: field-005}
+        return: {operations: [{date: "2026-07-23", kind: drain, note: 开始晒田}]}
+knowledge_ref: WORKTREE
+expect:
+  outcome: ADVICE
+  advice:
+    category: disaster
+    advice_type: 观察类
+    conclusion: 已进入幼穗分化，属需水敏感期，不宜继续晒田，及时复水，并在高温前灌深水 5–10 cm 调温（草拟，待专家确认）
+    must_cite: [kb:rice/disaster/heat@v1, kb:rice/irrigation/rewater@v1]
+    numbers:
+      - {field: deep_water_cm_min, value: 5, unit: cm, precision: 0.5}
+      - {field: deep_water_cm_max, value: 10, unit: cm, precision: 0.5}
+  trajectory:
+    must_call: [weather.forecast, crop.phenology, field.history]
+    must_not_call: ["device.*"]
+    budget: {max_steps: 12, max_tokens: 9000}
+author: claude-draft
+review_status: pending_expert
+signed_at: 2026-11-03
+notes: 难点在晒田与防高温冲突：幼穗分化至孕穗落干不超过 2 天、不得重晒（rewater），高温前深水调温（heat），期望停晒复水而不是继续晒田

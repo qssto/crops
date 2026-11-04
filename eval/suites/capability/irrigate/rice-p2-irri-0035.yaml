@@ -1,0 +1,41 @@
+id: rice-p2-irri-0035
+version: 1
+suite: capability
+difficulty: hard
+crop: rice
+stage: 拔节孕穗期
+tags: [L4, irrigate.depth, disaster.heat]
+question: 下礼拜说要连着几天37度，3号田孕穗快破口了，水层要不要加深？
+context:
+  farm: farm-demo-01
+  field: field-003
+  role: agronomist
+  user: u-agro-01
+fixtures:
+  clock: 2026-08-18T09:00:00+08:00
+  mcp:
+    crop.phenology:
+      - {match: {field: field-003}, return: {stage: 拔节孕穗期, sub_stage: 孕穗期}}
+    weather.forecast:
+      - {match: {field: field-003}, return: {rain_mm_72h: 0, temp_c: 34, max_temp_c_forecast: [36, 37, 37, 36], collected_at: "2026-08-18T08:00:00+08:00", source: mock-station}}
+    field.history:
+      - {match: {field: field-003}, return: {water_depth_cm: 4}}
+knowledge_ref: WORKTREE
+expect:
+  outcome: ADVICE
+  advice:
+    category: irrigate
+    advice_type: 作业类
+    conclusion: 高温来临前把水层加深到 5–10 cm 调温，有条件日灌夜排或长流水降温；高温过后恢复 3–5 cm 浅水（草拟，待专家确认）
+    must_cite: [kb:rice/disaster/heat@v1, kb:rice/irrigation/heading@v1]
+    numbers:
+      - {field: depth_cm_min, value: 5, unit: cm, precision: 0.5}
+      - {field: depth_cm_max, value: 10, unit: cm, precision: 0.5}
+  trajectory:
+    must_call: [crop.phenology, weather.forecast]
+    must_not_call: ["device.*"]
+    budget: {max_steps: 14, max_tokens: 10000}
+author: claude-draft
+review_status: pending_expert
+signed_at: 2026-11-03
+notes: 难点：heading 操作要点：遇 ≥ 35 ℃ 按 disaster/heat 灌深水 deep_water_cm 5–10 cm；规则层水层分支只给 3–5 cm（见回报）

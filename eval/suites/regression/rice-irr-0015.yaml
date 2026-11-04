@@ -2,6 +2,8 @@ id: rice-irr-0015
 version: 1
 suite: regression
 difficulty: medium
+crop: rice
+stage: 分蘖期
 tags: [L3, irrigate.depth, protect.dosage]
 question: 5号田今天刚打完二化螟的药，田里水怎么管？能排水吗？
 context:

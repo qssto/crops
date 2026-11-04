@@ -1,0 +1,38 @@
+id: rice-p2-fert-0021
+version: 1
+suite: capability
+difficulty: medium
+crop: rice
+stage: 分蘖期
+tags: [L3, fertilize.timing]
+question: 5号田前阵子忙没顾上，第二遍分蘖肥到现在还没撒，现在补上来得及吗？
+context:
+  farm: farm-demo-01
+  field: field-005
+  role: farm_manager
+  user: u-fm-01
+fixtures:
+  clock: 2026-07-03T08:00:00+08:00
+  mcp:
+    crop.phenology:
+      - match: {field: field-005}
+        return: {stage: 分蘖期, days_after_transplant: 18}
+    field.history:
+      - match: {field: field-005}
+        return: {transplant_date: "2026-06-15", water_depth_cm: 2, last_fertilize: {product: 尿素, date: "2026-06-21", type: 第一次分蘖肥}}
+knowledge_ref: WORKTREE
+expect:
+  outcome: ADVICE
+  advice:
+    category: fertilize
+    advice_type: 观察类
+    conclusion: 已到移栽后第 18 天，超过分蘖肥最晚施用时间，不再补撒第二次分蘖肥，防止无效分蘖，后续按穗肥时机再评估（草拟，待专家确认）
+    must_cite: [kb:rice/fertilization/tillering@v1]
+  trajectory:
+    must_call: [crop.phenology]
+    must_not_call: ["device.*"]
+    budget: {max_steps: 10, max_tokens: 6000}
+author: claude-draft
+review_status: pending_expert
+signed_at: 2026-11-03
+notes: tillering apply-window-end：days_after_transplant ≤ 15，实测 18 天未满足 → 观察类不再追施；用户想“补上”，期望明确拒绝补撒而非折半补施

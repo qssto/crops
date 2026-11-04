@@ -1,0 +1,49 @@
+id: rice-p2-prot-0025
+version: 1
+suite: capability
+difficulty: easy
+crop: rice
+stage: 分蘖期
+tags: [L4, protect.product]
+question: 3号田纹枯病起来了，打什么药？
+context:
+  farm: farm-demo-01
+  field: field-003
+  role: farm_manager
+  user: u-fm-01
+fixtures:
+  clock: 2026-07-17T08:00:00+08:00
+  mcp:
+    crop.phenology:
+      - match: {field: field-003}
+        return: {stage: 分蘖期, sub_stage: 分蘖末期, expected_harvest: "2026-10-20"}
+    field.pest_survey:
+      - match: {field: field-003}
+        return: {pest: 纹枯病, diseased_hill_rate: 0.25, collected_at: "2026-07-16"}
+    weather.forecast:
+      - match: {field: field-003}
+        return: {wind_speed_ms: 2.0, rain_mm_24h: 0, temp_c: 30, collected_at: "2026-07-17T07:00:00+08:00", source: mock-station}
+    field.history:
+      - match: {field: field-003}
+        return: {operations: []}
+    field.profile:
+      - match: {field: field-003}
+        return: {area_mu: 32.5, expected_harvest: "2026-10-20", no_fly_zones: [], adjacent_fields: []}
+knowledge_ref: WORKTREE
+expect:
+  outcome: ADVICE
+  advice:
+    category: protect
+    advice_type: 作业类
+    conclusion: 病丛率 25% 达分蘖期 20% 指标，在纹枯病登记药剂中选用，重点喷稻株中下部（草拟，待专家确认）
+    must_cite: [kb:rice/pest/sheath-blight@v1, kb:common/operation_window/spray@v1]
+    target: sheath_blight
+    product_in: [validamycin-5sl, thifluzamide-240sc, hexaconazole-5sc, trifloxystrobin-tebuconazole-75wg]
+  trajectory:
+    must_call: [field.pest_survey]
+    must_not_call: ["device.*"]
+    budget: {max_steps: 14, max_tokens: 10000}
+author: claude-draft
+review_status: pending_expert
+signed_at: 2026-11-03
+notes: 候选 = calc.Candidates(rice, sheath_blight, jiangsu) 全集，无抗性排除、无临收约束

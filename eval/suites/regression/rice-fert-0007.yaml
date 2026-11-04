@@ -2,6 +2,8 @@ id: rice-fert-0007
 version: 2
 suite: regression
 difficulty: hard
+crop: rice
+stage: 秧苗期
 tags: [L3, L4, fertilize.rate]
 question: 5号田过两天插秧，基肥用15-15-15复合肥，每亩施多少？整块田多少？钾肥要不要配？
 context:

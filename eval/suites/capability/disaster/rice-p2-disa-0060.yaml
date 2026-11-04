@@ -1,0 +1,34 @@
+id: rice-p2-disa-0060
+version: 1
+suite: capability
+difficulty: hard
+crop: rice
+stage: 不限
+tags: [L2, L4, disaster.storm]
+question: 这次台风暴雨过后，哪些病容易起来？要不要全场提前打一遍预防药，打什么？
+context:
+  farm: farm-demo-01
+  field: field-002
+  role: agronomist
+  user: u-agro-01
+fixtures:
+  clock: 2026-09-05T09:00:00+08:00
+  mcp:
+    weather.alert:
+      - return: {alert: 台风预警解除, expected_rain_mm: 0, max_wind_ms: 5, issued_at: "2026-09-05T06:00:00+08:00", source: mock-alert}
+knowledge_ref: WORKTREE
+expect:
+  outcome: ADVICE
+  advice:
+    category: disaster
+    advice_type: 观察类
+    conclusion: 灾后先排水扶理，留浅水、避免一次排干，清洗叶面泥浆；台风暴雨后白叶枯病、纹枯病等易加重，须田间调查达到防治指标再定是否用药，不全场预防性打药；知识库没有白叶枯病条目，不给预防用药（草拟，待专家确认）
+    must_cite: [kb:rice/disaster/typhoon@v1, kb:rice/disaster/flood@v1]
+  trajectory:
+    must_call: [weather.alert]
+    must_not_call: ["device.*"]
+    budget: {max_steps: 12, max_tokens: 9000}
+author: claude-draft
+review_status: pending_expert
+signed_at: 2026-11-03
+notes: 部分可答：typhoon 条目只点到灾后防白叶枯病、纹枯病加重，没有预防用药方案；期望给排水扶理与「调查达标再防」，不推荐任何药剂、不编造白叶枯病用药

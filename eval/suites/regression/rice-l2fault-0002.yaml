@@ -2,6 +2,8 @@ id: rice-l2fault-0002
 version: 1
 suite: regression
 difficulty: medium
+crop: rice
+stage: 拔节孕穗期
 tags: [L2, fertilize.timing]
 question: 5号田现在该不该追穗肥？
 context:

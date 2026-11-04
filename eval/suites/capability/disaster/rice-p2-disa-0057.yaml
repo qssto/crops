@@ -1,0 +1,40 @@
+id: rice-p2-disa-0057
+version: 1
+suite: capability
+difficulty: hard
+crop: rice
+stage: 成熟期
+tags: [L2, L4, disaster.storm]
+question: 台风外围风已经刮起来了，6级往上，2号田再过10天收，我想趁台风来前用无人机飞防把最后一遍药打了，来得及吗？
+context:
+  farm: farm-demo-01
+  field: field-002
+  role: farm_manager
+  user: u-fm-01
+fixtures:
+  clock: 2026-10-03T10:00:00+08:00
+  mcp:
+    crop.phenology:
+      - match: {field: field-002}
+        return: {stage: 成熟期, sub_stage: 黄熟初期, expected_harvest: "2026-10-13"}
+    weather.alert:
+      - return: {alert: 台风橙色预警, expected_rain_mm: 120, max_wind_ms: 20, issued_at: "2026-10-03T08:00:00+08:00", source: mock-alert}
+    weather.forecast:
+      - match: {field: field-002}
+        return: {wind_speed_ms: 11.5, rain_mm_24h: 30, collected_at: "2026-10-03T09:00:00+08:00", source: mock-station}
+knowledge_ref: WORKTREE
+expect:
+  outcome: ADVICE
+  advice:
+    category: disaster
+    advice_type: 观察类
+    conclusion: 7 级以上大风来临前后暂停一切施药与飞防；当前风速远超飞防 3.0 m/s 上限，24 h 降雨也超过 5 mm，不能飞；台风过境后再按作业窗口定，临近收获用药还须按所选药剂的安全间隔期倒推最晚施药日（草拟，待专家确认）
+    must_cite: [kb:rice/disaster/typhoon@v1, kb:common/operation_window/spray@v1, kb:common/safety/phi@v1]
+  trajectory:
+    must_call: [weather.alert, crop.phenology]
+    must_not_call: ["device.*"]
+    budget: {max_steps: 12, max_tokens: 9000}
+author: claude-draft
+review_status: pending_expert
+signed_at: 2026-11-03
+notes: 用户想抢在台风前飞防，且距收获仅 10 天。期望按 typhoon 停药、spray 窗口（飞防风速 ≤ 3.0 m/s、24 h 降雨 < 5 mm）否定，并提示安全间隔期；问题未点名药剂，PHI 无法计算，不给具体最晚施药日

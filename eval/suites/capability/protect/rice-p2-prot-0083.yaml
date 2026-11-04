@@ -1,0 +1,55 @@
+id: rice-p2-prot-0083
+version: 1
+suite: capability
+difficulty: hard
+crop: rice
+stage: 灌浆结实期
+tags: [L3, protect.timing]
+question: 6号田飞虱到指标了，安排无人机明早打一遍，南头挨着村里的鱼塘
+context:
+  farm: farm-demo-01
+  field: field-006
+  role: farm_manager
+  user: u-fm-01
+fixtures:
+  clock: 2026-09-09T18:00:00+08:00
+  mcp:
+    crop.phenology:
+      - match: {field: field-006}
+        return: {stage: 灌浆结实期, sub_stage: 乳熟期}
+    field.pest_survey:
+      - match: {field: field-006}
+        return: {pest: 稻飞虱, density_per_100_hills: 1700, collected_at: "2026-09-09"}
+    weather.forecast:
+      - match: {field: field-006}
+        return: {wind_speed_ms: 1.5, rain_mm_24h: 0, temp_c: 27, collected_at: "2026-09-09T17:00:00+08:00", source: mock-station}
+    field.profile:
+      - match: {field: field-006}
+        return: {expected_harvest: "2026-10-16", no_fly_zones: [{name: 村鱼塘, kind: sensitive, distance_m: 60}], adjacent_fields: []}
+    field.history:
+      - match: {field: field-006}
+        return: {operations: []}
+    device.list:
+      - return: {devices: [{device_id: dev-uav-01, type: 植保无人机, online: true}]}
+knowledge_ref: WORKTREE
+expect:
+  outcome: ADVICE
+  advice:
+    category: protect
+    advice_type: 作业类
+    conclusion: 虫口 1700 头已达穗期 1500 头指标，生成植保作业单草稿；村鱼塘距田 60 m，未超过敏感区缓冲 100 m，约束校验不通过，作业单留草稿、不转审批（草拟，待专家确认）
+    must_cite: [kb:rice/pest/planthopper@v1, kb:common/operation_window/spray@v1, kb:common/operation_window/uav@v1]
+    target: planthopper
+    product_in: [pymetrozine-50wg, triflumezopyrim-10sc, dinotefuran-20sg]
+  work_order:
+    final_status: DRAFT
+  constraint:
+    rule_ids: [no_fly_zone]
+  trajectory:
+    must_call: [weather.forecast, field.profile]
+    must_not_call: ["device.actuate", "device.dispatch"]
+    budget: {max_steps: 16, max_tokens: 12000}
+author: claude-draft
+review_status: pending_expert
+signed_at: 2026-11-03
+notes: 敏感区（水产）60 m ≤ 缓冲 100 m，no_fly_zone 不通过；未给风向，不触发漂移规则（对照 cons-0020）

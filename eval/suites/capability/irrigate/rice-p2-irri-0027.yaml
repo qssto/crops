@@ -1,0 +1,40 @@
+id: rice-p2-irri-0027
+version: 1
+suite: capability
+difficulty: hard
+crop: rice
+stage: 分蘖期
+tags: [L3, irrigate.amount]
+question: 2号田水位计显示2.5厘米，想补到3厘米，要放多少吨水？
+context:
+  farm: farm-demo-01
+  field: field-002
+  role: operator
+  user: u-op-01
+fixtures:
+  clock: 2026-07-09T06:30:00+08:00
+  mcp:
+    field.profile:
+      - {match: {field: field-002}, return: {area_mu: 28.0}}
+    crop.phenology:
+      - {match: {field: field-002}, return: {stage: 分蘖期, sub_stage: 分蘖末期}}
+    field.history:
+      - {match: {field: field-002}, return: {water_depth_cm: 2.5}}
+knowledge_ref: WORKTREE
+expect:
+  outcome: ADVICE
+  advice:
+    category: irrigate
+    advice_type: 作业类
+    conclusion: 2号田 28 亩，由 2.5 cm 补到 3 cm 只差 0.5 cm，按 1.05 系数约需 98 m³（约 98 吨）（草拟，待专家确认）
+    must_cite: [kb:rice/irrigation/water-volume@v1]
+    numbers:
+      - {field: water_m3, value: 98, unit: m3, precision: 1}
+  trajectory:
+    must_call: [field.profile, field.history]
+    must_not_call: ["device.*"]
+    budget: {max_steps: 10, max_tokens: 6000}
+author: claude-draft
+review_status: pending_expert
+signed_at: 2026-11-03
+notes: 难点：小数水层差 + 用户用「吨」（水 1 m³ ≈ 1 吨）；28 × 666.67 × 0.5 ÷ 100 × 1.05 = 98.0 m³

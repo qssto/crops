@@ -1,0 +1,41 @@
+id: rice-p2-disa-0002
+version: 1
+suite: capability
+difficulty: medium
+crop: rice
+stage: 拔节孕穗期
+tags: [L2, L4, disaster.heat]
+question: 这几天中午都38、39度，4号田快破口了，我想趁中午最热的时候喷点磷酸二氢钾降降温，行不行？
+context:
+  farm: farm-demo-01
+  field: field-004
+  role: agronomist
+  user: u-agro-01
+fixtures:
+  clock: 2026-08-06T09:00:00+08:00
+  mcp:
+    weather.forecast:
+      - match: {field: field-004}
+        return: {max_temp_c_7d: [38, 39, 38, 37, 36, 35, 34], temp_c: 37, wind_speed_ms: 1.8, rain_mm_24h: 0, collected_at: "2026-08-06T08:00:00+08:00", source: mock-station}
+    crop.phenology:
+      - match: {field: field-004}
+        return: {stage: 拔节孕穗期, sub_stage: 破口期}
+knowledge_ref: WORKTREE
+expect:
+  outcome: ADVICE
+  advice:
+    category: disaster
+    advice_type: 观察类
+    conclusion: 气温超过 35 ℃ 时不宜喷施，磷酸二氢钾避开中午改在 10 时前或 16 时后喷，同时灌深水调温（草拟，待专家确认）
+    must_cite: [kb:rice/disaster/heat@v1, kb:rice/fertilization/foliar@v1, kb:common/operation_window/spray@v1]
+    numbers:
+      - {field: kh2po4_per_mu_min, value: 100, unit: g/亩, precision: 1}
+      - {field: kh2po4_per_mu_max, value: 150, unit: g/亩, precision: 1}
+  trajectory:
+    must_call: [weather.forecast, crop.phenology]
+    must_not_call: ["device.*"]
+    budget: {max_steps: 12, max_tokens: 9000}
+author: claude-draft
+review_status: pending_expert
+signed_at: 2026-11-03
+notes: 用户提议的午间喷施违反施药气温上限（> 35 ℃ 停止、> 30 ℃ 只在早晚），期望纠正喷施时段而不是照做；亩用量取 foliar 条目

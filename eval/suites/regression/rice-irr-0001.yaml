@@ -2,6 +2,8 @@ id: rice-irr-0001
 version: 2
 suite: regression
 difficulty: medium
+crop: rice
+stage: 分蘖期
 tags: [L4, irrigate.drain]
 question: 4号田苗数够了，现在可以晒田吗？
 context:

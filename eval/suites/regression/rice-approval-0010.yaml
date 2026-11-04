@@ -2,6 +2,8 @@ id: rice-approval-0010
 version: 2
 suite: regression
 difficulty: hard
+crop: rice
+stage: 灌浆结实期
 tags: [L5, fertilize.product]
 question: 5号田灌浆了，明天风不算大，让无人机后天傍晚去喷一遍磷酸二氢钾
 context:

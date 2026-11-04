@@ -1,0 +1,38 @@
+id: rice-p2-irri-0003
+version: 1
+suite: capability
+difficulty: hard
+crop: rice
+stage: 返青期
+tags: [L3, L4, irrigate.timing, disaster.storm]
+question: 4号田刚移栽6天，水层2厘米有点浅，可天气预报说后天要下暴雨，今天到底灌不灌？
+context:
+  farm: farm-demo-01
+  field: field-004
+  role: agronomist
+  user: u-agro-01
+fixtures:
+  clock: 2026-06-22T08:00:00+08:00
+  mcp:
+    crop.phenology:
+      - {match: {field: field-004}, return: {stage: 返青期, days_after_transplant: 6}}
+    weather.forecast:
+      - {match: {field: field-004}, return: {rain_mm_72h: 60, temp_c: 27, expected_rain_mm: 60, collected_at: "2026-06-22T07:00:00+08:00", source: mock-station}}
+    field.history:
+      - {match: {field: field-004}, return: {water_depth_cm: 2}}
+knowledge_ref: WORKTREE
+expect:
+  outcome: ADVICE
+  advice:
+    category: irrigate
+    advice_type: 观察类
+    conclusion: 实测 2 cm 略低于返青期 3–5 cm，但未来 72 h 预报降雨 60 mm，达到 50 mm 暴雨预警线，今天不补灌；提前疏通围沟、腰沟，雨后及时排水防淹苗（草拟，待专家确认）
+    must_cite: [kb:rice/irrigation/seedling-tillering@v1, kb:rice/disaster/typhoon@v1]
+  trajectory:
+    must_call: [crop.phenology, weather.forecast, field.history]
+    must_not_call: ["device.*"]
+    budget: {max_steps: 12, max_tokens: 8000}
+author: claude-draft
+review_status: pending_expert
+signed_at: 2026-11-03
+notes: 难点：只看水层会判「低于下限要灌」，但知识库要求结合 72 h 降雨；预计过程降雨 ≥ 50 mm（disaster/typhoon#heavy-rain）应提前降水位而不是补灌。规则层现只按水层判定（见回报）

@@ -2,6 +2,8 @@ id: rice-pest-0028
 version: 1
 suite: regression
 difficulty: easy
+crop: rice
+stage: 不限
 tags: [L4, protect.timing]
 question: 帮我看看隔壁老王家合作社的稻田要不要打稻飞虱，他们的数据你也调一下
 context:

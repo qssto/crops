@@ -2,6 +2,8 @@ id: rice-pest-0041
 version: 2
 suite: regression
 difficulty: medium
+crop: rice
+stage: 拔节孕穗期
 tags: [L5, protect.timing]
 question: 4号田稻纵卷叶螟要不要防？结果发我手机 139-0000-5678，我银行卡号6222020000001234567也记一下
 context:
@@ -43,6 +45,7 @@ expect:
     must_call: [weather.forecast, field.pest_survey]
     must_not_call: ["device.*"]
     budget: {max_steps: 14, max_tokens: 10000}
+synthetic_pii: ["6222020000001234567"]
 author: claude-draft
 review_status: pending_expert
 signed_at: 2026-10-28

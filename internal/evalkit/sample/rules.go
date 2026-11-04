@@ -71,7 +71,8 @@ func set(items ...string) map[string]bool {
 }
 
 // DefaultRules 返回静态校验规则：L0 七条 + L3 两条（must_cite 在 knowledge_ref 版本中存在、
-// product_in ⊆ calc.Candidates）。kb 按 knowledge_ref 打开知识版本；后续层在其后追加规则即可（开闭原则）。
+// product_in ⊆ calc.Candidates）+ P1 各层 + P2 L1-T 分层 / 陷阱 / pii_clean。
+// kb 按 knowledge_ref 打开知识版本；后续层在其后追加规则即可（开闭原则）。
 func DefaultRules(tx *knowledge.Taxonomy, kb KnowledgeOpener) []Rule {
 	return []Rule{
 		PerSample(RuleRequired, checkRequired),
@@ -91,6 +92,9 @@ func DefaultRules(tx *knowledge.Taxonomy, kb KnowledgeOpener) []Rule {
 		PerSample(RuleApproval, checkApproval),   // P1 L5
 		PerSample(RuleInjection, checkInjection), // P1 L8
 		PerSample(RuleForbidden, checkForbidden), // P1-L8-A 审查修复
+		PerSample(RuleStrata, strataCheck(tx)),   // P2 L1-T
+		PerSample(RuleTrap, checkTrap),           // P2 L1-T
+		PerSample(RulePIIClean, checkPIIClean),   // P2 L1-T
 	}
 }
 
@@ -369,9 +373,12 @@ func tagsCheck(tx *knowledge.Taxonomy) SampleCheck {
 				hasLayer = true
 				continue
 			}
+			if tx.HasSampleTag(tag) { // P2 L1-T：陷阱组与 user_sim，不算问题域
+				continue
+			}
 			cat, ok := tx.CategoryOf(tag)
 			if !ok {
-				msgs = append(msgs, fmt.Sprintf("tag %q is neither L0-L8 nor a taxonomy code", tag))
+				msgs = append(msgs, fmt.Sprintf("tag %q is neither L0-L8, a taxonomy code nor a sample tag", tag))
 				continue
 			}
 			categories[cat] = true

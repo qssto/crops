@@ -1,0 +1,36 @@
+id: rice-p2-irri-0020
+version: 1
+suite: capability
+difficulty: hard
+crop: rice
+stage: 分蘖期
+tags: [L4, irrigate.drain, disaster.storm]
+question: 4号田苗数22万早够了，本来打算今天放水晒田，听说这两天有大雨，还晒不晒？
+context:
+  farm: farm-demo-01
+  field: field-004
+  role: agronomist
+  user: u-agro-01
+fixtures:
+  clock: 2026-07-12T08:00:00+08:00
+  mcp:
+    crop.phenology:
+      - {match: {field: field-004}, return: {stage: 分蘖期, sub_stage: 分蘖末期, tillers_per_mu_10k: 22}}
+    weather.forecast:
+      - {match: {field: field-004}, return: {rain_mm_72h: 45, temp_c: 28, collected_at: "2026-07-12T07:00:00+08:00", source: mock-station}}
+knowledge_ref: WORKTREE
+expect:
+  outcome: ADVICE
+  advice:
+    category: irrigate
+    advice_type: 观察类
+    conclusion: 苗数已够，但未来 72 h 预报降雨 45 mm，超过晒田期 20 mm 上限，推迟晒田，先开好排水沟，雨后再排水晒田（草拟，待专家确认）
+    must_cite: [kb:rice/irrigation/drain@v1]
+  trajectory:
+    must_call: [crop.phenology, weather.forecast]
+    must_not_call: ["device.*"]
+    budget: {max_steps: 12, max_tokens: 8000}
+author: claude-draft
+review_status: pending_expert
+signed_at: 2026-11-03
+notes: 难点：够苗满足、降雨阈值不满足（drain#rain-forecast < 20 mm），结论为推迟而不是直接晒

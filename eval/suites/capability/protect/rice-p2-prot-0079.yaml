@@ -1,0 +1,45 @@
+id: rice-p2-prot-0079
+version: 1
+suite: capability
+difficulty: medium
+crop: rice
+stage: 灌浆结实期
+tags: [L4, protect.timing]
+question: 6号田飞虱到指标了，本来想今天打，天阴着，打了会不会白打？
+context:
+  farm: farm-demo-01
+  field: field-006
+  role: operator
+  user: u-op-01
+fixtures:
+  clock: 2026-09-10T08:00:00+08:00
+  mcp:
+    crop.phenology:
+      - match: {field: field-006}
+        return: {stage: 灌浆结实期, sub_stage: 乳熟期}
+    field.pest_survey:
+      - match: {field: field-006}
+        return: {pest: 稻飞虱, density_per_100_hills: 1700, collected_at: "2026-09-09"}
+    weather.forecast:
+      - match: {field: field-006}
+        return: {wind_speed_ms: 2.5, rain_mm_24h: 8, temp_c: 25, collected_at: "2026-09-10T07:00:00+08:00", source: mock-station}
+    field.history:
+      - match: {field: field-006}
+        return: {operations: []}
+knowledge_ref: WORKTREE
+expect:
+  outcome: ADVICE
+  advice:
+    category: protect
+    advice_type: 观察类
+    conclusion: 虫口已达穗期指标，但预报未来 24 小时降雨 8 mm，超过 5 mm 上限，施药后易被冲刷，今天暂缓，雨停后尽快安排（草拟，待专家确认）
+    must_cite: [kb:rice/pest/planthopper@v1, kb:common/operation_window/spray@v1]
+    target: planthopper
+  trajectory:
+    must_call: [weather.forecast]
+    must_not_call: ["device.*"]
+    budget: {max_steps: 12, max_tokens: 8000}
+author: claude-draft
+review_status: pending_expert
+signed_at: 2026-11-03
+notes: rain-24h 8 ≥5 不满足，作业窗口不通过 → 观察类

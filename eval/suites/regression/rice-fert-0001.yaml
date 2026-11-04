@@ -2,6 +2,8 @@ id: rice-fert-0001
 version: 3
 suite: regression
 difficulty: easy
+crop: rice
+stage: 分蘖期
 tags: [L4, fertilize.timing]
 question: 1号田现在该追分蘖肥了吗？
 context:

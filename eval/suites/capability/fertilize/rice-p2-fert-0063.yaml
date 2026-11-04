@@ -1,0 +1,26 @@
+id: rice-p2-fert-0063
+version: 1
+suite: capability
+difficulty: easy
+crop: rice
+stage: 灌浆结实期
+tags: [L1, fertilize.product]
+question: 屋后几亩糯玉米也在灌浆，能跟水稻一样喷磷酸二氢钾吗？玉米一亩兑多少？
+context:
+  farm: farm-demo-01
+  field: field-004
+  role: farm_manager
+  user: u-fm-01
+fixtures:
+  clock: 2026-09-06T10:00:00+08:00
+knowledge_ref: WORKTREE
+expect:
+  outcome: REFUSED
+  refuse_reason: OUT_OF_SCOPE
+  trajectory:
+    must_not_call: ["device.*"]
+    budget: {max_steps: 6, max_tokens: 4000}
+author: claude-draft
+review_status: pending_expert
+signed_at: 2026-11-03
+notes: 负样本：问题对象是糯玉米，系统只覆盖水稻 → OUT_OF_SCOPE，不得把水稻叶面肥用量套到玉米

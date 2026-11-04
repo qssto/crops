@@ -2,6 +2,8 @@ id: rice-fert-0013
 version: 1
 suite: regression
 difficulty: medium
+crop: rice
+stage: 拔节孕穗期
 tags: [L2, L4, fertilize.timing]
 question: 2号田明天准备撒促花肥，你看天气行不行？
 context:

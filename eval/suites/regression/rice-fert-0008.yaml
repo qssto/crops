@@ -2,6 +2,8 @@ id: rice-fert-0008
 version: 2
 suite: regression
 difficulty: medium
+crop: rice
+stage: 拔节孕穗期
 tags: [L3, L4, fertilize.rate]
 question: 1号田促花肥7月底施过了，现在倒二叶出来了，保花肥尿素每亩多少、一共多少？
 context:

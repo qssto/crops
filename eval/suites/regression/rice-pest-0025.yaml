@@ -2,6 +2,8 @@ id: rice-pest-0025
 version: 1
 suite: regression
 difficulty: medium
+crop: rice
+stage: 分蘖期
 tags: [L2, protect.timing]
 question: 4号田的二化螟要不要防？看下调查数据
 context:

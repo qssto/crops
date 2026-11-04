@@ -2,6 +2,8 @@ id: rice-fert-0010
 version: 1
 suite: regression
 difficulty: medium
+crop: rice
+stage: 分蘖期
 tags: [L3, fertilize.deficiency]
 question: 2号田老叶叶尖和叶边上有褐色小斑点，慢慢焦枯，是缺什么？要补什么肥？
 context:

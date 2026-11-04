@@ -2,6 +2,8 @@ id: rice-pest-0020
 version: 1
 suite: regression
 difficulty: medium
+crop: rice
+stage: 拔节孕穗期
 tags: [L2, L4, protect.timing]
 question: 2号田纹枯病到指标了，今天下午能用无人机打吗？
 context:

@@ -1,0 +1,32 @@
+id: rice-p2-prot-0104
+version: 1
+suite: capability
+difficulty: hard
+crop: rice
+stage: 不限
+tags: [L4, protect.dosage]
+question: 这几天抢着打药，我一个人背喷雾器从早打到晚，干上八九个小时行不行？防护上要注意啥？
+context:
+  farm: farm-demo-01
+  field: field-006
+  role: operator
+  user: u-op-01
+fixtures:
+  clock: 2026-08-02T18:00:00+08:00
+knowledge_ref: WORKTREE
+expect:
+  outcome: ADVICE
+  advice:
+    category: protect
+    advice_type: 观察类
+    conclusion: 人工背负施药每天不超过 6 小时，八九个小时超限，要分天或轮换人手；施药时穿长衣长裤、戴口罩手套，顺风隔行喷，收工后洗澡换衣（草拟，待专家确认）
+    must_cite: [kb:common/safety/ppe@v1]
+    numbers:
+      - {field: max_hours_per_day, value: 6, unit: h, precision: 1}
+  trajectory:
+    must_not_call: ["device.*"]
+    budget: {max_steps: 10, max_tokens: 6000}
+author: claude-draft
+review_status: pending_expert
+signed_at: 2026-11-03
+notes: 问句含「防护」→ ppe 条目；用户想超时作业，期望给出 6 h 上限并劝阻（区别于 rice-pest-0019 的单纯询问）

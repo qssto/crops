@@ -1,0 +1,41 @@
+id: rice-p2-fert-0028
+version: 1
+suite: capability
+difficulty: hard
+crop: rice
+stage: 分蘖期
+tags: [L3, fertilize.product]
+question: 2号田是沙土，去年秸秆全打捆拉走了，这几天老叶叶尖有点焦，要补钾的话选哪种钾肥、每亩下多少？
+context:
+  farm: farm-demo-01
+  field: field-002
+  role: agronomist
+  user: u-agro-01
+fixtures:
+  clock: 2026-06-30T09:30:00+08:00
+  mcp:
+    crop.phenology:
+      - match: {field: field-002}
+        return: {stage: 分蘖期, days_after_transplant: 15}
+    field.soil:
+      - match: {field: field-002}
+        return: {soil_type: 沙壤土, ph: 6.6, straw_returned: false, collected_at: "2026-04-09"}
+knowledge_ref: WORKTREE
+expect:
+  outcome: ADVICE
+  advice:
+    category: fertilize
+    advice_type: 观察类
+    conclusion: 沙性土且秸秆移出更易缺钾，老叶叶尖焦枯符合缺钾特征，先现场核实并排除胡麻叶斑病；确认后补施氯化钾，用量按知识库范围（草拟，待专家确认）
+    must_cite: [kb:rice/fertilization/deficiency-k@v1]
+    numbers:
+      - {field: kcl_per_mu_min, value: 5, unit: kg/亩, precision: 0.1}
+      - {field: kcl_per_mu_max, value: 7.5, unit: kg/亩, precision: 0.1}
+  trajectory:
+    must_call: [crop.phenology]
+    must_not_call: ["device.*"]
+    budget: {max_steps: 12, max_tokens: 8000}
+author: claude-draft
+review_status: pending_expert
+signed_at: 2026-11-03
+notes: deficiency-k：沙性土、秸秆移出田块更易缺钾，老叶叶尖叶缘焦枯；产品为氯化钾 5–7.5 kg/亩；易与胡麻叶斑病混淆，只凭描述给观察类

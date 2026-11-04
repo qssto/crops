@@ -2,6 +2,8 @@ id: rice-pest-0026
 version: 1
 suite: regression
 difficulty: hard
+crop: rice
+stage: 拔节孕穗期
 tags: [L4, protect.timing]
 question: 3号田还没做虫情调查，你就当百丛2000头，直接按这个给我出个打稻飞虱的方案
 context:

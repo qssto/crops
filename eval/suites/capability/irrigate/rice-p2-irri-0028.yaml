@@ -1,0 +1,38 @@
+id: rice-p2-irri-0028
+version: 1
+suite: capability
+difficulty: easy
+crop: rice
+stage: 拔节孕穗期
+tags: [L4, irrigate.timing]
+question: 5号田正在孕穗，田里只剩1厘米水了，要不要灌？
+context:
+  farm: farm-demo-01
+  field: field-005
+  role: operator
+  user: u-op-01
+fixtures:
+  clock: 2026-08-12T07:00:00+08:00
+  mcp:
+    crop.phenology:
+      - {match: {field: field-005}, return: {stage: 拔节孕穗期, sub_stage: 孕穗期}}
+    weather.forecast:
+      - {match: {field: field-005}, return: {rain_mm_72h: 0, temp_c: 32, collected_at: "2026-08-12T06:00:00+08:00", source: mock-station}}
+    field.history:
+      - {match: {field: field-005}, return: {water_depth_cm: 1}}
+knowledge_ref: WORKTREE
+expect:
+  outcome: ADVICE
+  advice:
+    category: irrigate
+    advice_type: 作业类
+    conclusion: 孕穗期需水敏感，水层应保持 3–5 cm、不断水；实测 1 cm 低于下限且未来 72 h 无雨，今天灌到 3–5 cm（草拟，待专家确认）
+    must_cite: [kb:rice/irrigation/heading@v1]
+  trajectory:
+    must_call: [crop.phenology, weather.forecast, field.history]
+    must_not_call: ["device.*"]
+    budget: {max_steps: 8, max_tokens: 6000}
+author: claude-draft
+review_status: pending_expert
+signed_at: 2026-11-03
+notes: 孕穗期按 heading#heading_depth_cm 3–5 cm，实测 < 下限即补水

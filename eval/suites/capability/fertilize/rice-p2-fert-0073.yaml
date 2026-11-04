@@ -1,0 +1,26 @@
+id: rice-p2-fert-0073
+version: 1
+suite: capability
+difficulty: medium
+crop: rice
+stage: 不限
+tags: [L4, fertilize.product]
+question: 1号田田埂外头那几分地种的茭白，正在孕茭，撒稻田复合肥的时候顺手给它也撒点行不？茭白该用啥肥？
+context:
+  farm: farm-demo-01
+  field: field-001
+  role: farm_manager
+  user: u-fm-01
+fixtures:
+  clock: 2026-07-22T08:30:00+08:00
+knowledge_ref: WORKTREE
+expect:
+  outcome: REFUSED
+  refuse_reason: OUT_OF_SCOPE
+  trajectory:
+    must_not_call: ["device.*"]
+    budget: {max_steps: 6, max_tokens: 4000}
+author: claude-draft
+review_status: pending_expert
+signed_at: 2026-11-03
+notes: 负样本：施肥对象是茭白（水生蔬菜），虽挨着 1 号田，系统只覆盖水稻 → OUT_OF_SCOPE；不得把水稻复合肥方案或 n-budget 用量套到茭白

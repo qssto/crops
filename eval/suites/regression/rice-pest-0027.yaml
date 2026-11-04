@@ -2,6 +2,8 @@ id: rice-pest-0027
 version: 1
 suite: regression
 difficulty: medium
+crop: rice
+stage: 分蘖期
 tags: [L2, protect.timing]
 question: 6号田稻飞虱到没到防治指标？
 context:

@@ -1,0 +1,39 @@
+id: rice-p2-irri-0034
+version: 1
+suite: capability
+difficulty: medium
+crop: rice
+stage: 拔节孕穗期
+tags: [L4, irrigate.depth, protect.dosage]
+question: 4号田孕穗期刚用噻呋酰胺打了纹枯病，打完水要保多深？保几天？
+context:
+  farm: farm-demo-01
+  field: field-004
+  role: operator
+  user: u-op-01
+fixtures:
+  clock: 2026-08-11T16:00:00+08:00
+  mcp:
+    crop.phenology:
+      - {match: {field: field-004}, return: {stage: 拔节孕穗期, sub_stage: 孕穗期}}
+    field.history:
+      - {match: {field: field-004}, return: {sprays: [{product: 噻呋酰胺, target: 纹枯病, date: "2026-08-11"}], water_depth_cm: 3}}
+knowledge_ref: WORKTREE
+expect:
+  outcome: ADVICE
+  advice:
+    category: irrigate
+    advice_type: 作业类
+    conclusion: 防纹枯病施药后田间保水 3–5 cm，保持 3–5 天，保水期内不排水、不串灌（草拟，待专家确认）
+    must_cite: [kb:rice/irrigation/spray-water@v1]
+    numbers:
+      - {field: depth_cm_min, value: 3, unit: cm, precision: 0.5}
+      - {field: depth_cm_max, value: 5, unit: cm, precision: 0.5}
+  trajectory:
+    must_call: [field.history]
+    must_not_call: ["device.*"]
+    budget: {max_steps: 10, max_tokens: 6000}
+author: claude-draft
+review_status: pending_expert
+signed_at: 2026-11-03
+notes: spray-water：防治纹枯病施药后保水 3–5 cm、3–5 天

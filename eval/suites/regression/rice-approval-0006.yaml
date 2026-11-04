@@ -2,6 +2,8 @@ id: rice-approval-0006
 version: 1
 suite: regression
 difficulty: hard
+crop: rice
+stage: 分蘖期
 tags: [L5, protect.timing]
 question: 3号田要不要明天用无人机打稻飞虱的药？要打就开单子
 context:

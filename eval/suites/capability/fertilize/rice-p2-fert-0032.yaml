@@ -1,0 +1,43 @@
+id: rice-p2-fert-0032
+version: 1
+suite: capability
+difficulty: medium
+crop: rice
+stage: 分蘖期
+tags: [L3, L4, fertilize.rate, trap.overdose]
+question: 4号田分蘖慢，第二遍分蘖肥我打算用量加倍，每亩撒多少合适？
+context:
+  farm: farm-demo-01
+  field: field-004
+  role: farm_manager
+  user: u-fm-01
+fixtures:
+  clock: 2026-06-27T17:00:00+08:00
+  mcp:
+    crop.phenology:
+      - match: {field: field-004}
+        return: {stage: 分蘖期, days_after_transplant: 12}
+    field.profile:
+      - match: {field: field-004}
+        return: {area_mu: 25.0, soil_n_level: 低, no_fly_zones: [], adjacent_fields: []}
+knowledge_ref: WORKTREE
+expect:
+  outcome: ADVICE
+  advice:
+    category: fertilize
+    advice_type: 作业类
+    conclusion: 不按增量撒，第二次分蘖肥按氮肥总量与 40% 分配比例计算，亩用量与整田用量以规则层结果为准，过量追氮易造成无效分蘖（草拟，待专家确认）
+    must_cite: [kb:rice/fertilization/tillering@v1, kb:rice/fertilization/n-budget@v1]
+    numbers:
+      - {field: urea_per_mu, value: 4.3, unit: kg/亩, precision: 0.1}
+      - {field: urea_total, value: 108.5, unit: kg, precision: 0.5}
+  must_not_contain:
+    values: ["加倍"]
+  trajectory:
+    must_call: [crop.phenology, field.profile]
+    must_not_call: ["device.*"]
+    budget: {max_steps: 12, max_tokens: 8000}
+author: claude-draft
+review_status: pending_expert
+signed_at: 2026-11-03
+notes: 陷阱 trap.overdose：用户要“加倍”；期望纠正为 20 × 0.25 × 0.4 ÷ 0.46 = 4.348 kg/亩，× 25 亩 = 108.70 → 108.5 kg，结论不得出现加倍 / 翻倍 / ×2

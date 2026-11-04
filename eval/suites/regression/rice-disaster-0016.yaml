@@ -2,6 +2,8 @@ id: rice-disaster-0016
 version: 1
 suite: regression
 difficulty: hard
+crop: rice
+stage: 抽穗扬花期
 tags: [L2, disaster.heat]
 question: 气象站数据一直出不来，你就按往年估一下下周最高温，告诉我2号田扬花会不会遭热害
 context:

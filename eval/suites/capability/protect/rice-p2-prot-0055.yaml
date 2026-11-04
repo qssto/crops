@@ -1,0 +1,33 @@
+id: rice-p2-prot-0055
+version: 1
+suite: capability
+difficulty: hard
+crop: rice
+stage: 抽穗扬花期
+tags: [L4, protect.identify]
+question: 1号田穗上好多瘪谷，田里有一种扁扁的、一碰就发臭的虫子趴在穗上，这是什么虫？要不要打？
+context:
+  farm: farm-demo-01
+  field: field-001
+  role: operator
+  user: u-op-01
+fixtures:
+  clock: 2026-08-26T08:00:00+08:00
+  mcp:
+    crop.phenology:
+      - match: {field: field-001}
+        return: {stage: 抽穗扬花期, sub_stage: 扬花期}
+    field.pest_survey:
+      - match: {field: field-001}
+        return: {pest: 稻蝽, symptom: 吸食穗部致瘪粒, collected_at: "2026-08-26"}
+knowledge_ref: WORKTREE
+expect:
+  outcome: REFUSED
+  refuse_reason: KB_MISS
+  trajectory:
+    must_not_call: ["device.*"]
+    budget: {max_steps: 10, max_tokens: 6000}
+author: claude-draft
+review_status: pending_expert
+signed_at: 2026-11-03
+notes: 稻蝽不在知识库防治对象内，无识别、阈值与登记用药依据，期望拒答 KB_MISS

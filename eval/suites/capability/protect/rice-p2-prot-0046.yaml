@@ -1,0 +1,52 @@
+id: rice-p2-prot-0046
+version: 1
+suite: capability
+difficulty: easy
+crop: rice
+stage: 拔节孕穗期
+tags: [L3, protect.dosage]
+question: 6号田准备用无人机打肟菌·戊唑醇预防稻曲病，每亩药量和药液量多少？30亩一共备多少药？
+context:
+  farm: farm-demo-01
+  field: field-006
+  role: operator
+  user: u-op-01
+fixtures:
+  clock: 2026-08-13T07:00:00+08:00
+  mcp:
+    crop.phenology:
+      - match: {field: field-006}
+        return: {stage: 拔节孕穗期, sub_stage: 孕穗末期, expected_heading: "2026-08-22", expected_harvest: "2026-10-18"}
+    field.profile:
+      - match: {field: field-006}
+        return: {area_mu: 30.0, no_fly_zones: [], adjacent_fields: []}
+    weather.forecast:
+      - match: {field: field-006}
+        return: {wind_speed_ms: 1.5, rain_mm_24h: 0, temp_c: 28, collected_at: "2026-08-13T06:00:00+08:00", source: mock-station}
+    field.history:
+      - match: {field: field-006}
+        return: {operations: []}
+knowledge_ref: WORKTREE
+expect:
+  outcome: ADVICE
+  advice:
+    category: protect
+    advice_type: 作业类
+    conclusion: 距预计破口 9 天，在预防窗口内；肟菌·戊唑醇按登记用量，无人机亩施药液量按知识库取值，整田用量按 30 亩换算（草拟，待专家确认）
+    must_cite: [kb:rice/pest/false-smut@v1, kb:common/operation_window/uav@v1, kb:common/operation_window/dosage-dilution@v1]
+    target: false_smut
+    product_in: [trifloxystrobin-tebuconazole-75wg]
+    numbers:
+      - {field: dose_per_mu_min, value: 10, unit: g/亩, precision: 0.1}
+      - {field: dose_per_mu_max, value: 15, unit: g/亩, precision: 0.1}
+      - {field: water_per_mu, value: 1.5, unit: L/亩, precision: 0.1}
+      - {field: product_total_min, value: 300, unit: g, precision: 1}
+      - {field: product_total_max, value: 450, unit: g, precision: 1}
+  trajectory:
+    must_call: [crop.phenology, field.profile]
+    must_not_call: ["device.*"]
+    budget: {max_steps: 14, max_tokens: 10000}
+author: claude-draft
+review_status: pending_expert
+signed_at: 2026-11-03
+notes: days_before_heading = 9 在 7–10 天窗口；风速 1.5 ≤3.0 满足飞防；登记 10–15 g/亩，× 30 亩 = 300–450 g，无人机 1.5 L/亩

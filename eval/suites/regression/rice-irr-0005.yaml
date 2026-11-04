@@ -2,6 +2,8 @@ id: rice-irr-0005
 version: 1
 suite: regression
 difficulty: easy
+crop: rice
+stage: 返青期
 tags: [L4, irrigate.depth]
 question: 2号田刚插完秧，田里水层留多深合适？
 context:

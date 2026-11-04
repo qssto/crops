@@ -14,9 +14,6 @@ import (
 	"agri-steward/internal/evalkit/sample"
 )
 
-// phenologyTool 是提供生育期的 MCP 工具名；kbdump 从其 fixture 取 stage。
-const phenologyTool = "crop.phenology"
-
 // cmdKBDump 按样本情境跑 progressive_loader，逐样本打印命中的 kb_id@version（或 KB_MISS），
 // 并标出 must_cite 未被加载到的条目，末行给出 must_cite 召回汇总。
 func cmdKBDump(ctx context.Context, args []string, stdout io.Writer) error {
@@ -85,7 +82,7 @@ func cmdKBDump(ctx context.Context, args []string, stdout io.Writer) error {
 // topic 取首个非 Ln 的 taxonomy tag（一级 code 则作 category），target 取 expect.advice.target，
 // 缺省时取 must_cite 中带 target 的植保条目。
 func situationOf(tx *knowledge.Taxonomy, s *sample.Sample) knowledge.Situation {
-	sit := knowledge.Situation{Crop: tx.Crop, Region: tx.Region, Stage: stageOf(s)}
+	sit := knowledge.Situation{Crop: tx.Crop, Region: tx.Region, Stage: sample.PhenologyStage(s)}
 	for _, tag := range s.Tags {
 		top, ok := tx.CategoryOf(tag)
 		if !ok {
@@ -111,21 +108,6 @@ func situationOf(tx *knowledge.Taxonomy, s *sample.Sample) knowledge.Situation {
 		}
 	}
 	return sit
-}
-
-func stageOf(s *sample.Sample) string {
-	for _, f := range s.Fixtures.MCP[phenologyTool] {
-		ret := f.Return
-		if ret == nil && len(f.Returns) > 0 {
-			ret = f.Returns[0]
-		}
-		if m, ok := ret.(map[string]any); ok {
-			if st, ok := m["stage"].(string); ok {
-				return st
-			}
-		}
-	}
-	return ""
 }
 
 func outcomeOf(s *sample.Sample) string {

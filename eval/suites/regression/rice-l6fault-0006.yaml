@@ -2,6 +2,8 @@ id: rice-l6fault-0006
 version: 1
 suite: regression
 difficulty: medium
+crop: rice
+stage: 灌浆结实期
 tags: [L6, protect.identify]
 question: 5号田有些谷粒里面变成黑粉了，是稻粒黑粉病吗？怎么治？
 context:

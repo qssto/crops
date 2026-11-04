@@ -1,0 +1,41 @@
+id: rice-p2-disa-0006
+version: 1
+suite: capability
+difficulty: easy
+crop: rice
+stage: 拔节孕穗期
+tags: [L2, L4, disaster.cold]
+question: 冷空气来了，3号田的水要不要加深点？
+context:
+  farm: farm-demo-01
+  field: field-003
+  role: operator
+  user: u-op-01
+fixtures:
+  clock: 2026-08-14T07:00:00+08:00
+  mcp:
+    weather.forecast:
+      - match: {field: field-003}
+        return: {mean_temp_c_3d: [16.0, 16.5, 18.0], collected_at: "2026-08-14T06:00:00+08:00", source: mock-station}
+    crop.phenology:
+      - match: {field: field-003}
+        return: {stage: 拔节孕穗期, sub_stage: 减数分裂期}
+knowledge_ref: WORKTREE
+expect:
+  outcome: ADVICE
+  advice:
+    category: disaster
+    advice_type: 作业类
+    conclusion: 减数分裂期日均温 ≤ 17 ℃ 连续 2 天，达到孕穗期低温指标，降温前灌深水 5–10 cm 保温，低温过后逐步排浅（草拟，待专家确认）
+    must_cite: [kb:rice/disaster/cold@v1]
+    numbers:
+      - {field: warm_water_cm_min, value: 5, unit: cm, precision: 0.5}
+      - {field: warm_water_cm_max, value: 10, unit: cm, precision: 0.5}
+  trajectory:
+    must_call: [weather.forecast, crop.phenology]
+    must_not_call: ["device.*"]
+    budget: {max_steps: 10, max_tokens: 8000}
+author: claude-draft
+review_status: pending_expert
+signed_at: 2026-11-03
+notes: 操作员口语问法；前两天日均温 16.0、16.5 ℃ 达到 booting-cold 指标

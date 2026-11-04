@@ -1,0 +1,38 @@
+id: rice-p2-fert-0017
+version: 1
+suite: capability
+difficulty: easy
+crop: rice
+stage: 返青期
+tags: [L3, fertilize.deficiency]
+question: 4号田插了一个礼拜还不返青，新叶子根上发白，蔸子也不长，是缺啥了？
+context:
+  farm: farm-demo-01
+  field: field-004
+  role: farm_manager
+  user: u-fm-01
+fixtures:
+  clock: 2026-06-23T09:30:00+08:00
+  mcp:
+    crop.phenology:
+      - match: {field: field-004}
+        return: {stage: 返青期, days_after_transplant: 6}
+    field.soil:
+      - match: {field: field-004}
+        return: {soil_type: 石灰性土, ph: 8.1, collected_at: "2026-04-08"}
+knowledge_ref: WORKTREE
+expect:
+  outcome: ADVICE
+  advice:
+    category: fertilize
+    advice_type: 观察类
+    conclusion: 石灰性土上新叶基部褪绿发白、坐蔸不发，疑似缺锌，先到田间核实；确诊后叶面喷 0.2% 硫酸锌溶液，间隔 7 天喷 2 次（草拟，待专家确认）
+    must_cite: [kb:rice/fertilization/deficiency-zn@v1]
+  trajectory:
+    must_call: [crop.phenology, field.soil]
+    must_not_call: ["device.*"]
+    budget: {max_steps: 10, max_tokens: 6000}
+author: claude-draft
+review_status: pending_expert
+signed_at: 2026-11-03
+notes: deficiency-zn：返青期新叶基部白化、坐蔸，石灰性土（pH 8.1）易发；只凭文字描述给观察类，处置写叶面喷施 0.2% 硫酸锌，不给土施用量

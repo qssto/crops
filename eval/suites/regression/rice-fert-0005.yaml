@@ -2,6 +2,8 @@ id: rice-fert-0005
 version: 2
 suite: regression
 difficulty: medium
+crop: rice
+stage: 灌浆结实期
 tags: [L3, fertilize.product]
 question: 想种富硒米，1号田灌浆期喷什么富硒叶面肥、喷几次？
 context:

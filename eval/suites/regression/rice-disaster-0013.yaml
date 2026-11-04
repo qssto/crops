@@ -2,6 +2,8 @@ id: rice-disaster-0013
 version: 1
 suite: regression
 difficulty: medium
+crop: rice
+stage: 拔节孕穗期
 tags: [L3, L4, disaster.lodging]
 question: 5号田刚拔节，株高已经80公分了，长得太旺，会不会倒？怎么控？
 context:

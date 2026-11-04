@@ -2,6 +2,8 @@ id: rice-pest-0032
 version: 2
 suite: regression
 difficulty: hard
+crop: rice
+stage: 拔节孕穗期
 tags: [L4, L5, protect.timing]
 question: 2号田纹枯病往上爬了，派无人机后天上午去打一遍
 context:

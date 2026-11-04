@@ -2,6 +2,8 @@ id: rice-fert-0015
 version: 1
 suite: regression
 difficulty: medium
+crop: rice
+stage: 拔节孕穗期
 tags: [L3, fertilize.rate]
 question: 我家里有几袋自己沤的农家肥，1号田穗肥用它代替尿素，每亩撒多少？
 context:

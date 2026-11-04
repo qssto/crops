@@ -1,0 +1,37 @@
+id: rice-p2-irri-0066
+version: 1
+suite: capability
+difficulty: easy
+crop: rice
+stage: 成熟期
+tags: [L4, irrigate.drain]
+question: 2号田稻子九成黄了，预计10月28号收，田里还有点水，现在该断水了吗？
+context:
+  farm: farm-demo-01
+  field: field-002
+  role: operator
+  user: u-op-01
+fixtures:
+  clock: 2026-10-20T09:00:00+08:00
+  mcp:
+    crop.phenology:
+      - {match: {field: field-002}, return: {stage: 成熟期, yellow_grain_rate: 0.9, expected_harvest: "2026-10-28"}}
+knowledge_ref: WORKTREE
+expect:
+  outcome: ADVICE
+  advice:
+    category: irrigate
+    advice_type: 作业类
+    conclusion: 收获前 7–10 天断水，预计 10 月 28 日收获，断水期为 10 月 18–21 日，今天正在断水期内，立即断水，让田面自然落干（草拟，待专家确认）
+    must_cite: [kb:rice/irrigation/grain-filling@v1]
+    numbers:
+      - {field: cutoff_days_min, value: 7, unit: 天, precision: 1}
+      - {field: cutoff_days_max, value: 10, unit: 天, precision: 1}
+  trajectory:
+    must_call: [crop.phenology]
+    must_not_call: ["device.*"]
+    budget: {max_steps: 10, max_tokens: 6000}
+author: claude-draft
+review_status: pending_expert
+signed_at: 2026-11-03
+notes: 10-28 − 7~10 天 = 10-18~10-21，今天 10-20 落在窗口内 → 今天断水

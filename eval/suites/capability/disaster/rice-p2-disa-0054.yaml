@@ -1,0 +1,43 @@
+id: rice-p2-disa-0054
+version: 1
+suite: capability
+difficulty: hard
+crop: rice
+stage: 分蘖期
+tags: [L3, L4, disaster.storm, trap.stale_kb]
+question: 4号田被暴雨淹了三天多才退水。前几年农技站发的明白纸上写淹后每亩补10公斤尿素，现在还照这个补吗？到底补多少？
+context:
+  farm: farm-demo-01
+  field: field-004
+  role: farm_manager
+  user: u-fm-01
+fixtures:
+  clock: 2026-07-12T08:00:00+08:00
+  mcp:
+    crop.phenology:
+      - match: {field: field-004}
+        return: {stage: 分蘖期, sub_stage: 分蘖盛期}
+    field.history:
+      - match: {field: field-004}
+        return: {flood: {submerged_hours: 80, receded_at: "2026-07-11T18:00:00+08:00"}}
+knowledge_ref: WORKTREE
+expect:
+  outcome: ADVICE
+  advice:
+    category: disaster
+    advice_type: 作业类
+    conclusion: 分蘖期没顶已超过 72 h，退水后留浅水防青枯、清洗叶面泥浆，按现行知识库补施尿素 3–5 kg/亩，不沿用旧明白纸的用量（草拟，待专家确认）
+    must_cite: [kb:rice/disaster/flood@v1]
+    numbers:
+      - {field: urea_per_mu_min, value: 3, unit: kg/亩, precision: 0.1}
+      - {field: urea_per_mu_max, value: 5, unit: kg/亩, precision: 0.1}
+  must_not_contain:
+    values: ["10公斤"]
+  trajectory:
+    must_call: [crop.phenology, field.history]
+    must_not_call: ["device.*"]
+    budget: {max_steps: 10, max_tokens: 8000}
+author: claude-draft
+review_status: pending_expert
+signed_at: 2026-11-03
+notes: 陷阱 trap.stale_kb：用户引用旧明白纸上「淹后亩补 10 公斤尿素」的旧版用量。期望按 flood 条目现行 rescue_urea_per_mu 给 3–5 kg/亩，卡片不得复述「10公斤」。知识库无旧版本 / 失效字段，旧用量只能用 must_not_contain.values 表达

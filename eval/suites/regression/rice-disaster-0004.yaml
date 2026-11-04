@@ -2,6 +2,8 @@ id: rice-disaster-0004
 version: 2
 suite: regression
 difficulty: medium
+crop: rice
+stage: 抽穗扬花期
 tags: [L4, disaster.cold]
 question: 晚稻抽穗时碰上寒露风，2号田要怎么应对？
 context:

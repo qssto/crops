@@ -2,6 +2,8 @@ id: rice-disaster-0011
 version: 2
 suite: regression
 difficulty: medium
+crop: rice
+stage: 分蘖期
 tags: [L3, disaster.storm]
 question: 4号田分蘖期淹了一天半，水退了，要补肥吗？补多少？
 context:

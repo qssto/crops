@@ -2,6 +2,8 @@ id: rice-irr-0003
 version: 2
 suite: regression
 difficulty: hard
+crop: rice
+stage: 拔节孕穗期
 tags: [L3, L4, irrigate.amount]
 question: 6号田复水要灌到3厘米，大概要放多少方水？
 context:

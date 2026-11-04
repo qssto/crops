@@ -1,0 +1,40 @@
+id: rice-p2-irri-0008
+version: 1
+suite: capability
+difficulty: medium
+crop: rice
+stage: 返青期
+tags: [L3, irrigate.amount]
+question: 5号田现在2厘米，加到5厘米要多少方水？我好算抽水机开多久
+context:
+  farm: farm-demo-01
+  field: field-005
+  role: operator
+  user: u-op-01
+fixtures:
+  clock: 2026-06-23T06:30:00+08:00
+  mcp:
+    field.profile:
+      - {match: {field: field-005}, return: {area_mu: 30.0}}
+    crop.phenology:
+      - {match: {field: field-005}, return: {stage: 返青期, days_after_transplant: 7}}
+    field.history:
+      - {match: {field: field-005}, return: {water_depth_cm: 2}}
+knowledge_ref: WORKTREE
+expect:
+  outcome: ADVICE
+  advice:
+    category: irrigate
+    advice_type: 作业类
+    conclusion: 5号田 30 亩，由 2 cm 加到 5 cm（返青期水层上限内），按 1.05 渗漏系数约需 630 m³（草拟，待专家确认）
+    must_cite: [kb:rice/irrigation/water-volume@v1]
+    numbers:
+      - {field: water_m3, value: 630, unit: m3, precision: 1}
+  trajectory:
+    must_call: [field.profile, field.history]
+    must_not_call: ["device.*"]
+    budget: {max_steps: 10, max_tokens: 6000}
+author: claude-draft
+review_status: pending_expert
+signed_at: 2026-11-03
+notes: 30 亩 × 666.67 m² × (5 − 2) cm ÷ 100 × 1.05 = 630.0 m³；抽水机时长需泵流量，知识库无，不在期望内

@@ -2,6 +2,8 @@ id: rice-disaster-0003
 version: 2
 suite: regression
 difficulty: hard
+crop: rice
+stage: 拔节孕穗期
 tags: [L4, disaster.lodging, fertilize.rate]
 question: 6号田长得太旺，怕后期倒伏，现在能做点什么？
 context:

@@ -2,6 +2,8 @@ id: rice-fert-0011
 version: 1
 suite: regression
 difficulty: medium
+crop: rice
+stage: 分蘖期
 tags: [L3, fertilize.deficiency]
 question: 6号田插秧两周了秧苗一直不发，新叶基部发白，老叶有褐斑，是什么原因？
 context:

@@ -1,0 +1,38 @@
+id: rice-p2-irri-0045
+version: 1
+suite: capability
+difficulty: hard
+crop: rice
+stage: 抽穗扬花期
+tags: [L4, irrigate.depth, disaster.storm]
+question: 台风要来了，预报过程雨量80毫米，4号田正在扬花，水是排还是留？
+context:
+  farm: farm-demo-01
+  field: field-004
+  role: agronomist
+  user: u-agro-01
+fixtures:
+  clock: 2026-09-02T09:00:00+08:00
+  mcp:
+    crop.phenology:
+      - {match: {field: field-004}, return: {stage: 抽穗扬花期, sub_stage: 扬花期}}
+    weather.forecast:
+      - {match: {field: field-004}, return: {rain_mm_72h: 80, temp_c: 29, expected_rain_mm: 80, max_wind_ms: 15, collected_at: "2026-09-02T08:00:00+08:00", source: mock-station}}
+    field.history:
+      - {match: {field: field-004}, return: {water_depth_cm: 5}}
+knowledge_ref: WORKTREE
+expect:
+  outcome: ADVICE
+  advice:
+    category: irrigate
+    advice_type: 作业类
+    conclusion: 预计降雨 ≥ 50 mm，台风前疏通三沟、预降田间水位，但扬花期不断水，降到浅水层下限附近即可；风力 7 级以上暂停施药，过境后及时排涝（草拟，待专家确认）
+    must_cite: [kb:rice/disaster/typhoon@v1, kb:rice/irrigation/heading@v1]
+  trajectory:
+    must_call: [crop.phenology, weather.forecast]
+    must_not_call: ["device.*"]
+    budget: {max_steps: 14, max_tokens: 10000}
+author: claude-draft
+review_status: pending_expert
+signed_at: 2026-11-03
+notes: 难点：typhoon#heavy-rain 要预降水位，heading 要求不断水，两条要同时满足：降水位不排干

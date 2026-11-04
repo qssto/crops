@@ -2,6 +2,8 @@ id: rice-irr-0018
 version: 1
 suite: regression
 difficulty: easy
+crop: rice
+stage: 不限
 tags: [L4, irrigate.amount]
 question: 农场旁边那块玉米地要上滴灌，每亩每天滴多少方水？
 context:

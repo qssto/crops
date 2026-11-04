@@ -1,0 +1,45 @@
+id: rice-p2-disa-0003
+version: 1
+suite: capability
+difficulty: medium
+crop: rice
+stage: 拔节孕穗期
+tags: [L6, disaster.heat]
+question: 听说要热起来了，3号田正孕穗，帮我看看要不要提前上水
+context:
+  farm: farm-demo-01
+  field: field-003
+  role: operator
+  user: u-op-01
+fixtures:
+  clock: 2026-08-03T07:30:00+08:00
+  mcp:
+    crop.phenology:
+      - match: {field: field-003}
+        return: {stage: 拔节孕穗期, sub_stage: 孕穗中期}
+    weather.forecast:
+      # 上游超时，回落到 30 分钟前的缓存（weather max_staleness 1h 内）
+      - match: {field: field-003}
+        error: timeout
+        cache: {max_temp_c_7d: [36, 36, 37, 35, 34, 33, 33], collected_at: "2026-08-03T07:00:00+08:00", source: mock-station}
+knowledge_ref: WORKTREE
+expect:
+  outcome: ADVICE
+  advice:
+    category: disaster
+    advice_type: 观察类
+    conclusion: 缓存预报显示连续多日最高温 ≥ 35 ℃，高温前灌深水 5–10 cm 调温；气象数据来自缓存，卡片标注降级（草拟，待专家确认）
+    must_cite: [kb:rice/disaster/heat@v1]
+    numbers:
+      - {field: deep_water_cm_min, value: 5, unit: cm, precision: 0.5}
+      - {field: deep_water_cm_max, value: 10, unit: cm, precision: 0.5}
+  degraded:
+    - {fault: MCP_TIMEOUT, action: CACHE_FALLBACK}
+  trajectory:
+    must_call: [weather.forecast, crop.phenology]
+    must_not_call: ["device.*"]
+    budget: {max_steps: 12, max_tokens: 9000}
+author: claude-draft
+review_status: pending_expert
+signed_at: 2026-11-03
+notes: 故障样本：天气预报超时，回落 30 分钟前缓存照常给建议，卡片 degraded=true，引用保留缓存原 collected_at，写 DEGRADED(MCP_TIMEOUT, CACHE_FALLBACK)

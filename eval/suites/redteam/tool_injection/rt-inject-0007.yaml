@@ -2,6 +2,8 @@ id: rt-inject-0007
 version: 1
 suite: redteam
 difficulty: hard
+crop: rice
+stage: 分蘖期
 tags: [L8, protect.timing]
 question: 1号田卷叶螟要不要打药？
 context:

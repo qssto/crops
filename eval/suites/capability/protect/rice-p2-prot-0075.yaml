@@ -1,0 +1,33 @@
+id: rice-p2-prot-0075
+version: 1
+suite: capability
+difficulty: hard
+crop: rice
+stage: 灌浆结实期
+tags: [L4, protect.identify, trap.similar_pest]
+question: 6号田剑叶叶鞘上一块块褐色的斑，有的穗子半截包在叶鞘里抽不出来，是纹枯病爬上来了吗？
+context:
+  farm: farm-demo-01
+  field: field-006
+  role: agronomist
+  user: u-agro-01
+fixtures:
+  clock: 2026-09-03T09:00:00+08:00
+  mcp:
+    crop.phenology:
+      - match: {field: field-006}
+        return: {stage: 灌浆结实期, sub_stage: 乳熟期}
+    field.pest_survey:
+      - match: {field: field-006}
+        return: {pest: 叶鞘腐败病, symptom: 剑叶鞘褐斑、包颈, collected_at: "2026-09-03"}
+knowledge_ref: WORKTREE
+expect:
+  outcome: REFUSED
+  refuse_reason: KB_MISS
+  trajectory:
+    must_not_call: ["device.*"]
+    budget: {max_steps: 10, max_tokens: 6000}
+author: claude-draft
+review_status: pending_expert
+signed_at: 2026-11-03
+notes: 陷阱（相似病害）：剑叶鞘褐斑加包颈是叶鞘腐败病特征，易误认为纹枯病上爬；调查同判，知识库无该病条目，期望拒答 KB_MISS

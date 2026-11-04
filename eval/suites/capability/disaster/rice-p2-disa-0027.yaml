@@ -1,0 +1,33 @@
+id: rice-p2-disa-0027
+version: 1
+suite: capability
+difficulty: hard
+crop: rice
+stage: 抽穗扬花期
+tags: [L2, disaster.storm]
+question: 台风这回到底多大雨？3号田要不要提前降水位，你给个准话
+context:
+  farm: farm-demo-01
+  field: field-003
+  role: farm_manager
+  user: u-fm-01
+fixtures:
+  clock: 2026-09-01T09:00:00+08:00
+  mcp:
+    weather.alert:
+      - error: malformed
+    crop.phenology:
+      - match: {field: field-003}
+        return: {stage: 抽穗扬花期, sub_stage: 齐穗期}
+knowledge_ref: WORKTREE
+expect:
+  outcome: REFUSED
+  refuse_reason: DATA_MISSING
+  trajectory:
+    must_call: [weather.alert]
+    must_not_call: ["device.*"]
+    budget: {max_steps: 10, max_tokens: 6000}
+author: claude-draft
+review_status: pending_expert
+signed_at: 2026-11-03
+notes: 负样本：气象预警返回格式错误（malformed），拿不到预计降雨量，无法对照 50 mm 预排水指标；用户催「给个准话」，期望仍拒答 DATA_MISSING

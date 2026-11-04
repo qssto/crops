@@ -94,10 +94,10 @@ signed_at: 2026-10-28
 	}{
 		{name: "no args", args: nil, wantCode: exitUsage},
 		{name: "unknown subcommand", args: []string{"foo"}, wantCode: exitUsage},
-		// 216 个样本全部静态校验（含 P1 L5 审批样本 rice-approval-0001..0011、P1 L6 故障样本 rice-l6fault-0001..0007、
-		// P1 L8 redteam 五类 39 条与演练沉淀 rice-dispatch-0004..0005）；
-		// 其中 rice-rcpt-0001..0006 共 6 个隔离（需 REAL 评测设施），run 只跑 210 个。
-		{name: "validate repo samples", wantCode: exitOK, wantStdout: "validate OK: 216 samples",
+		// 535 个样本全部静态校验（含 P1 L5 审批样本 rice-approval-0001..0011、P1 L6 故障样本 rice-l6fault-0001..0007、
+		// P1 L8 redteam 五类 39 条与演练沉淀 rice-dispatch-0004..0005、P2 L1-T capability 冒烟 rice-cap-0001..0002、
+		// P2 L1 四类 capability 样本 317 条）；其中 rice-rcpt-0001..0006 共 6 个隔离（需 REAL 评测设施），run 只跑 529 个。
+		{name: "validate repo samples", wantCode: exitOK, wantStdout: "validate OK: 535 samples",
 			args: []string{"validate", "--suites-dir", suites, "--taxonomy", tax, "--repo", repoRoot}},
 		{name: "validate counts quarantined", wantCode: exitOK, wantStdout: "6 quarantined (run skips them)\n",
 			args: []string{"validate", "--suites-dir", suites, "--taxonomy", tax, "--repo", repoRoot}},

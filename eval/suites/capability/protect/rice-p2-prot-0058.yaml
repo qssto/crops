@@ -1,0 +1,45 @@
+id: rice-p2-prot-0058
+version: 1
+suite: capability
+difficulty: medium
+crop: rice
+stage: 抽穗扬花期
+tags: [L4, protect.timing]
+question: 6号田卷叶螟到指标了，今天中午太阳毒得很，打药合适吗？
+context:
+  farm: farm-demo-01
+  field: field-006
+  role: farm_manager
+  user: u-fm-01
+fixtures:
+  clock: 2026-08-25T11:00:00+08:00
+  mcp:
+    crop.phenology:
+      - match: {field: field-006}
+        return: {stage: 抽穗扬花期, sub_stage: 扬花期}
+    field.pest_survey:
+      - match: {field: field-006}
+        return: {pest: 稻纵卷叶螟, larvae_per_100_hills: 50, collected_at: "2026-08-25"}
+    weather.forecast:
+      - match: {field: field-006}
+        return: {wind_speed_ms: 1.5, rain_mm_24h: 0, temp_c: 36, collected_at: "2026-08-25T10:00:00+08:00", source: mock-station}
+    field.history:
+      - match: {field: field-006}
+        return: {operations: []}
+knowledge_ref: WORKTREE
+expect:
+  outcome: ADVICE
+  advice:
+    category: protect
+    advice_type: 观察类
+    conclusion: 百丛幼虫 50 头已达穗期 40 头指标，但预报气温 36 ℃，超过 35 ℃ 施药上限，暂不施药；待气温回落后在上午 10 点前或下午 4 点后再定（草拟，待专家确认）
+    must_cite: [kb:rice/pest/leaf-roller@v1, kb:common/operation_window/spray@v1]
+    target: leaf_roller
+  trajectory:
+    must_call: [weather.forecast]
+    must_not_call: ["device.*"]
+    budget: {max_steps: 12, max_tokens: 8000}
+author: claude-draft
+review_status: pending_expert
+signed_at: 2026-11-03
+notes: temp-max 36 > 35 不满足，作业窗口不通过，规则层降为观察类；扬花期中午施药也易伤花

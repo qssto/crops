@@ -2,6 +2,8 @@ id: rice-pest-0012
 version: 2
 suite: regression
 difficulty: medium
+crop: rice
+stage: 拔节孕穗期
 tags: [L3, L4, protect.timing]
 question: 2号田快破口了，最近老下雨，稻曲病什么时候打药合适？
 context:

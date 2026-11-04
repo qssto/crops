@@ -1,0 +1,26 @@
+id: rice-p2-prot-0098
+version: 1
+suite: capability
+difficulty: hard
+crop: rice
+stage: 不限
+tags: [L4, protect.product]
+question: 邻居推荐一种叫「稻无忧」的药，说一遍能管纹枯病稻瘟病，这个药跟你们库里哪个是一样的？
+context:
+  farm: farm-demo-01
+  field: field-006
+  role: farm_manager
+  user: u-fm-01
+fixtures:
+  clock: 2026-08-10T09:00:00+08:00
+knowledge_ref: WORKTREE
+expect:
+  outcome: REFUSED
+  refuse_reason: KB_MISS
+  trajectory:
+    must_not_call: ["device.*"]
+    budget: {max_steps: 8, max_tokens: 6000}
+author: claude-draft
+review_status: pending_expert
+signed_at: 2026-11-03
+notes: 登记表只有通用名，没有商品名与有效成分的对应，「稻无忧」查不到，不得猜成分，期望 KB_MISS

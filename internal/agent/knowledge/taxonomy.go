@@ -31,10 +31,19 @@ type Taxonomy struct {
 	Crop       string             `yaml:"crop"`
 	Region     string             `yaml:"region"`
 	Categories []TaxonomyCategory `yaml:"categories"`
+	// Stages 是评测分层的生育期维度（P2 L1-T）：Stages 枚举加 StageAny；生产路径不读。
+	Stages []TaxonomyItem `yaml:"stages,omitempty"`
+	// SampleTags 是评测样本的非问题域 tag（P2 L1-T：陷阱组 trap.* 与 user_sim）；生产路径不读。
+	SampleTags []TaxonomyItem `yaml:"sample_tags,omitempty"`
 
 	// code → 所属一级分类 code；一级分类映射到自身
 	categoryOf map[string]string
+	stages     map[string]bool
+	sampleTags map[string]bool
 }
+
+// StageAny 是与生育期无关的问题（越界、跨农场、价格等）的分层取值。
+const StageAny = "不限"
 
 const taxonomySubcodeSep = "."
 
@@ -93,8 +102,43 @@ func (t *Taxonomy) index() error {
 			}
 		}
 	}
+	var err error
+	if t.stages, err = t.indexFlat("stages", t.Stages); err != nil {
+		return err
+	}
+	if t.sampleTags, err = t.indexFlat("sample_tags", t.SampleTags); err != nil {
+		return err
+	}
+	for code := range t.stages {
+		if t.sampleTags[code] {
+			return fmt.Errorf("code %q is both a stage and a sample tag", code)
+		}
+	}
 	return nil
 }
+
+// indexFlat 索引一组平铺 code：不得为空、重复或与问题域 code 冲突。
+func (t *Taxonomy) indexFlat(field string, items []TaxonomyItem) (map[string]bool, error) {
+	m := make(map[string]bool, len(items))
+	for _, it := range items {
+		switch {
+		case it.Code == "":
+			return nil, fmt.Errorf("empty code in %s", field)
+		case m[it.Code]:
+			return nil, fmt.Errorf("duplicate code %q in %s", it.Code, field)
+		case t.Has(it.Code):
+			return nil, fmt.Errorf("%s code %q clashes with a category code", field, it.Code)
+		}
+		m[it.Code] = true
+	}
+	return m, nil
+}
+
+// HasStage 判断 code 是否为分层生育期取值。
+func (t *Taxonomy) HasStage(code string) bool { return t.stages[code] }
+
+// HasSampleTag 判断 code 是否为样本 tag（陷阱组、user_sim）。
+func (t *Taxonomy) HasSampleTag(code string) bool { return t.sampleTags[code] }
 
 // Has 判断 code（一级或子类）是否在枚举内。
 func (t *Taxonomy) Has(code string) bool {

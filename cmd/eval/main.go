@@ -1,15 +1,17 @@
 // cmd/eval 是评测入口：
 //
-//	eval validate [--suites-dir eval/suites] [--taxonomy eval/taxonomy.yaml] [--repo .]
+//	eval validate [--suites-dir eval/suites] [--taxonomy eval/taxonomy.yaml] [--repo .] [--coverage-targets ...] [--strict-coverage]
 //	eval run --suite regression [--n 3] [--tags L2,protect] [--out eval/out] [--baseline baseline_p0 [--baselines-dir eval/baselines]]
 //	eval kbdump --suite regression
+//	eval graduate [--apply]
 //	eval baseline freeze --name baseline_p1 --exp 102 [--backfill eval/baselines/baseline_p1_exit.yaml]
 //	eval compare --baseline <名|exp id> --candidate <id> [--mode factor|phase] [--reference <id>] [--fail-on-unreleasable]
 //	eval aa [--runs 3 | --from-exps a,b,c] [--out eval/gates/thresholds.yaml]
 //
-// validate 只做样本静态校验、不装配 agent；run 先校验再经 app.Build 装配被测 agent 回放并出报告
+// validate 只做样本静态校验、不装配 agent，并输出分层覆盖报表与补写清单（P2 L1-T）；run 先校验再经 app.Build 装配被测 agent 回放并出报告
 // （--baseline 时另把报告与配置快照上传 agri-steward-eval 的 report/{exp_id}/ 并写 baseline yaml）；
-// kbdump 按样本情境（taxonomy tag + crop.phenology fixture）跑 progressive_loader，打印命中的 kb_id@version。
+// kbdump 按样本情境（taxonomy tag + crop.phenology fixture）跑 progressive_loader，打印命中的 kb_id@version；
+// graduate 按路线 §6.2 列出可从 capability 毕业的样本，--apply 时移到 regression/（P2 L1-T）。
 // baseline freeze / compare / aa 是 P2 L0：冻结基线（P1 实验补录快照）、单因子 / 阶段级对比、A/A 噪声阈值草稿。
 // 三者失败关闭：实验须 DONE 且有 trial、快照完整，--baseline 须在库中已冻结；compare 有出错 trial 时结论 INCOMPLETE，
 // --fail-on-unreleasable 时不可放行退出码 1。
@@ -58,7 +60,7 @@ const (
 	contractsDir = "contracts"
 	// toolPolicyFile 是 --repo 下工具策略（no_model_actuate 取其 actuate 集合，与生产同一份）。
 	toolPolicyFile = "policy/tool_policy.yaml"
-	usageString    = "usage: eval <validate|run|kbdump|baseline|compare|aa> [flags]"
+	usageString    = "usage: eval <validate|run|kbdump|graduate|baseline|compare|aa> [flags]"
 )
 
 func main() {
@@ -81,6 +83,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 		err = cmdRun(ctx, args[1:], stdout, stderr)
 	case "kbdump":
 		err = cmdKBDump(ctx, args[1:], stdout)
+	case "graduate":
+		err = cmdGraduate(ctx, args[1:], stdout, stderr)
 	case "baseline":
 		err = cmdBaseline(ctx, args[1:], stdout, stderr)
 	case "compare":
@@ -163,7 +167,9 @@ func (f *sampleFlags) loadValidSamples() (*loadedSamples, error) {
 func cmdValidate(args []string, stdout io.Writer) error {
 	fs := flag.NewFlagSet("validate", flag.ContinueOnError)
 	var sf sampleFlags
+	var cf coverageFlags
 	sf.register(fs)
+	cf.register(fs)
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -187,7 +193,8 @@ func cmdValidate(args []string, stdout io.Writer) error {
 	if len(ls.refNotes) > 0 {
 		fmt.Fprintf(stdout, "reference not judged: %s\n", strings.Join(ls.refNotes, "; "))
 	}
-	return nil
+	// P2 L1-T：覆盖报表与补写清单；覆盖不足只报告，--strict-coverage 时才失败。
+	return cf.printCoverage(stdout, ls, sf)
 }
 
 func cmdRun(ctx context.Context, args []string, stdout, stderr io.Writer) (err error) {

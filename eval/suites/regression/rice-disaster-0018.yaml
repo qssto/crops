@@ -2,6 +2,8 @@ id: rice-disaster-0018
 version: 1
 suite: regression
 difficulty: medium
+crop: rice
+stage: 拔节孕穗期
 tags: [L3, disaster.storm]
 question: 昨天下冰雹，4号田叶子打烂了不少，要怎么补救？
 context:

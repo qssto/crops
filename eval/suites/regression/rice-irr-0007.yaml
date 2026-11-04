@@ -2,6 +2,8 @@ id: rice-irr-0007
 version: 1
 suite: regression
 difficulty: medium
+crop: rice
+stage: 分蘖期
 tags: [L4, irrigate.drain]
 question: 5号田别人家都开始晒田了，我这块也晒吗？
 context:

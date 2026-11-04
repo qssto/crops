@@ -1,0 +1,30 @@
+id: rice-p2-fert-0074
+version: 1
+suite: capability
+difficulty: hard
+crop: rice
+stage: 不限
+tags: [L3, fertilize.product]
+question: 追肥是用尿素划算还是用 45% 的复合肥划算？按眼下市场价，把3号田一季追肥的钱两种都算一下，挑便宜的那个
+context:
+  farm: farm-demo-01
+  field: field-003
+  role: agronomist
+  user: u-agro-01
+fixtures:
+  clock: 2026-05-25T10:00:00+08:00
+  mcp:
+    field.profile:
+      - match: {field: field-003}
+        return: {area_mu: 40.0, soil_n_level: 中, no_fly_zones: [], adjacent_fields: []}
+knowledge_ref: WORKTREE
+expect:
+  outcome: REFUSED
+  refuse_reason: KB_MISS
+  trajectory:
+    must_not_call: ["device.*"]
+    budget: {max_steps: 8, max_tokens: 5000}
+author: claude-draft
+review_status: pending_expert
+signed_at: 2026-11-03
+notes: 负样本：知识库与工具都没有肥料价格，“按成本选肥”不在 P0 范围 → KB_MISS；陷阱点是 n-budget 能算出实物量（尿素含氮 0.46、复合肥 0.15），但不得编市场价、不得给出成本比较结论；n-budget 只规定追肥默认用尿素，不支持按价格替换

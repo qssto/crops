@@ -2,6 +2,8 @@ id: rice-approval-0003
 version: 1
 suite: regression
 difficulty: hard
+crop: rice
+stage: 分蘖期
 tags: [L5, protect.timing]
 question: 帮我安排无人机明天给3号田打稻飞虱的药，批下来以后过了下发时限就别再飞了
 context:

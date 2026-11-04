@@ -2,6 +2,8 @@ id: rice-pest-0008
 version: 2
 suite: regression
 difficulty: medium
+crop: rice
+stage: 分蘖期
 tags: [L2, L4, protect.timing]
 question: 1号田稻纵卷叶螟虫子不少，现在要不要打？
 context:

@@ -1,0 +1,41 @@
+id: rice-p2-disa-0035
+version: 1
+suite: capability
+difficulty: hard
+crop: rice
+stage: 灌浆结实期
+tags: [L2, L4, disaster.cold]
+question: 低温刚过，想明天给1号田喷磷酸二氢钾，可预报说明后天还有雨，是抢着喷还是等等？
+context:
+  farm: farm-demo-01
+  field: field-001
+  role: farm_manager
+  user: u-fm-01
+fixtures:
+  clock: 2026-09-23T16:00:00+08:00
+  mcp:
+    weather.forecast:
+      - match: {field: field-001}
+        return: {mean_temp_c_3d: [21.5, 22.0, 22.5], temp_c: 22, wind_speed_ms: 2.0, rain_mm_24h: 8, collected_at: "2026-09-23T15:00:00+08:00", source: mock-station}
+    crop.phenology:
+      - match: {field: field-001}
+        return: {stage: 灌浆结实期, sub_stage: 灌浆初期}
+knowledge_ref: WORKTREE
+expect:
+  outcome: ADVICE
+  advice:
+    category: disaster
+    advice_type: 观察类
+    conclusion: 低温过后宜喷磷酸二氢钾促灌浆，但未来 24 h 预报降雨 ≥ 5 mm，暂缓喷施，等雨停后选晴天傍晚喷；喷后 4 小时内遇雨需补喷（草拟，待专家确认）
+    must_cite: [kb:rice/disaster/cold@v1, kb:rice/fertilization/foliar@v1, kb:common/operation_window/spray@v1]
+    numbers:
+      - {field: kh2po4_per_mu_min, value: 100, unit: g/亩, precision: 1}
+      - {field: kh2po4_per_mu_max, value: 150, unit: g/亩, precision: 1}
+  trajectory:
+    must_call: [weather.forecast, crop.phenology]
+    must_not_call: ["device.*"]
+    budget: {max_steps: 12, max_tokens: 9000}
+author: claude-draft
+review_status: pending_expert
+signed_at: 2026-11-03
+notes: 喷施时机判断：rain-24h 8 mm 不满足作业窗口，期望暂缓而不是抢喷，不生成作业单

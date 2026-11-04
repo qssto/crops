@@ -1,0 +1,41 @@
+id: rice-p2-fert-0051
+version: 1
+suite: capability
+difficulty: easy
+crop: rice
+stage: 拔节孕穗期
+tags: [L3, L4, fertilize.rate]
+question: 6号田倒2叶出来了，保花肥一亩撒几公斤尿素？
+context:
+  farm: farm-demo-01
+  field: field-006
+  role: operator
+  user: u-op-01
+fixtures:
+  clock: 2026-08-06T07:30:00+08:00
+  mcp:
+    crop.phenology:
+      - match: {field: field-006}
+        return: {stage: 拔节孕穗期, sub_stage: 倒二叶期}
+    field.profile:
+      - match: {field: field-006}
+        return: {area_mu: 28.0, soil_n_level: 中, no_fly_zones: [], adjacent_fields: []}
+knowledge_ref: WORKTREE
+expect:
+  outcome: ADVICE
+  advice:
+    category: fertilize
+    advice_type: 作业类
+    conclusion: 倒 2 叶露尖施保花肥，占总氮 16%，尿素亩用量与整田用量按规则层计算（草拟，待专家确认）
+    must_cite: [kb:rice/fertilization/panicle@v1, kb:rice/fertilization/n-budget@v1]
+    numbers:
+      - {field: urea_per_mu, value: 6.3, unit: kg/亩, precision: 0.1}
+      - {field: urea_total, value: 175.5, unit: kg, precision: 0.5}
+  trajectory:
+    must_call: [crop.phenology, field.profile]
+    must_not_call: ["device.*"]
+    budget: {max_steps: 12, max_tokens: 8000}
+author: claude-draft
+review_status: pending_expert
+signed_at: 2026-11-03
+notes: 18 × 0.16 ÷ 0.46 = 6.261 kg/亩；× 28 亩 = 175.30 → 175.5 kg

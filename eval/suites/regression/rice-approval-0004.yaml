@@ -2,6 +2,8 @@ id: rice-approval-0004
 version: 1
 suite: regression
 difficulty: hard
+crop: rice
+stage: 分蘖期
 tags: [L5, protect.timing]
 question: 3号田稻飞虱到防治指标了，安排无人机明天打药，先交给农艺师审
 context:

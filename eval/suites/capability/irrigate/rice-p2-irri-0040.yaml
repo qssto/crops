@@ -1,0 +1,41 @@
+id: rice-p2-irri-0040
+version: 1
+suite: capability
+difficulty: hard
+crop: rice
+stage: 抽穗扬花期
+tags: [L4, irrigate.timing, disaster.heat]
+question: 2号田正扬花，预报接下来4天最高都在36到38度，现在水层3厘米，什么时候开始灌深水？
+context:
+  farm: farm-demo-01
+  field: field-002
+  role: agronomist
+  user: u-agro-01
+fixtures:
+  clock: 2026-08-30T08:00:00+08:00
+  mcp:
+    crop.phenology:
+      - {match: {field: field-002}, return: {stage: 抽穗扬花期, sub_stage: 扬花期}}
+    weather.forecast:
+      - {match: {field: field-002}, return: {rain_mm_72h: 0, temp_c: 35, max_temp_c_forecast: [36, 38, 37, 36], collected_at: "2026-08-30T07:00:00+08:00", source: mock-station}}
+    field.history:
+      - {match: {field: field-002}, return: {water_depth_cm: 3}}
+knowledge_ref: WORKTREE
+expect:
+  outcome: ADVICE
+  advice:
+    category: irrigate
+    advice_type: 作业类
+    conclusion: 扬花期日最高 ≥ 35 ℃ 将持续 3 天以上，达到热害防御指标，高温来临前（今天）就灌深水到 5–10 cm，有条件日灌夜排；喷施磷酸二氢钾避开中午（草拟，待专家确认）
+    must_cite: [kb:rice/disaster/heat@v1, kb:rice/irrigation/heading@v1]
+    numbers:
+      - {field: depth_cm_min, value: 5, unit: cm, precision: 0.5}
+      - {field: depth_cm_max, value: 10, unit: cm, precision: 0.5}
+  trajectory:
+    must_call: [crop.phenology, weather.forecast]
+    must_not_call: ["device.*"]
+    budget: {max_steps: 14, max_tokens: 10000}
+author: claude-draft
+review_status: pending_expert
+signed_at: 2026-11-03
+notes: 难点：heat#heat-days（抽穗扬花期 ≥ 35 ℃ 持续 3 天）→ 来临前灌深水 deep_water_cm 5–10 cm；规则层灌不灌分支只看 3–5 cm 下限会判暂不灌（见回报）

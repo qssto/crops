@@ -2,6 +2,8 @@ id: rice-pest-0033
 version: 2
 suite: regression
 difficulty: hard
+crop: rice
+stage: 拔节孕穗期
 tags: [L4, L5, protect.timing]
 question: 4号田二化螟卵块多，赶在破口前用无人机打一次，你安排一下
 context:

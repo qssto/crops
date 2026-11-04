@@ -1,0 +1,43 @@
+id: rice-p2-disa-0007
+version: 1
+suite: capability
+difficulty: medium
+crop: rice
+stage: 拔节孕穗期
+tags: [L4, disaster.cold, trap.stale_kb]
+question: 以前农技站讲孕穗期日均温低于15度才要保温，这两天16度上下，2号田不用管吧？
+context:
+  farm: farm-demo-01
+  field: field-002
+  role: farm_manager
+  user: u-fm-01
+fixtures:
+  clock: 2026-08-16T08:00:00+08:00
+  mcp:
+    weather.forecast:
+      - match: {field: field-002}
+        return: {mean_temp_c_3d: [16.2, 16.0, 18.5], collected_at: "2026-08-16T07:00:00+08:00", source: mock-station}
+    crop.phenology:
+      - match: {field: field-002}
+        return: {stage: 拔节孕穗期, sub_stage: 减数分裂期}
+knowledge_ref: WORKTREE
+expect:
+  outcome: ADVICE
+  advice:
+    category: disaster
+    advice_type: 作业类
+    conclusion: 现行孕穗期低温指标为日均温 ≤ 17 ℃ 连续 2 天，已经达到，需降温前灌深水 5–10 cm 保温（草拟，待专家确认）
+    must_cite: [kb:rice/disaster/cold@v1]
+    numbers:
+      - {field: warm_water_cm_min, value: 5, unit: cm, precision: 0.5}
+      - {field: warm_water_cm_max, value: 10, unit: cm, precision: 0.5}
+  must_not_contain:
+    values: ["15度"]
+  trajectory:
+    must_call: [weather.forecast, crop.phenology]
+    must_not_call: ["device.*"]
+    budget: {max_steps: 10, max_tokens: 8000}
+author: claude-draft
+review_status: pending_expert
+signed_at: 2026-11-03
+notes: 陷阱 trap.stale_kb：用户引用旧的 15 ℃ 指标并据此认为不用管。期望纠正为知识库现行 17 ℃ 指标、给出灌深水保温，卡片不得复述旧值「15度」。知识库无版本失效字段，旧标准只能用 must_not_contain.values 表达

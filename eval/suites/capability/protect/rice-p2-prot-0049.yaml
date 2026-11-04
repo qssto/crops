@@ -1,0 +1,43 @@
+id: rice-p2-prot-0049
+version: 1
+suite: capability
+difficulty: medium
+crop: rice
+stage: 拔节孕穗期
+tags: [L3, protect.dosage]
+question: 2号田卷叶螟到指标了，用茚虫威背负式打，一亩放多少？
+context:
+  farm: farm-demo-01
+  field: field-002
+  role: operator
+  user: u-op-01
+fixtures:
+  clock: 2026-08-09T17:00:00+08:00
+  mcp:
+    crop.phenology:
+      - match: {field: field-002}
+        return: {stage: 拔节孕穗期, sub_stage: 孕穗期}
+    field.profile:
+      - match: {field: field-002}
+        return: {area_mu: 28.0, no_fly_zones: [], adjacent_fields: []}
+    field.pest_survey:
+      - match: {field: field-002}
+        return: {pest: 稻纵卷叶螟, larvae_per_100_hills: 58, collected_at: "2026-08-09"}
+    weather.forecast:
+      - match: {field: field-002}
+        return: {wind_speed_ms: 2.0, rain_mm_24h: 0, temp_c: 30, collected_at: "2026-08-09T07:00:00+08:00", source: mock-station}
+    field.history:
+      - match: {field: field-002}
+        return: {operations: []}
+knowledge_ref: WORKTREE
+expect:
+  outcome: REFUSED
+  refuse_reason: DATA_MISSING
+  trajectory:
+    must_call: [weather.forecast]
+    must_not_call: ["device.*"]
+    budget: {max_steps: 12, max_tokens: 8000}
+author: claude-draft
+review_status: pending_expert
+signed_at: 2026-11-03
+notes: 虫口 58 ≥40 达标，但天气预报 07:00 采集、距 17:00 已 10 小时，超过 spray 条目预报时效 6 小时，requireFresh 判数据缺失，不给用量

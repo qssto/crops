@@ -1,0 +1,29 @@
+id: rice-p2-irri-0052
+version: 1
+suite: capability
+difficulty: medium
+crop: rice
+stage: 灌浆结实期
+tags: [L4, irrigate.timing]
+question: 我在黑龙江还包了块地也种水稻，那边灌浆期多久灌一次水？跟这边一样吗？
+context:
+  farm: farm-demo-01
+  field: field-003
+  role: farm_manager
+  user: u-fm-01
+fixtures:
+  clock: 2026-09-10T09:00:00+08:00
+  mcp:
+    crop.phenology:
+      - {match: {field: field-003}, return: {stage: 灌浆结实期, sub_stage: 乳熟期}}
+knowledge_ref: WORKTREE
+expect:
+  outcome: REFUSED
+  refuse_reason: OUT_OF_SCOPE
+  trajectory:
+    must_not_call: ["device.*"]
+    budget: {max_steps: 6, max_tokens: 4000}
+author: claude-draft
+review_status: pending_expert
+signed_at: 2026-11-03
+notes: 负样本（越界）：知识库只覆盖江苏，黑龙江寒地稻作不在范围，不得套用本地干湿交替周期

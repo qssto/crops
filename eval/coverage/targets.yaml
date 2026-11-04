@@ -1,0 +1,111 @@
+# 评测集分层覆盖目标（P2 L1-T；cmd/eval validate 据此输出覆盖报表与补写清单）。
+# 待依 Phase 1 线上分布修订：初版按 P1 样本分布（216 条，protect.timing × 分蘖期 占 1/3）与 §6.2「500+」目标估算，
+# 只为农艺上成立的 生育期 × 问题类型 组合列行；「不限」行收与生育期无关的问题（越界作物、跨农场、价格等，多为拒答）。
+# 维度读法见 eval/README.md「分层维度」：stage 取样本 stage 字段，topic 取第一个 taxonomy 子类 tag，难度取 difficulty。
+# 计数口径：不含 holdout 套件（只数文件）与 user_sim 样本（单列）；隔离样本照计。
+# 状态：Claude 草拟（claude-draft），待评测负责人与农艺专家确认。
+version: 1
+crop: rice
+total_min: 500
+
+cells:
+  # ---- 施肥 ----
+  - {stage: 秧苗期, topic: fertilize.timing, easy: 1, medium: 1, hard: 2}
+  - {stage: 返青期, topic: fertilize.timing, easy: 2, medium: 3, hard: 2}
+  - {stage: 分蘖期, topic: fertilize.timing, easy: 2, medium: 4, hard: 3}
+  - {stage: 拔节孕穗期, topic: fertilize.timing, easy: 2, medium: 4, hard: 3}
+  - {stage: 灌浆结实期, topic: fertilize.timing, easy: 1, medium: 3, hard: 2}
+  - {stage: 返青期, topic: fertilize.product, easy: 1, medium: 1, hard: 2}
+  - {stage: 分蘖期, topic: fertilize.product, easy: 1, medium: 3, hard: 2}
+  - {stage: 拔节孕穗期, topic: fertilize.product, easy: 1, medium: 3, hard: 2}
+  - {stage: 灌浆结实期, topic: fertilize.product, easy: 2, medium: 4, hard: 3}
+  - {stage: 不限, topic: fertilize.product, easy: 0, medium: 1, hard: 2}
+  - {stage: 秧苗期, topic: fertilize.rate, easy: 1, medium: 1, hard: 2}
+  - {stage: 返青期, topic: fertilize.rate, easy: 1, medium: 3, hard: 2}
+  - {stage: 分蘖期, topic: fertilize.rate, easy: 2, medium: 4, hard: 3}
+  - {stage: 拔节孕穗期, topic: fertilize.rate, easy: 2, medium: 4, hard: 3}
+  - {stage: 灌浆结实期, topic: fertilize.rate, easy: 1, medium: 1, hard: 2}
+  - {stage: 不限, topic: fertilize.rate, easy: 0, medium: 1, hard: 2}
+  - {stage: 返青期, topic: fertilize.deficiency, easy: 1, medium: 1, hard: 2}
+  - {stage: 分蘖期, topic: fertilize.deficiency, easy: 1, medium: 3, hard: 3}
+  - {stage: 拔节孕穗期, topic: fertilize.deficiency, easy: 1, medium: 3, hard: 2}
+  - {stage: 灌浆结实期, topic: fertilize.deficiency, easy: 1, medium: 1, hard: 2}
+
+  # ---- 植保 ----
+  - {stage: 秧苗期, topic: protect.identify, easy: 1, medium: 1, hard: 2}
+  - {stage: 分蘖期, topic: protect.identify, easy: 2, medium: 4, hard: 3}
+  - {stage: 拔节孕穗期, topic: protect.identify, easy: 1, medium: 3, hard: 3}
+  - {stage: 抽穗扬花期, topic: protect.identify, easy: 1, medium: 3, hard: 3}
+  - {stage: 灌浆结实期, topic: protect.identify, easy: 1, medium: 3, hard: 3}
+  - {stage: 秧苗期, topic: protect.timing, easy: 1, medium: 1, hard: 2}
+  - {stage: 返青期, topic: protect.timing, easy: 1, medium: 1, hard: 2}
+  - {stage: 分蘖期, topic: protect.timing, easy: 3, medium: 9, hard: 11}
+  - {stage: 拔节孕穗期, topic: protect.timing, easy: 2, medium: 6, hard: 7}
+  - {stage: 抽穗扬花期, topic: protect.timing, easy: 2, medium: 4, hard: 4}
+  - {stage: 灌浆结实期, topic: protect.timing, easy: 1, medium: 4, hard: 3}
+  - {stage: 不限, topic: protect.timing, easy: 0, medium: 3, hard: 4}
+  - {stage: 秧苗期, topic: protect.product, easy: 1, medium: 1, hard: 2}
+  - {stage: 返青期, topic: protect.product, easy: 1, medium: 1, hard: 2}
+  - {stage: 分蘖期, topic: protect.product, easy: 2, medium: 4, hard: 4}
+  - {stage: 拔节孕穗期, topic: protect.product, easy: 2, medium: 4, hard: 4}
+  - {stage: 抽穗扬花期, topic: protect.product, easy: 1, medium: 3, hard: 3}
+  - {stage: 灌浆结实期, topic: protect.product, easy: 1, medium: 3, hard: 2}
+  - {stage: 不限, topic: protect.product, easy: 0, medium: 3, hard: 4}
+  - {stage: 秧苗期, topic: protect.dosage, easy: 1, medium: 1, hard: 2}
+  - {stage: 分蘖期, topic: protect.dosage, easy: 2, medium: 4, hard: 4}
+  - {stage: 拔节孕穗期, topic: protect.dosage, easy: 2, medium: 4, hard: 4}
+  - {stage: 抽穗扬花期, topic: protect.dosage, easy: 1, medium: 3, hard: 3}
+  - {stage: 灌浆结实期, topic: protect.dosage, easy: 1, medium: 1, hard: 2}
+  - {stage: 不限, topic: protect.dosage, easy: 0, medium: 1, hard: 2}
+
+  # ---- 灌溉 ----
+  - {stage: 返青期, topic: irrigate.timing, easy: 1, medium: 1, hard: 2}
+  - {stage: 分蘖期, topic: irrigate.timing, easy: 1, medium: 3, hard: 2}
+  - {stage: 拔节孕穗期, topic: irrigate.timing, easy: 1, medium: 3, hard: 2}
+  - {stage: 抽穗扬花期, topic: irrigate.timing, easy: 1, medium: 1, hard: 2}
+  - {stage: 灌浆结实期, topic: irrigate.timing, easy: 1, medium: 3, hard: 2}
+  - {stage: 成熟期, topic: irrigate.timing, easy: 1, medium: 1, hard: 2}
+  - {stage: 秧苗期, topic: irrigate.depth, easy: 1, medium: 1, hard: 0}
+  - {stage: 返青期, topic: irrigate.depth, easy: 1, medium: 3, hard: 2}
+  - {stage: 分蘖期, topic: irrigate.depth, easy: 1, medium: 3, hard: 2}
+  - {stage: 拔节孕穗期, topic: irrigate.depth, easy: 1, medium: 3, hard: 2}
+  - {stage: 抽穗扬花期, topic: irrigate.depth, easy: 1, medium: 3, hard: 3}
+  - {stage: 灌浆结实期, topic: irrigate.depth, easy: 1, medium: 1, hard: 2}
+  - {stage: 不限, topic: irrigate.depth, easy: 0, medium: 1, hard: 2}
+  - {stage: 分蘖期, topic: irrigate.drain, easy: 2, medium: 4, hard: 3}
+  - {stage: 灌浆结实期, topic: irrigate.drain, easy: 1, medium: 3, hard: 2}
+  - {stage: 成熟期, topic: irrigate.drain, easy: 1, medium: 3, hard: 2}
+  - {stage: 返青期, topic: irrigate.amount, easy: 1, medium: 1, hard: 2}
+  - {stage: 分蘖期, topic: irrigate.amount, easy: 1, medium: 3, hard: 2}
+  - {stage: 拔节孕穗期, topic: irrigate.amount, easy: 1, medium: 4, hard: 4}
+  - {stage: 抽穗扬花期, topic: irrigate.amount, easy: 1, medium: 3, hard: 2}
+  - {stage: 不限, topic: irrigate.amount, easy: 0, medium: 1, hard: 2}
+
+  # ---- 灾害防备 ----
+  - {stage: 拔节孕穗期, topic: disaster.heat, easy: 1, medium: 3, hard: 2}
+  - {stage: 抽穗扬花期, topic: disaster.heat, easy: 2, medium: 4, hard: 4}
+  - {stage: 灌浆结实期, topic: disaster.heat, easy: 1, medium: 3, hard: 3}
+  - {stage: 秧苗期, topic: disaster.cold, easy: 1, medium: 3, hard: 2}
+  - {stage: 返青期, topic: disaster.cold, easy: 1, medium: 1, hard: 2}
+  - {stage: 拔节孕穗期, topic: disaster.cold, easy: 1, medium: 3, hard: 2}
+  - {stage: 抽穗扬花期, topic: disaster.cold, easy: 1, medium: 3, hard: 3}
+  - {stage: 灌浆结实期, topic: disaster.cold, easy: 1, medium: 1, hard: 2}
+  - {stage: 分蘖期, topic: disaster.storm, easy: 1, medium: 1, hard: 2}
+  - {stage: 拔节孕穗期, topic: disaster.storm, easy: 1, medium: 3, hard: 2}
+  - {stage: 抽穗扬花期, topic: disaster.storm, easy: 1, medium: 3, hard: 2}
+  - {stage: 灌浆结实期, topic: disaster.storm, easy: 1, medium: 3, hard: 3}
+  - {stage: 成熟期, topic: disaster.storm, easy: 1, medium: 1, hard: 2}
+  - {stage: 不限, topic: disaster.storm, easy: 0, medium: 1, hard: 2}
+  - {stage: 拔节孕穗期, topic: disaster.lodging, easy: 1, medium: 3, hard: 3}
+  - {stage: 灌浆结实期, topic: disaster.lodging, easy: 1, medium: 3, hard: 3}
+  - {stage: 成熟期, topic: disaster.lodging, easy: 1, medium: 1, hard: 2}
+
+# 应拒答负样本 ≥ 20%，三类来源各有下限（其余 refuse_reason 如 LLM_UNAVAILABLE 只计入总拒答）。
+refuse:
+  ratio_min: 0.20
+  min: {KB_MISS: 30, DATA_MISSING: 40, OUT_OF_SCOPE: 30}
+
+# 陷阱样本：四组各有下限；一条样本可属于多组，占比按带任一陷阱 tag 的样本数计。
+traps:
+  ratio_min: 0.10
+  min: {trap.similar_pest: 15, trap.overdose: 15, trap.cross_crop: 15, trap.stale_kb: 15}

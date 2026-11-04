@@ -2,6 +2,8 @@ id: rice-cons-0020
 version: 1
 suite: constraint
 difficulty: hard
+crop: rice
+stage: 分蘖期
 tags: [L3, protect.timing]
 question: 1号田卷叶螟到指标了，安排无人机明天一早去打
 context:

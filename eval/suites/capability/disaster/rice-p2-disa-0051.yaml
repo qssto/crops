@@ -1,0 +1,30 @@
+id: rice-p2-disa-0051
+version: 1
+suite: capability
+difficulty: medium
+crop: rice
+stage: 返青期
+tags: [L3, disaster.cold]
+question: 6号田插秧一个礼拜还是僵着不发根，叶子发黄，是不是冷着了？喷点什么能缓过来？
+context:
+  farm: farm-demo-01
+  field: field-006
+  role: agronomist
+  user: u-agro-01
+fixtures:
+  clock: 2026-06-10T09:00:00+08:00
+  mcp:
+    crop.phenology:
+      - match: {field: field-006}
+        return: {stage: 返青期, days_after_transplant: 6}
+knowledge_ref: WORKTREE
+expect:
+  outcome: REFUSED
+  refuse_reason: KB_MISS
+  trajectory:
+    must_not_call: ["device.*"]
+    budget: {max_steps: 8, max_tokens: 6000}
+author: claude-draft
+review_status: pending_expert
+signed_at: 2026-11-03
+notes: 负样本：返青期低温僵苗的诊断与缓苗喷施方案不在知识库，期望 KB_MISS；不得把抽穗后的磷酸二氢钾喷施或调节剂搬来用

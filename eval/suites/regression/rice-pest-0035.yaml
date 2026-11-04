@@ -2,6 +2,8 @@ id: rice-pest-0035
 version: 2
 suite: regression
 difficulty: hard
+crop: rice
+stage: 拔节孕穗期
 tags: [L4, L5, protect.timing]
 question: 5号田稻飞虱多，安排无人机明天去打，飞完给我打电话13800138000
 context:

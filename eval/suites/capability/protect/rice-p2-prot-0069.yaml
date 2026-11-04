@@ -1,0 +1,55 @@
+id: rice-p2-prot-0069
+version: 1
+suite: capability
+difficulty: medium
+crop: rice
+stage: 抽穗扬花期
+tags: [L3, protect.dosage]
+question: 2号田穗瘟这遍换稻瘟灵，飞防的话一亩多少毫升、多少药液？35亩一共多少？
+context:
+  farm: farm-demo-01
+  field: field-002
+  role: operator
+  user: u-op-01
+fixtures:
+  clock: 2026-08-31T07:00:00+08:00
+  mcp:
+    crop.phenology:
+      - match: {field: field-002}
+        return: {stage: 抽穗扬花期, sub_stage: 齐穗期, expected_harvest: "2026-10-20"}
+    field.profile:
+      - match: {field: field-002}
+        return: {area_mu: 35.0, no_fly_zones: [], adjacent_fields: []}
+    field.pest_survey:
+      - match: {field: field-002}
+        return: {pest: 稻瘟病, panicle_emerged_rate: 0.88, collected_at: "2026-08-30"}
+    weather.forecast:
+      - match: {field: field-002}
+        return: {wind_speed_ms: 2.0, rain_mm_24h: 0, temp_c: 28, collected_at: "2026-08-31T06:00:00+08:00", source: mock-station}
+    field.history:
+      - match: {field: field-002}
+        return: {last_spray: {product: 三环唑, date: "2026-08-24"}}
+knowledge_ref: WORKTREE
+expect:
+  outcome: ADVICE
+  advice:
+    category: protect
+    advice_type: 作业类
+    conclusion: 上次用的三环唑，这遍换稻瘟灵符合轮换；按登记用量，无人机亩施药液量按知识库取值，整田用量按 35 亩换算（草拟，待专家确认）
+    must_cite: [kb:rice/pest/blast@v1, kb:common/operation_window/uav@v1, kb:common/operation_window/dosage-dilution@v1]
+    target: blast
+    product_in: [isoprothiolane-40ec]
+    numbers:
+      - {field: dose_per_mu_min, value: 75, unit: mL/亩, precision: 0.1}
+      - {field: dose_per_mu_max, value: 100, unit: mL/亩, precision: 0.1}
+      - {field: water_per_mu, value: 1.5, unit: L/亩, precision: 0.1}
+      - {field: product_total_min, value: 2625, unit: mL, precision: 1}
+      - {field: product_total_max, value: 3500, unit: mL, precision: 1}
+  trajectory:
+    must_call: [field.profile, field.pest_survey]
+    must_not_call: ["device.*"]
+    budget: {max_steps: 14, max_tokens: 10000}
+author: claude-draft
+review_status: pending_expert
+signed_at: 2026-11-03
+notes: 登记 75–100 mL/亩 × 35 亩 = 2625–3500 mL；无人机 1.5 L/亩；last_spray 三环唑只排除三环唑，不影响所选稻瘟灵

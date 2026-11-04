@@ -1,0 +1,49 @@
+id: rice-p2-prot-0065
+version: 1
+suite: capability
+difficulty: hard
+crop: rice
+stage: 抽穗扬花期
+tags: [L4, protect.product]
+question: 5号田三环唑破口前后已经打了两遍，穗瘟还是有，再打该用什么？
+context:
+  farm: farm-demo-01
+  field: field-005
+  role: agronomist
+  user: u-agro-01
+fixtures:
+  clock: 2026-09-01T07:30:00+08:00
+  mcp:
+    crop.phenology:
+      - match: {field: field-005}
+        return: {stage: 抽穗扬花期, sub_stage: 齐穗期}
+    field.pest_survey:
+      - match: {field: field-005}
+        return: {pest: 稻瘟病, panicle_emerged_rate: 0.95, collected_at: "2026-08-31"}
+    field.history:
+      - match: {field: field-005}
+        return: {sprays: [{product: 三环唑, target: 稻瘟病, date: "2026-08-22"}, {product: 三环唑, target: 稻瘟病, date: "2026-08-28"}]}
+    weather.forecast:
+      - match: {field: field-005}
+        return: {wind_speed_ms: 2.2, rain_mm_24h: 0, temp_c: 28, collected_at: "2026-09-01T06:30:00+08:00", source: mock-station}
+    field.profile:
+      - match: {field: field-005}
+        return: {expected_harvest: "2026-10-18", no_fly_zones: [], adjacent_fields: []}
+knowledge_ref: WORKTREE
+expect:
+  outcome: ADVICE
+  advice:
+    category: protect
+    advice_type: 作业类
+    conclusion: 三环唑本季已用 2 次，达到登记上限，按抗性治理不能再用；如需再施，换用稻瘟灵或春雷霉素（草拟，待专家确认）
+    must_cite: [kb:rice/pest/blast@v1, kb:common/safety/resistance@v1]
+    target: blast
+    product_in: [isoprothiolane-40ec, kasugamycin-2sl]
+  trajectory:
+    must_call: [field.history, field.pest_survey]
+    must_not_call: ["device.*"]
+    budget: {max_steps: 14, max_tokens: 10000}
+author: claude-draft
+review_status: pending_expert
+signed_at: 2026-11-03
+notes: sprays 两条三环唑被抗性轮换排除；与 dosage 题 p2-0072（同药第三遍拒答）对照

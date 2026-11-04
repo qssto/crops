@@ -1,0 +1,38 @@
+id: rice-p2-disa-0063
+version: 1
+suite: capability
+difficulty: hard
+crop: rice
+stage: 成熟期
+tags: [L3, L4, disaster.lodging]
+question: 3号田快收了，这两天倒伏了不少，是不是该赶紧控氮、重晒田防止再倒？穗肥还要不要减？预计10月16号收
+context:
+  farm: farm-demo-01
+  field: field-003
+  role: agronomist
+  user: u-agro-01
+fixtures:
+  clock: 2026-10-05T09:00:00+08:00
+  mcp:
+    crop.phenology:
+      - match: {field: field-003}
+        return: {stage: 成熟期, sub_stage: 黄熟期, expected_harvest: "2026-10-16"}
+    field.history:
+      - match: {field: field-003}
+        return: {lodging: {area_ratio: 0.3, observed_at: "2026-10-04T17:00:00+08:00"}, operations: [{date: "2026-08-02", kind: fertilize, note: 穗肥已施}]}
+knowledge_ref: WORKTREE
+expect:
+  outcome: ADVICE
+  advice:
+    category: disaster
+    advice_type: 观察类
+    conclusion: 控氮减穗肥、重晒田是倒伏条目在拔节前后的预防措施，穗肥早已施过，成熟期不再适用；按预计 10 月 16 日收获，收获前 7–10 天即 10 月 6–9 日断水，机收田块取偏早一端（草拟，待专家确认）
+    must_cite: [kb:rice/disaster/lodging@v1, kb:rice/irrigation/grain-filling@v1]
+  trajectory:
+    must_call: [crop.phenology]
+    must_not_call: ["device.*"]
+    budget: {max_steps: 12, max_tokens: 9000}
+author: claude-draft
+review_status: pending_expert
+signed_at: 2026-11-03
+notes: 用户把拔节期防倒措施套到成熟期。期望纠正为不再控氮晒田，改给收获前断水；lodging 条目只用来说明其措施适用于拔节前后。规则 decideDisaster 的 lodging 分支不看生育期，会照出「控氮并适度重晒田」，此样本用于暴露该行为

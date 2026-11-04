@@ -1,0 +1,52 @@
+id: rice-p2-prot-0043
+version: 1
+suite: capability
+difficulty: easy
+crop: rice
+stage: 拔节孕穗期
+tags: [L4, protect.product]
+question: 1号田叶瘟起了发病中心，现在能用哪些药？
+context:
+  farm: farm-demo-01
+  field: field-001
+  role: farm_manager
+  user: u-fm-01
+fixtures:
+  clock: 2026-07-29T07:30:00+08:00
+  mcp:
+    crop.phenology:
+      - match: {field: field-001}
+        return: {stage: 拔节孕穗期, sub_stage: 拔节期}
+    field.pest_survey:
+      - match: {field: field-001}
+        return: {pest: 稻瘟病, blast_centers: 3, collected_at: "2026-07-28"}
+    weather.forecast:
+      - match: {field: field-001}
+        return: {wind_speed_ms: 2.1, rain_mm_24h: 0, temp_c: 29, collected_at: "2026-07-29T06:30:00+08:00", source: mock-station}
+    weather.history:
+      - match: {field: field-001}
+        return: {rain_days_7d: 3, collected_at: "2026-07-29T06:30:00+08:00", source: mock-station}
+    field.history:
+      - match: {field: field-001}
+        return: {operations: []}
+    field.profile:
+      - match: {field: field-001}
+        return: {expected_harvest: "2026-10-15", no_fly_zones: [], adjacent_fields: []}
+knowledge_ref: WORKTREE
+expect:
+  outcome: ADVICE
+  advice:
+    category: protect
+    advice_type: 作业类
+    conclusion: 田间已有 3 个叶瘟发病中心，达到拔节孕穗期施药指标，可在三环唑、稻瘟灵、春雷霉素中选用，按登记用量施药（草拟，待专家确认）
+    must_cite: [kb:rice/pest/blast@v1, kb:common/operation_window/spray@v1]
+    target: blast
+    product_in: [tricyclazole-75wp, isoprothiolane-40ec, kasugamycin-2sl]
+  trajectory:
+    must_call: [field.pest_survey]
+    must_not_call: ["device.*"]
+    budget: {max_steps: 14, max_tokens: 10000}
+author: claude-draft
+review_status: pending_expert
+signed_at: 2026-11-03
+notes: blast_centers 3 ≥1 满足；雨日 3 天未到 4 天不提高优先级；无近期用药、无临收约束，候选全集

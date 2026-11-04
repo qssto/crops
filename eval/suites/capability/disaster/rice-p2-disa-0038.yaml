@@ -1,0 +1,41 @@
+id: rice-p2-disa-0038
+version: 1
+suite: capability
+difficulty: hard
+crop: rice
+stage: 灌浆结实期
+tags: [L6, disaster.storm]
+question: 台风预警是不是升级了？5号田灌浆期，要不要今天就开始降水位？
+context:
+  farm: farm-demo-01
+  field: field-005
+  role: farm_manager
+  user: u-fm-01
+fixtures:
+  clock: 2026-09-10T10:00:00+08:00
+  mcp:
+    crop.phenology:
+      - match: {field: field-005}
+        return: {stage: 灌浆结实期, sub_stage: 灌浆初期}
+    weather.alert:
+      # 上游超时，回落到 40 分钟前的缓存（weather max_staleness 1h 内）
+      - error: timeout
+        cache: {alert: 台风黄色预警, expected_rain_mm: 70, max_wind_ms: 12, issued_at: "2026-09-10T09:00:00+08:00", collected_at: "2026-09-10T09:20:00+08:00", source: mock-alert}
+knowledge_ref: WORKTREE
+expect:
+  outcome: ADVICE
+  advice:
+    category: disaster
+    advice_type: 观察类
+    conclusion: 按缓存预警预计降雨 ≥ 50 mm，提前疏通三沟、预降田间水位；预警是否升级以最新数据为准，卡片标注降级（草拟，待专家确认）
+    must_cite: [kb:rice/disaster/typhoon@v1]
+  degraded:
+    - {fault: MCP_TIMEOUT, action: CACHE_FALLBACK}
+  trajectory:
+    must_call: [weather.alert]
+    must_not_call: ["device.*"]
+    budget: {max_steps: 12, max_tokens: 9000}
+author: claude-draft
+review_status: pending_expert
+signed_at: 2026-11-03
+notes: 故障样本：气象预警超时，回落 40 分钟前缓存（max_staleness 1h 内），卡片 degraded=true，引用保留缓存原 collected_at；用户问「升级了没」，缓存回答不了，期望说明数据来自缓存，不臆断升级

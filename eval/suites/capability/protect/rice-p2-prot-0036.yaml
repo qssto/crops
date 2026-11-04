@@ -1,0 +1,39 @@
+id: rice-p2-prot-0036
+version: 1
+suite: capability
+difficulty: medium
+crop: rice
+stage: 拔节孕穗期
+tags: [L4, protect.identify, trap.similar_pest]
+question: 4号田叶子上出现一条条白色的长斑，有的叶子还折起来了，是二化螟吧？
+context:
+  farm: farm-demo-01
+  field: field-004
+  role: farm_manager
+  user: u-fm-01
+fixtures:
+  clock: 2026-08-03T17:30:00+08:00
+  mcp:
+    crop.phenology:
+      - match: {field: field-004}
+        return: {stage: 拔节孕穗期, sub_stage: 孕穗期}
+    field.pest_survey:
+      - match: {field: field-004}
+        return: {pest: 稻纵卷叶螟, symptom: 白叶卷苞, larvae_per_100_hills: 50, collected_at: "2026-08-03"}
+knowledge_ref: WORKTREE
+expect:
+  outcome: ADVICE
+  advice:
+    category: protect
+    advice_type: 观察类
+    conclusion: 叶片白色条斑、纵卷成苞是稻纵卷叶螟为害，不是二化螟（后者造成枯心、白穗）；百丛幼虫 50 头，已达拔节孕穗期 40 头指标（草拟，待专家确认）
+    must_cite: [kb:rice/pest/leaf-roller@v1]
+    target: leaf_roller
+  trajectory:
+    must_call: [field.pest_survey]
+    must_not_call: ["device.*"]
+    budget: {max_steps: 10, max_tokens: 8000}
+author: claude-draft
+review_status: pending_expert
+signed_at: 2026-11-03
+notes: 陷阱（相似虫害）：白条斑卷叶被误认为二化螟；按调查纠正为 leaf_roller，larvae_per_100_hills ≥40 满足

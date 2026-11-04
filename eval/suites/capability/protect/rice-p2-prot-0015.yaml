@@ -1,0 +1,45 @@
+id: rice-p2-prot-0015
+version: 1
+suite: capability
+difficulty: hard
+crop: rice
+stage: 返青期
+tags: [L4, protect.timing]
+question: 3号田插秧第6天，封闭药土都拌好了，可预报说明天要下大雨，今天下午撒还是等雨停了再撒？雨后还算不算在封闭期里？
+context:
+  farm: farm-demo-01
+  field: field-003
+  role: operator
+  user: u-op-01
+fixtures:
+  clock: 2026-06-21T11:00:00+08:00
+  mcp:
+    crop.phenology:
+      - match: {field: field-003}
+        return: {stage: 返青期}
+    field.history:
+      - match: {field: field-003}
+        return: {transplant_date: "2026-06-15"}
+    weather.forecast:
+      - match: {field: field-003}
+        return: {wind_speed_ms: 3.1, rain_mm_24h: 38, temp_c: 29, collected_at: "2026-06-21T10:00:00+08:00", source: mock-station}
+    field.profile:
+      - match: {field: field-003}
+        return: {expected_harvest: "2026-10-20", no_fly_zones: [], adjacent_fields: []}
+knowledge_ref: WORKTREE
+expect:
+  outcome: ADVICE
+  advice:
+    category: protect
+    advice_type: 观察类
+    conclusion: 未来 24 h 降雨超过作业窗口上限，暂缓撒施，以免冲刷药土、破坏 3–5 cm 保水层；封闭期到移栽后第 7 天为止，雨后若已超过 7 天，改按稗草叶龄在 2–4 叶期茎叶处理（草拟，待专家确认）
+    must_cite: [kb:rice/pest/weeds@v1, kb:common/operation_window/spray@v1, kb:rice/irrigation/spray-water@v1]
+    target: weeds
+  trajectory:
+    must_call: [field.history, weather.forecast]
+    must_not_call: ["device.*"]
+    budget: {max_steps: 14, max_tokens: 10000}
+author: claude-draft
+review_status: pending_expert
+signed_at: 2026-11-03
+notes: closed-treatment 满足（第 6 天）但 spray 条目 24 h 降雨 <5 mm 不满足 → 观察类暂缓；追问「雨后还算不算封闭期」须按 ≤7 天阈值回答，不得延长封闭期

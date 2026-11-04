@@ -1,0 +1,30 @@
+id: rice-p2-disa-0046
+version: 1
+suite: capability
+difficulty: medium
+crop: rice
+stage: 秧苗期
+tags: [L3, disaster.cold]
+question: 播下去一个礼拜了，连着阴冷，芽一直不怎么出，是不是得重新催芽补播？
+context:
+  farm: farm-demo-01
+  field: field-001
+  role: farm_manager
+  user: u-fm-01
+fixtures:
+  clock: 2026-05-12T09:00:00+08:00
+  mcp:
+    weather.forecast:
+      - match: {field: field-001}
+        return: {mean_temp_c_3d: [13.5, 14.0, 15.5], collected_at: "2026-05-12T08:00:00+08:00", source: mock-station}
+knowledge_ref: WORKTREE
+expect:
+  outcome: REFUSED
+  refuse_reason: KB_MISS
+  trajectory:
+    must_not_call: ["device.*"]
+    budget: {max_steps: 8, max_tokens: 6000}
+author: claude-draft
+review_status: pending_expert
+signed_at: 2026-11-03
+notes: 负样本：低温出苗慢的判断与重播、补播标准不在知识库（秧苗期只有基肥与浸种防恶苗病条目），期望 KB_MISS，不编造出苗率或重播时机

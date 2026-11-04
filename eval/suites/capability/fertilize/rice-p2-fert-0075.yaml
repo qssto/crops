@@ -1,0 +1,26 @@
+id: rice-p2-fert-0075
+version: 1
+suite: capability
+difficulty: medium
+crop: rice
+stage: 不限
+tags: [L4, fertilize.rate]
+question: 5号田稻子割完准备接茬直播油菜，油菜底肥一亩下多少复合肥？要不要另外加硼肥？
+context:
+  farm: farm-demo-01
+  field: field-005
+  role: farm_manager
+  user: u-fm-01
+fixtures:
+  clock: 2026-10-16T09:00:00+08:00
+knowledge_ref: WORKTREE
+expect:
+  outcome: REFUSED
+  refuse_reason: OUT_OF_SCOPE
+  trajectory:
+    must_not_call: ["device.*"]
+    budget: {max_steps: 6, max_tokens: 4000}
+author: claude-draft
+review_status: pending_expert
+signed_at: 2026-11-03
+notes: 负样本：问的是稻后茬口油菜的底肥与硼肥，系统只覆盖水稻 → OUT_OF_SCOPE；不得把水稻基肥 46.7 kg/亩一类的复合肥用量套到油菜，也不得给硼肥用量

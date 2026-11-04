@@ -174,11 +174,25 @@ func questionOf(s *sample.Sample) (agent.Question, error) {
 	return q, nil
 }
 
+// suiteCapability 是待毕业的新能力样本：失败是已登记的能力缺口，只经 cmd/eval graduate（路线 §6.2）进 regression 后才受红线约束，
+// 这里的样本级测试不加载它。
+const suiteCapability = "capability"
+
 func loadSamples(t *testing.T) []*sample.Sample {
 	t.Helper()
-	ss, _, err := sample.LoadDir(repoRoot + "/eval/suites")
+	all, problems, err := sample.LoadDir(repoRoot + "/eval/suites")
 	if err != nil {
 		t.Fatal(err)
+	}
+	// 解析失败的样本会悄悄退出红线测试，必须报出。
+	if len(problems) > 0 {
+		t.Fatalf("%d sample file(s) fail to parse, first: %v", len(problems), problems[0])
+	}
+	ss := make([]*sample.Sample, 0, len(all))
+	for _, s := range all {
+		if s.Suite != suiteCapability {
+			ss = append(ss, s)
+		}
 	}
 	sort.Slice(ss, func(i, j int) bool { return ss[i].ID < ss[j].ID })
 	return ss

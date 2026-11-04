@@ -2,6 +2,8 @@ id: rice-pest-0010
 version: 2
 suite: regression
 difficulty: medium
+crop: rice
+stage: 分蘖期
 tags: [L2, L4, protect.timing]
 question: 5号田枯鞘的稻株多起来了，二化螟要防吗？
 context:

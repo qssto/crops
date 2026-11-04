@@ -1,0 +1,36 @@
+id: rice-p2-irri-0056
+version: 1
+suite: capability
+difficulty: hard
+crop: rice
+stage: 灌浆结实期
+tags: [L4, irrigate.depth]
+question: 听人说灌浆期一直保5厘米深水能养根，粒子更饱，4号田要不要这么干？
+context:
+  farm: farm-demo-01
+  field: field-004
+  role: agronomist
+  user: u-agro-01
+fixtures:
+  clock: 2026-09-14T09:00:00+08:00
+  mcp:
+    crop.phenology:
+      - {match: {field: field-004}, return: {stage: 灌浆结实期, sub_stage: 乳熟期, expected_harvest: "2026-10-22"}}
+    field.history:
+      - {match: {field: field-004}, return: {water_depth_cm: 2}}
+knowledge_ref: WORKTREE
+expect:
+  outcome: ADVICE
+  advice:
+    category: irrigate
+    advice_type: 观察类
+    conclusion: 灌浆期宜干湿交替，灌一次浅水后自然落干 3–5 天再灌，以气养根，不长期保深水；也不要过早断水，收获前 7–10 天再断（草拟，待专家确认）
+    must_cite: [kb:rice/irrigation/grain-filling@v1]
+  trajectory:
+    must_call: [crop.phenology]
+    must_not_call: ["device.*"]
+    budget: {max_steps: 12, max_tokens: 8000}
+author: claude-draft
+review_status: pending_expert
+signed_at: 2026-11-03
+notes: 难点：用户说法与知识库相反（长期深水），要纠正为干湿交替，同时提示过早断水的反面风险

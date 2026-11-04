@@ -2,6 +2,8 @@ id: rice-fert-0014
 version: 1
 suite: regression
 difficulty: medium
+crop: rice
+stage: 分蘖期
 tags: [L3, fertilize.timing]
 question: 4号田前天刚追了尿素，今天看叶色还是淡，想再撒一次分蘖肥行吗？
 context:

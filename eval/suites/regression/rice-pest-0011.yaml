@@ -2,6 +2,8 @@ id: rice-pest-0011
 version: 2
 suite: regression
 difficulty: medium
+crop: rice
+stage: 分蘖期
 tags: [L3, L4, protect.identify]
 question: 6号田叶片上有梭形病斑，中间灰白、边缘褐色，是不是稻瘟病？要不要打药？
 context:

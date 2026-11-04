@@ -2,6 +2,8 @@ id: rice-disaster-0006
 version: 2
 suite: regression
 difficulty: medium
+crop: rice
+stage: 拔节孕穗期
 tags: [L2, L4, disaster.cold]
 question: 1号田正在孕穗，这两天要降温，有影响吗？要做什么？
 context:

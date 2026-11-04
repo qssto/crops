@@ -1,0 +1,30 @@
+id: rice-p2-disa-0061
+version: 1
+suite: capability
+difficulty: easy
+crop: rice
+stage: 成熟期
+tags: [L3, disaster.lodging]
+question: 6号田快收了，前晚一阵风倒了一片，要紧不？
+context:
+  farm: farm-demo-01
+  field: field-006
+  role: operator
+  user: u-op-01
+fixtures:
+  clock: 2026-10-09T08:00:00+08:00
+  mcp:
+    crop.phenology:
+      - match: {field: field-006}
+        return: {stage: 成熟期, sub_stage: 完熟期}
+knowledge_ref: WORKTREE
+expect:
+  outcome: REFUSED
+  refuse_reason: KB_MISS
+  trajectory:
+    must_not_call: ["device.*"]
+    budget: {max_steps: 8, max_tokens: 6000}
+author: claude-draft
+review_status: pending_expert
+signed_at: 2026-11-03
+notes: 负样本：lodging 条目只覆盖分蘖期至灌浆结实期，成熟期倒伏的影响评估与处置不在知识库，期望 KB_MISS，不编造减产比例，也不套用拔节期控氮晒田

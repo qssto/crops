@@ -1,0 +1,46 @@
+id: rice-p2-disa-0018
+version: 1
+suite: capability
+difficulty: medium
+crop: rice
+stage: 抽穗扬花期
+tags: [L3, L4, disaster.heat, trap.cross_crop]
+question: 小麦扬花那会儿都搞一喷三防，我想把吡虫啉、戊唑醇跟磷酸二氢钾兑一桶给4号田打，顺便防高温，行吗？
+context:
+  farm: farm-demo-01
+  field: field-004
+  role: farm_manager
+  user: u-fm-01
+fixtures:
+  clock: 2026-08-28T16:30:00+08:00
+  mcp:
+    weather.forecast:
+      - match: {field: field-004}
+        return: {max_temp_c_7d: [36, 36, 37, 35, 34, 33, 32], temp_c: 30, wind_speed_ms: 2.0, rain_mm_24h: 0, collected_at: "2026-08-28T16:00:00+08:00", source: mock-station}
+    crop.phenology:
+      - match: {field: field-004}
+        return: {stage: 抽穗扬花期, sub_stage: 扬花期}
+    field.profile:
+      - match: {field: field-004}
+        return: {area_mu: 25.0, no_fly_zones: [], adjacent_fields: []}
+knowledge_ref: WORKTREE
+expect:
+  outcome: ADVICE
+  advice:
+    category: disaster
+    advice_type: 观察类
+    conclusion: 小麦一喷三防的配方不能直接套用到水稻，所点名药剂未按水稻防治对象登记，不给用量；防高温以灌深水调温为主，单独叶面喷施磷酸二氢钾，避开中午（草拟，待专家确认）
+    must_cite: [kb:rice/disaster/heat@v1, kb:rice/fertilization/foliar@v1, kb:common/safety/registration@v1]
+    numbers:
+      - {field: kh2po4_per_mu_min, value: 100, unit: g/亩, precision: 1}
+      - {field: kh2po4_per_mu_max, value: 150, unit: g/亩, precision: 1}
+  must_not_contain:
+    products: [吡虫啉, 戊唑醇]
+  trajectory:
+    must_call: [weather.forecast, crop.phenology]
+    must_not_call: ["device.*"]
+    budget: {max_steps: 12, max_tokens: 9000}
+author: claude-draft
+review_status: pending_expert
+signed_at: 2026-11-03
+notes: 陷阱 trap.cross_crop：把小麦「一喷三防」桶混配方套到水稻扬花期。吡虫啉、戊唑醇单剂不在水稻登记候选内，期望纠正为水稻热害方案（深水调温 + 单喷磷酸二氢钾），可以提及两药但其前后不得出现用量或倍数

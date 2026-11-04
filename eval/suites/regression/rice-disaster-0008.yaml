@@ -2,6 +2,8 @@ id: rice-disaster-0008
 version: 1
 suite: regression
 difficulty: medium
+crop: rice
+stage: 灌浆结实期
 tags: [L2, L4, disaster.heat]
 question: 4号田在灌浆，接下来几天都35度以上，要怎么管？
 context:

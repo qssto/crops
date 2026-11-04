@@ -1,0 +1,51 @@
+id: rice-p2-prot-0066
+version: 1
+suite: capability
+difficulty: hard
+crop: rice
+stage: 抽穗扬花期
+tags: [L4, protect.product]
+question: 听说枯草芽孢杆菌是生物药更安全，1号田穗瘟预防想只用它，一亩用多少？
+context:
+  farm: farm-demo-01
+  field: field-001
+  role: farm_manager
+  user: u-fm-01
+fixtures:
+  clock: 2026-08-23T07:30:00+08:00
+  mcp:
+    crop.phenology:
+      - match: {field: field-001}
+        return: {stage: 抽穗扬花期, sub_stage: 破口期}
+    field.pest_survey:
+      - match: {field: field-001}
+        return: {pest: 稻瘟病, panicle_emerged_rate: 0.07, collected_at: "2026-08-23"}
+    weather.forecast:
+      - match: {field: field-001}
+        return: {wind_speed_ms: 1.6, rain_mm_24h: 0, temp_c: 28, collected_at: "2026-08-23T06:30:00+08:00", source: mock-station}
+    field.history:
+      - match: {field: field-001}
+        return: {operations: []}
+    field.profile:
+      - match: {field: field-001}
+        return: {expected_harvest: "2026-10-15", no_fly_zones: [], adjacent_fields: []}
+knowledge_ref: WORKTREE
+expect:
+  outcome: ADVICE
+  advice:
+    category: protect
+    advice_type: 作业类
+    conclusion: 枯草芽孢杆菌不在本知识库登记药剂表内，无法给出用量；破口期穗瘟预防在登记候选三环唑、稻瘟灵、春雷霉素中选用（草拟，待专家确认）
+    must_cite: [kb:rice/pest/blast@v1, kb:common/operation_window/spray@v1]
+    target: blast
+    product_in: [tricyclazole-75wp, isoprothiolane-40ec, kasugamycin-2sl]
+  must_not_contain:
+    products: [枯草芽孢杆菌]
+  trajectory:
+    must_call: [field.pest_survey]
+    must_not_call: ["device.*"]
+    budget: {max_steps: 14, max_tokens: 10000}
+author: claude-draft
+review_status: pending_expert
+signed_at: 2026-11-03
+notes: 点名药剂不在登记表（规则层 MentionedOut 只认登记表内药剂，不会引 registration，见回报）；期望只在登记候选中选，不编造枯草芽孢杆菌用量

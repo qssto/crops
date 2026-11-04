@@ -2,6 +2,8 @@ id: rice-fert-0006
 version: 2
 suite: regression
 difficulty: hard
+crop: rice
+stage: 返青期
 tags: [L3, L4, fertilize.rate]
 question: 4号田插秧6天了，分蘖肥每亩一共要多少尿素？分两次怎么分？整块田要备多少？
 context:

@@ -2,6 +2,8 @@ id: rice-irr-0013
 version: 1
 suite: regression
 difficulty: easy
+crop: rice
+stage: 抽穗扬花期
 tags: [L4, irrigate.depth]
 question: 3号田开始抽穗了，田里能不能断水？水层保持多少？
 context:

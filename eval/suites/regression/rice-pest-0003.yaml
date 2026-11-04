@@ -2,6 +2,8 @@ id: rice-pest-0003
 version: 3
 suite: regression
 difficulty: medium
+crop: rice
+stage: 拔节孕穗期
 tags: [L3, L4, protect.product]
 question: 2号田纹枯病开始往上爬了，用什么药？
 context:

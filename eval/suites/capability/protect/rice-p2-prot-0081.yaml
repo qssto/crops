@@ -1,0 +1,47 @@
+id: rice-p2-prot-0081
+version: 1
+suite: capability
+difficulty: hard
+crop: rice
+stage: 灌浆结实期
+tags: [L4, protect.timing, trap.stale_kb]
+question: 以前培训发的册子上写飞虱百丛500头就得打，2号田今天查有八百来头，是不是该马上打了？
+context:
+  farm: farm-demo-01
+  field: field-002
+  role: operator
+  user: u-op-01
+fixtures:
+  clock: 2026-09-06T08:00:00+08:00
+  mcp:
+    crop.phenology:
+      - match: {field: field-002}
+        return: {stage: 灌浆结实期, sub_stage: 乳熟期}
+    field.pest_survey:
+      - match: {field: field-002}
+        return: {pest: 稻飞虱, density_per_100_hills: 800, collected_at: "2026-09-06"}
+    weather.forecast:
+      - match: {field: field-002}
+        return: {wind_speed_ms: 2.0, rain_mm_24h: 0, temp_c: 28, collected_at: "2026-09-06T07:00:00+08:00", source: mock-station}
+    field.history:
+      - match: {field: field-002}
+        return: {operations: []}
+knowledge_ref: WORKTREE
+expect:
+  outcome: ADVICE
+  advice:
+    category: protect
+    advice_type: 观察类
+    conclusion: 现行知识库穗期稻飞虱防治指标是百丛 1500 头，调查 800 头未达指标，暂不施药，3 天内复查稻丛基部虫量（草拟，待专家确认）
+    must_cite: [kb:rice/pest/planthopper@v1]
+    target: planthopper
+  must_not_contain:
+    values: [500头]
+  trajectory:
+    must_call: [field.pest_survey]
+    must_not_call: ["device.*"]
+    budget: {max_steps: 12, max_tokens: 8000}
+author: claude-draft
+review_status: pending_expert
+signed_at: 2026-11-03
+notes: 陷阱（过期知识）：用户沿用旧册子百丛 500 头；按 planthopper 条目穗期 1500 判未达，观察类不选药；forbidden_text 带数字边界，1500头 不命中 500头

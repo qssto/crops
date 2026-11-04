@@ -1,0 +1,40 @@
+id: rice-p2-irri-0049
+version: 1
+suite: capability
+difficulty: medium
+crop: rice
+stage: 抽穗扬花期
+tags: [L3, irrigate.amount]
+question: 2号田这几天忘了放水，田面都干了，赶紧补到4厘米要多少方？
+context:
+  farm: farm-demo-01
+  field: field-002
+  role: operator
+  user: u-op-01
+fixtures:
+  clock: 2026-08-29T06:30:00+08:00
+  mcp:
+    field.profile:
+      - {match: {field: field-002}, return: {area_mu: 28.0}}
+    crop.phenology:
+      - {match: {field: field-002}, return: {stage: 抽穗扬花期, sub_stage: 齐穗期}}
+    field.history:
+      - {match: {field: field-002}, return: {water_depth_cm: 0}}
+knowledge_ref: WORKTREE
+expect:
+  outcome: ADVICE
+  advice:
+    category: irrigate
+    advice_type: 作业类
+    conclusion: 抽穗扬花期不能断水，应立即补水；28 亩由 0 补到 4 cm，非晒田后复水按 1.05 系数约需 784 m³（草拟，待专家确认）
+    must_cite: [kb:rice/irrigation/heading@v1, kb:rice/irrigation/water-volume@v1]
+    numbers:
+      - {field: water_m3, value: 784, unit: m3, precision: 1}
+  trajectory:
+    must_call: [field.profile, field.history]
+    must_not_call: ["device.*"]
+    budget: {max_steps: 10, max_tokens: 6000}
+author: claude-draft
+review_status: pending_expert
+signed_at: 2026-11-03
+notes: 无晒田记录（自然落干）按 1.05：28 × 666.67 × 4 ÷ 100 × 1.05 = 784.0 m³；知识库 1.2 只用于晒田后复水

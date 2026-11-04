@@ -1,0 +1,38 @@
+id: rice-p2-irri-0039
+version: 1
+suite: capability
+difficulty: medium
+crop: rice
+stage: 抽穗扬花期
+tags: [L4, irrigate.timing]
+question: 6号田刚见穗，水层正好3厘米，天热蒸发快，要不要先多灌点？
+context:
+  farm: farm-demo-01
+  field: field-006
+  role: farm_manager
+  user: u-fm-01
+fixtures:
+  clock: 2026-08-26T08:00:00+08:00
+  mcp:
+    crop.phenology:
+      - {match: {field: field-006}, return: {stage: 抽穗扬花期, sub_stage: 始穗期}}
+    weather.forecast:
+      - {match: {field: field-006}, return: {rain_mm_72h: 12, temp_c: 33, collected_at: "2026-08-26T07:00:00+08:00", source: mock-station}}
+    field.history:
+      - {match: {field: field-006}, return: {water_depth_cm: 3}}
+knowledge_ref: WORKTREE
+expect:
+  outcome: ADVICE
+  advice:
+    category: irrigate
+    advice_type: 观察类
+    conclusion: 实测 3 cm 仍在抽穗扬花期 3–5 cm 范围内，今天不必加灌；天热蒸发快，每天查看，低于 3 cm 立即补，不能断水（草拟，待专家确认）
+    must_cite: [kb:rice/irrigation/heading@v1]
+  trajectory:
+    must_call: [crop.phenology, weather.forecast, field.history]
+    must_not_call: ["device.*"]
+    budget: {max_steps: 10, max_tokens: 6000}
+author: claude-draft
+review_status: pending_expert
+signed_at: 2026-11-03
+notes: 边界：3 cm 等于下限，不低于下限即暂不灌水（观察类）；最高温 33 ℃ 未到热害指标

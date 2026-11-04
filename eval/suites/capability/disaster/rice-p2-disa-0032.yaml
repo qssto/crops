@@ -1,0 +1,38 @@
+id: rice-p2-disa-0032
+version: 1
+suite: capability
+difficulty: hard
+crop: rice
+stage: 灌浆结实期
+tags: [L2, L4, disaster.heat]
+question: 预报说接下来一周有好几天35度，3号田灌浆期，算不算高温热害？要不要上深水？
+context:
+  farm: farm-demo-01
+  field: field-003
+  role: farm_manager
+  user: u-fm-01
+fixtures:
+  clock: 2026-09-02T08:00:00+08:00
+  mcp:
+    weather.forecast:
+      - match: {field: field-003}
+        return: {max_temp_c_7d: [34, 35, 35, 34, 36, 35, 33], collected_at: "2026-09-02T07:00:00+08:00", source: mock-station}
+    crop.phenology:
+      - match: {field: field-003}
+        return: {stage: 灌浆结实期, sub_stage: 灌浆初期}
+knowledge_ref: WORKTREE
+expect:
+  outcome: ADVICE
+  advice:
+    category: disaster
+    advice_type: 观察类
+    conclusion: 预报中 ≥ 35 ℃ 的日子都只连续 2 天，未达到持续 3 天的灌浆期高温指标，暂不需灌深水，维持干湿交替并继续关注预报（草拟，待专家确认）
+    must_cite: [kb:rice/disaster/heat@v1, kb:rice/irrigation/grain-filling@v1]
+  trajectory:
+    must_call: [weather.forecast, crop.phenology]
+    must_not_call: ["device.*"]
+    budget: {max_steps: 10, max_tokens: 8000}
+author: claude-draft
+review_status: pending_expert
+signed_at: 2026-11-03
+notes: 边界样本：7 天里有 4 天 ≥ 35 ℃，但分成两段各连续 2 天，heat-filling 要求连续 3 天，期望判未达标、不给深水层数值

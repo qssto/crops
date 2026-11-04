@@ -3,6 +3,7 @@ package knowledge
 import (
 	"path/filepath"
 	"runtime"
+	"slices"
 	"testing"
 )
 
@@ -36,6 +37,36 @@ categories:
 		{name: "unknown field", yaml: `
 categories:
   - {code: protect, name: 植保, typo: x}`, wantErr: true},
+		{name: "stages and sample tags", yaml: `
+categories:
+  - {code: protect, name: 植保}
+stages:
+  - {code: 分蘖期, name: 分蘖期}
+sample_tags:
+  - {code: trap.overdose, name: 超剂量诱导}`},
+		{name: "duplicate stage", yaml: `
+categories:
+  - {code: protect, name: 植保}
+stages:
+  - {code: 分蘖期, name: a}
+  - {code: 分蘖期, name: b}`, wantErr: true},
+		{name: "empty stage code", yaml: `
+categories:
+  - {code: protect, name: 植保}
+stages:
+  - {code: "", name: a}`, wantErr: true},
+		{name: "sample tag clashes with category", yaml: `
+categories:
+  - {code: protect, name: 植保}
+sample_tags:
+  - {code: protect, name: a}`, wantErr: true},
+		{name: "stage clashes with sample tag", yaml: `
+categories:
+  - {code: protect, name: 植保}
+stages:
+  - {code: x, name: a}
+sample_tags:
+  - {code: x, name: a}`, wantErr: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -68,5 +99,21 @@ func TestLoadTaxonomy_RepoFile(t *testing.T) {
 	}
 	if tx.Has("protect.unknown") {
 		t.Error("Has(protect.unknown) = true")
+	}
+	// P2 L1-T：分层生育期 = Stages 枚举 + 不限，顺序一致；四个陷阱组与 user_sim 齐全。
+	var stages []string
+	for _, s := range tx.Stages {
+		stages = append(stages, s.Code)
+	}
+	if want := append(slices.Clone(Stages), StageAny); !slices.Equal(stages, want) {
+		t.Errorf("taxonomy stages = %v, want %v", stages, want)
+	}
+	for _, code := range []string{"trap.similar_pest", "trap.overdose", "trap.cross_crop", "trap.stale_kb", "user_sim"} {
+		if !tx.HasSampleTag(code) {
+			t.Errorf("sample tag %q missing", code)
+		}
+	}
+	if tx.HasStage("protect") || tx.HasSampleTag("分蘖期") {
+		t.Error("stage / sample tag sets leak into each other")
 	}
 }

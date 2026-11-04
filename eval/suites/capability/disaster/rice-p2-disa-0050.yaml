@@ -1,0 +1,41 @@
+id: rice-p2-disa-0050
+version: 1
+suite: capability
+difficulty: hard
+crop: rice
+stage: 返青期
+tags: [L3, L4, disaster.cold]
+question: 3号田前天刚插完秧，这几天降温还刮风，田里水该放多深？
+context:
+  farm: farm-demo-01
+  field: field-003
+  role: farm_manager
+  user: u-fm-01
+fixtures:
+  clock: 2026-06-05T08:00:00+08:00
+  mcp:
+    crop.phenology:
+      - match: {field: field-003}
+        return: {stage: 返青期, days_after_transplant: 2}
+    weather.forecast:
+      - match: {field: field-003}
+        return: {mean_temp_c_3d: [18.5, 18.0, 19.5], wind_speed_ms: 6.0, collected_at: "2026-06-05T07:00:00+08:00", source: mock-station}
+knowledge_ref: WORKTREE
+expect:
+  outcome: ADVICE
+  advice:
+    category: disaster
+    advice_type: 观察类
+    conclusion: 知识库没有返青期低温专项指标；按返青期寸水护苗，保持水层 3–5 cm，不按孕穗期保温深水处理（草拟，待专家确认）
+    must_cite: [kb:rice/irrigation/seedling-tillering@v1]
+    numbers:
+      - {field: depth_cm_min, value: 3, unit: cm, precision: 0.5}
+      - {field: depth_cm_max, value: 5, unit: cm, precision: 0.5}
+  trajectory:
+    must_call: [crop.phenology]
+    must_not_call: ["device.*"]
+    budget: {max_steps: 10, max_tokens: 8000}
+author: claude-draft
+review_status: pending_expert
+signed_at: 2026-11-03
+notes: 部分可答：cold 条目不覆盖返青期，但返青期水层有 seedling-tillering 依据；期望说明低温指标缺失，水层只给 3–5 cm，不出 5–10 cm 深水

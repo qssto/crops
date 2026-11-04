@@ -2,6 +2,8 @@ id: rice-pest-0030
 version: 1
 suite: regression
 difficulty: easy
+crop: rice
+stage: 不限
 tags: [L4, protect.product]
 question: 农场边上那块玉米地有玉米螟，用什么药？每亩多少？
 context:

@@ -1,0 +1,38 @@
+id: rice-p2-irri-0015
+version: 1
+suite: capability
+difficulty: hard
+crop: rice
+stage: 分蘖期
+tags: [L4, irrigate.timing, irrigate.drain]
+question: 1号田这几天自己干了，田面没水，要不要赶紧灌上？最近一次数苗每亩有19万了
+context:
+  farm: farm-demo-01
+  field: field-001
+  role: agronomist
+  user: u-agro-01
+fixtures:
+  clock: 2026-07-10T08:00:00+08:00
+  mcp:
+    crop.phenology:
+      - {match: {field: field-001}, return: {stage: 分蘖期, sub_stage: 分蘖末期, tillers_per_mu_10k: 19}}
+    weather.forecast:
+      - {match: {field: field-001}, return: {rain_mm_72h: 5, temp_c: 32, collected_at: "2026-07-10T07:00:00+08:00", source: mock-station}}
+    field.history:
+      - {match: {field: field-001}, return: {water_depth_cm: 0}}
+knowledge_ref: WORKTREE
+expect:
+  outcome: ADVICE
+  advice:
+    category: irrigate
+    advice_type: 观察类
+    conclusion: 茎蘖数 19 万/亩已达够苗标准 18 万/亩，且未来 72 h 降雨不足 20 mm，不再补水，顺势排水晒田 7–10 天，长势旺则重晒（草拟，待专家确认）
+    must_cite: [kb:rice/irrigation/seedling-tillering@v1, kb:rice/irrigation/drain@v1]
+  trajectory:
+    must_call: [crop.phenology, weather.forecast, field.history]
+    must_not_call: ["device.*"]
+    budget: {max_steps: 12, max_tokens: 8000}
+author: claude-draft
+review_status: pending_expert
+signed_at: 2026-11-03
+notes: 难点：表面是「落干要不要灌」，但苗数已够（drain#enough-tillers ≥ 18）应转晒田而不是补水；规则层灌不灌分支只看水层会判灌水（见回报）

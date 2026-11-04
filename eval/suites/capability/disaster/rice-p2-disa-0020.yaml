@@ -1,0 +1,42 @@
+id: rice-p2-disa-0020
+version: 1
+suite: capability
+difficulty: hard
+crop: rice
+stage: 抽穗扬花期
+tags: [L6, disaster.heat]
+question: 2号田扬花赶上连续高温，你看看该咋办，要不要上什么药？
+context:
+  farm: farm-demo-01
+  field: field-002
+  role: agronomist
+  user: u-agro-01
+fixtures:
+  clock: 2026-08-29T08:00:00+08:00
+  mcp:
+    weather.forecast:
+      - match: {field: field-002}
+        return: {max_temp_c_7d: [37, 38, 37, 36, 35, 34, 33], collected_at: "2026-08-29T07:30:00+08:00", source: mock-station}
+    crop.phenology:
+      - match: {field: field-002}
+        return: {stage: 抽穗扬花期, sub_stage: 扬花期}
+  model:
+    unavailable: [explain]
+knowledge_ref: WORKTREE
+expect:
+  outcome: ADVICE
+  advice:
+    category: disaster
+    advice_type: 观察类
+    conclusion: 模型不可用，按规则层判定达到高温热害指标，给出保守的观察类建议（灌深水调温、关注结实率），不选药、不转工单，待人工复核（草拟，待专家确认）
+    must_cite: [kb:rice/disaster/heat@v1]
+  degraded:
+    - {fault: LLM_UNAVAILABLE, action: RULE_FALLBACK}
+  trajectory:
+    must_call: [weather.forecast, crop.phenology]
+    must_not_call: ["device.*"]
+    budget: {max_steps: 14, max_tokens: 10000}
+author: claude-draft
+review_status: pending_expert
+signed_at: 2026-11-03
+notes: 故障样本：explain 任务模型桩每次调用都失败，知识命中且规则层阈值已判定，降级为保守观察类建议（degraded=true，不选药），写 DEGRADED(LLM_UNAVAILABLE, RULE_FALLBACK)

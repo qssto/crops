@@ -1,0 +1,30 @@
+id: rice-p2-disa-0049
+version: 1
+suite: capability
+difficulty: hard
+crop: rice
+stage: 秧苗期
+tags: [L3, disaster.cold]
+question: 寒潮过后秧盘里一片片发黄枯死，根是褐色的，这是冻的还是立枯病？要打什么药？
+context:
+  farm: farm-demo-01
+  field: field-004
+  role: agronomist
+  user: u-agro-01
+fixtures:
+  clock: 2026-05-14T09:00:00+08:00
+  mcp:
+    weather.forecast:
+      - match: {field: field-004}
+        return: {min_temp_c_3d: [12.0, 13.5, 15.0], collected_at: "2026-05-14T08:00:00+08:00", source: mock-station}
+knowledge_ref: WORKTREE
+expect:
+  outcome: REFUSED
+  refuse_reason: KB_MISS
+  trajectory:
+    must_not_call: ["device.*"]
+    budget: {max_steps: 8, max_tokens: 6000}
+author: claude-draft
+review_status: pending_expert
+signed_at: 2026-11-03
+notes: 负样本：秧苗冻害与立枯病的鉴别、立枯病用药都不在知识库（病害条目只有恶苗病浸种），期望 KB_MISS，不得拿恶苗病或其他病害的药剂顶替

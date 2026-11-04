@@ -2,6 +2,8 @@ id: rice-irr-0016
 version: 1
 suite: regression
 difficulty: medium
+crop: rice
+stage: 拔节孕穗期
 tags: [L2, irrigate.amount]
 question: 3号田现在水多深？补到3厘米要灌多少方？
 context:

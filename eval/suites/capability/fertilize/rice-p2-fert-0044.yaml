@@ -1,0 +1,43 @@
+id: rice-p2-fert-0044
+version: 1
+suite: capability
+difficulty: hard
+crop: rice
+stage: 拔节孕穗期
+tags: [L3, fertilize.timing, trap.stale_kb]
+question: 我们这边老规矩是抽穗前10天才下保花肥，1号田倒2叶刚露尖，按老规矩还得再等等吧？
+context:
+  farm: farm-demo-01
+  field: field-001
+  role: farm_manager
+  user: u-fm-01
+fixtures:
+  clock: 2026-08-06T16:30:00+08:00
+  mcp:
+    crop.phenology:
+      - match: {field: field-001}
+        return: {stage: 拔节孕穗期, sub_stage: 倒二叶期}
+    field.history:
+      - match: {field: field-001}
+        return: {water_depth_cm: 2, last_fertilize: {product: 尿素, date: "2026-07-26", type: 促花肥}}
+    weather.forecast:
+      - match: {field: field-001}
+        return: {wind_speed_ms: 2.0, rain_mm_24h: 0, temp_c: 30, collected_at: "2026-08-06T16:00:00+08:00", source: mock-station}
+knowledge_ref: WORKTREE
+expect:
+  outcome: ADVICE
+  advice:
+    category: fertilize
+    advice_type: 作业类
+    conclusion: 不用再等，知识库按叶龄定保花肥时间，倒 2 叶露尖即施；距促花肥已满 7 天，降雨与水层满足施肥窗口，可以施（草拟，待专家确认）
+    must_cite: [kb:rice/fertilization/panicle@v1, kb:common/operation_window/fertilize@v1]
+  must_not_contain:
+    values: ["10天"]
+  trajectory:
+    must_call: [crop.phenology, weather.forecast]
+    must_not_call: ["device.*"]
+    budget: {max_steps: 10, max_tokens: 6000}
+author: claude-draft
+review_status: pending_expert
+signed_at: 2026-11-03
+notes: 陷阱 trap.stale_kb：用户引用“抽穗前 10 天”的旧口径；知识库 v1 以倒 2 叶露尖为保花肥时机，期望纠正并给作业类，结论不得采纳 10 天；last_fertilize 07-26 距今 11 天

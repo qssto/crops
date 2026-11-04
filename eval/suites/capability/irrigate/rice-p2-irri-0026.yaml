@@ -1,0 +1,40 @@
+id: rice-p2-irri-0026
+version: 1
+suite: capability
+difficulty: hard
+crop: rice
+stage: 分蘖期
+tags: [L3, irrigate.amount, irrigate.depth]
+question: 3号田现在1厘米水，我想一次灌到5厘米省得老去放水，要多少方？
+context:
+  farm: farm-demo-01
+  field: field-003
+  role: farm_manager
+  user: u-fm-01
+fixtures:
+  clock: 2026-07-05T06:30:00+08:00
+  mcp:
+    field.profile:
+      - {match: {field: field-003}, return: {area_mu: 32.5}}
+    crop.phenology:
+      - {match: {field: field-003}, return: {stage: 分蘖期, sub_stage: 分蘖盛期}}
+    field.history:
+      - {match: {field: field-003}, return: {water_depth_cm: 1}}
+knowledge_ref: WORKTREE
+expect:
+  outcome: ADVICE
+  advice:
+    category: irrigate
+    advice_type: 作业类
+    conclusion: 分蘖期宜浅水 1–3 cm，一次灌 5 cm 深水会抑制分蘖，不建议；按上限 3 cm 计，32.5 亩由 1 cm 补到 3 cm 约需 455 m³（草拟，待专家确认）
+    must_cite: [kb:rice/irrigation/seedling-tillering@v1, kb:rice/irrigation/water-volume@v1]
+    numbers:
+      - {field: water_m3, value: 455, unit: m3, precision: 1}
+  trajectory:
+    must_call: [field.profile, field.history]
+    must_not_call: ["device.*"]
+    budget: {max_steps: 12, max_tokens: 8000}
+author: claude-draft
+review_status: pending_expert
+signed_at: 2026-11-03
+notes: 难点：用户目标水层超出分蘖期范围，应纠正到 ≤ 3 cm 再算：32.5 × 666.67 × 2 ÷ 100 × 1.05 = 455.0 m³；规则层按问句目标 5 cm 计算（见回报）

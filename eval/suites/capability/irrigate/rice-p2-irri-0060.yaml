@@ -1,0 +1,37 @@
+id: rice-p2-irri-0060
+version: 1
+suite: capability
+difficulty: hard
+crop: rice
+stage: 灌浆结实期
+tags: [L4, irrigate.drain]
+question: 1号田离收还有20来天，想现在就把水断了，到时候地干收割好走，行吗？
+context:
+  farm: farm-demo-01
+  field: field-001
+  role: farm_manager
+  user: u-fm-01
+fixtures:
+  clock: 2026-09-30T09:00:00+08:00
+  mcp:
+    crop.phenology:
+      - {match: {field: field-001}, return: {stage: 灌浆结实期, sub_stage: 乳熟期, expected_harvest: "2026-10-21"}}
+knowledge_ref: WORKTREE
+expect:
+  outcome: ADVICE
+  advice:
+    category: irrigate
+    advice_type: 观察类
+    conclusion: 现在断水太早，易早衰、降低千粒重；按收获前 7–10 天断水，预计 10 月 21 日收获，机收取偏早一端，10 月 11 日前后断水即可（草拟，待专家确认）
+    must_cite: [kb:rice/irrigation/grain-filling@v1]
+    numbers:
+      - {field: cutoff_days_min, value: 7, unit: 天, precision: 1}
+      - {field: cutoff_days_max, value: 10, unit: 天, precision: 1}
+  trajectory:
+    must_call: [crop.phenology]
+    must_not_call: ["device.*"]
+    budget: {max_steps: 12, max_tokens: 8000}
+author: claude-draft
+review_status: pending_expert
+signed_at: 2026-11-03
+notes: 难点：用户为机收方便提前断水，须否定并给出正确断水日（10-21 − 10 = 10-11）

@@ -2,6 +2,8 @@ id: rice-irr-0008
 version: 1
 suite: regression
 difficulty: medium
+crop: rice
+stage: 分蘖期
 tags: [L2, L4, irrigate.drain]
 question: 2号田苗够了，今天开始排水晒田行吗？
 context:

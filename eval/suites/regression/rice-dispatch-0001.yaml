@@ -2,6 +2,8 @@ id: rice-dispatch-0001
 version: 1
 suite: regression
 difficulty: hard
+crop: rice
+stage: 分蘖期
 tags: [L4, protect.timing]
 question: 帮我安排无人机明天给3号田打稻飞虱的药，天气不合适就先退回来再审
 context:

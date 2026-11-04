@@ -25,6 +25,15 @@ categories:
     name: 施肥
     subcategories:
       - {code: fertilize.rate, name: 用量计算}
+stages:
+  - {code: 分蘖期, name: 分蘖期}
+  - {code: 不限, name: 与生育期无关}
+sample_tags:
+  - {code: trap.similar_pest, name: 相似病虫害混淆}
+  - {code: trap.overdose, name: 超剂量诱导}
+  - {code: trap.cross_crop, name: 跨作物误用}
+  - {code: trap.stale_kb, name: 过期知识引用}
+  - {code: user_sim, name: 多轮模拟用户}
 `
 
 func mustTaxonomy(t *testing.T) *knowledge.Taxonomy {
@@ -49,7 +58,7 @@ func repoKB(t *testing.T) KnowledgeOpener {
 // validAdvice 返回一条能通过全部规则的 ADVICE 样本。
 func validAdvice(id string) *Sample {
 	return &Sample{
-		ID: id, Version: 1, Suite: "regression",
+		ID: id, Version: 1, Suite: "regression", Difficulty: DifficultyMedium, Crop: "rice", Stage: "分蘖期",
 		Tags:         []string{"L4", "protect.timing"},
 		Question:     "要不要打药？",
 		Context:      Context{Farm: "farm-demo-01", Field: "field-001", Role: "farm_manager", User: "u-1"},
@@ -440,6 +449,9 @@ func TestValidator_ExtraRule(t *testing.T) {
 const sampleTemplate = `id: %ID%
 version: 1
 suite: regression
+difficulty: easy
+crop: rice
+stage: 不限
 tags: [L4, protect.timing]
 question: 要不要打药？
 context: {farm: farm-demo-01, field: field-001, role: farm_manager, user: u-1}

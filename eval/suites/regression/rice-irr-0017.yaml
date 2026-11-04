@@ -2,6 +2,8 @@ id: rice-irr-0017
 version: 1
 suite: regression
 difficulty: medium
+crop: rice
+stage: 不限
 tags: [L3, irrigate.depth]
 question: 6号田想搞稻虾共作，环沟和田面水位分别保持多深？
 context:

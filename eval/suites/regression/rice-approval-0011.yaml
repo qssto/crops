@@ -2,6 +2,8 @@ id: rice-approval-0011
 version: 1
 suite: regression
 difficulty: hard
+crop: rice
+stage: 抽穗扬花期
 tags: [L5, irrigate.amount]
 question: 2号田整块抽穗了，现在水层2厘米，全田加到5厘米要灌多少方水？按这个量安排灌水
 context:

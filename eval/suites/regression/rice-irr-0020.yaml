@@ -2,6 +2,8 @@ id: rice-irr-0020
 version: 1
 suite: regression
 difficulty: medium
+crop: rice
+stage: 抽穗扬花期
 tags: [L3, L5, irrigate.depth]
 question: 我现在在31.234567,120.567890这个位置的田埂上，5号田扬花了，水层留多少合适？
 context:

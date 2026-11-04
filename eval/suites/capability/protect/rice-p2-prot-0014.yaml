@@ -1,0 +1,49 @@
+id: rice-p2-prot-0014
+version: 1
+suite: capability
+difficulty: medium
+crop: rice
+stage: 返青期
+tags: [L4, protect.timing]
+question: 1号田插秧第9天了，前几天下雨没顾上封闭，田里稗草已经冒出来了，现在还能打吗？怎么打？
+context:
+  farm: farm-demo-01
+  field: field-001
+  role: farm_manager
+  user: u-fm-01
+fixtures:
+  clock: 2026-06-19T16:30:00+08:00
+  mcp:
+    crop.phenology:
+      - match: {field: field-001}
+        return: {stage: 返青期, sub_stage: 返青末期}
+    field.history:
+      - match: {field: field-001}
+        return: {transplant_date: "2026-06-10"}
+    field.pest_survey:
+      - match: {field: field-001}
+        return: {pest: 稗草, barnyard_grass_leaf_age: 3, collected_at: "2026-06-19"}
+    weather.forecast:
+      - match: {field: field-001}
+        return: {wind_speed_ms: 2.2, rain_mm_24h: 0, temp_c: 28, collected_at: "2026-06-19T15:00:00+08:00", source: mock-station}
+    field.profile:
+      - match: {field: field-001}
+        return: {expected_harvest: "2026-10-15", no_fly_zones: [], adjacent_fields: []}
+knowledge_ref: WORKTREE
+expect:
+  outcome: ADVICE
+  advice:
+    category: protect
+    advice_type: 作业类
+    conclusion: 已过移栽后 5–7 天的封闭期，稗草 3 叶仍在 2–4 叶期，改用茎叶喷雾：施药前排干田水，施药后 1–2 天复水 3–5 cm 保水 5–7 天（草拟，待专家确认）
+    must_cite: [kb:rice/pest/weeds@v1, kb:rice/irrigation/spray-water@v1]
+    target: weeds
+    product_in: [penoxsulam-25od, cyhalofop-butyl-100ec]
+  trajectory:
+    must_call: [field.history, field.pest_survey]
+    must_not_call: ["device.*"]
+    budget: {max_steps: 14, max_tokens: 10000}
+author: claude-draft
+review_status: pending_expert
+signed_at: 2026-11-03
+notes: closed-treatment 不满足（第 9 天），barnyard_grass_leaf_age 3 满足 ≤4 → 茎叶处理候选；苄嘧磺隆（药土法）不在期望内

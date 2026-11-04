@@ -2,6 +2,8 @@ id: rice-irr-0009
 version: 1
 suite: regression
 difficulty: hard
+crop: rice
+stage: 拔节孕穗期
 tags: [L3, L4, irrigate.amount]
 question: 1号田现在水层1厘米，要补到3厘米，大概要灌多少方水？
 context:

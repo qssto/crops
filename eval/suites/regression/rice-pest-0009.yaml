@@ -2,6 +2,8 @@ id: rice-pest-0009
 version: 1
 suite: regression
 difficulty: easy
+crop: rice
+stage: 分蘖期
 tags: [L2, protect.timing]
 question: 4号田看到几个卷叶虫苞，需要马上打药吗？
 context:

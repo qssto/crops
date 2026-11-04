@@ -2,6 +2,8 @@ id: rice-fert-0004
 version: 2
 suite: regression
 difficulty: hard
+crop: rice
+stage: 分蘖期
 tags: [L4, fertilize.deficiency]
 question: 4号田稻叶从下往上发黄，是不是缺肥了？
 context:

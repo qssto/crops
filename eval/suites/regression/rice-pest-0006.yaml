@@ -2,6 +2,8 @@ id: rice-pest-0006
 version: 2
 suite: regression
 difficulty: medium
+crop: rice
+stage: 拔节孕穗期
 tags: [L2, protect.timing]
 question: 5号田最近二化螟多不多，要不要防？
 context:

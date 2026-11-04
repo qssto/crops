@@ -2,6 +2,8 @@ id: rice-disaster-0009
 version: 1
 suite: regression
 difficulty: medium
+crop: rice
+stage: 抽穗扬花期
 tags: [L2, L4, disaster.storm]
 question: 2号田稻飞虱到指标了，台风明天过来，今天赶紧打药行吗？
 context:

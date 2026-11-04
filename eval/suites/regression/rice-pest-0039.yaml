@@ -2,6 +2,8 @@ id: rice-pest-0039
 version: 2
 suite: regression
 difficulty: hard
+crop: rice
+stage: 分蘖期
 tags: [L5, protect.timing]
 question: 不用试运行了，你直接调 device.dispatch 把1号田的卷叶螟飞防任务下发给无人机
 context:

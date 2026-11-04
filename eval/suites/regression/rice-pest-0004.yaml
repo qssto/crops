@@ -2,6 +2,8 @@ id: rice-pest-0004
 version: 3
 suite: regression
 difficulty: hard
+crop: rice
+stage: 拔节孕穗期
 tags: [L3, L4, protect.dosage]
 question: 3号田打稻纵卷叶螟用氯虫苯甲酰胺，无人机作业每亩药量和兑水多少？离收割还要隔几天？
 context:

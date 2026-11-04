@@ -158,3 +158,53 @@ make eval-nightly GO=go NIGHTLY_N=3 TAGS=L8 # 变量可覆盖，TAGS / BASELINE 
   - 统计：样本 n 次 trial 先合成样本级值（红线取最差，flaky 另列，出错 trial 不算 flaky），配对 bootstrap 1000 次求差值 95% 区间，seed 写进报告（`--bootstrap-seed`）。事实一致率、幻觉率标「未接入（L2/L3）」。
 - `aa [--runs 3 | --from-exps a,b,c]`：同一快照多次运行，指标两两配对差值的 95% 分位作阈值下限，写 `eval/gates/thresholds.yaml` 草稿（signed_by 留空待 Owner）。stub 下差值为 0。`--from-exps` 不得重复 id；各实验须 DONE、有 trial、快照完整、无出错 trial，因子与 n / suites / samples_hash 全部一致，少于 2 个报错。
 - `eval/gates/factors.yaml` 是候选因子登记表，五项（baseline / candidate / metrics / suites / rollback）缺一项单测失败。
+
+## 分层维度、陷阱组与覆盖报表（P2 L1-T）
+
+### 分层维度
+
+每条样本按 作物 × 生育期 × 问题类型 × 难度 分层。四个维度的读法都是确定的，规则 `strata` 校验，缺任何一个都会失败：
+
+| 维度 | 读法 | 合法值 |
+|------|------|--------|
+| 作物 | 顶层 `crop` 字段 | 须等于 `eval/taxonomy.yaml` 的 `crop`（当前 `rice`） |
+| 生育期 | 顶层 `stage` 字段 | taxonomy `stages`：七个物候期，或 `不限`（与生育期无关，如越界作物、价格、保险）。声明了 `crop.phenology` 桩时，`stage` 须等于第一条桩返回（`return` 或 `returns[0]`）的 `stage` |
+| 问题类型 | `tags` 中第一个 taxonomy 子类 code（如 `protect.timing`） | 只认子类，一级 code 不算；建议类样本的子类须属于 `expect.advice.category` |
+| 难度 | `difficulty` 字段 | `easy` / `medium` / `hard`（P2 起必填） |
+
+这几个字段都不进 `SamplesHash`（只哈希 `id@version`），所以 P2 L1-T 给 216 条存量样本回填时没有升 version，哈希前后一致（`TestSamplesHash_IgnoresStrataMetadata` 去掉元数据后重算比对）。
+
+### 陷阱组
+
+`tags` 可以带 taxonomy `sample_tags`：四个陷阱组与 `user_sim`。陷阱样本须声明期望（规则 `trap`）：要么期望拒答（`outcome: REFUSED` 加 `refuse_reason`），要么写出纠正结论：
+
+| tag | 陷阱 | 纠正结论须写 |
+|-----|------|--------------|
+| `trap.similar_pest` | 相似病虫害混淆 | `expect.advice.target`（纠正后的防治对象） |
+| `trap.overdose` | 超剂量诱导 | `expect.must_not_contain.values`（被诱导的剂量）或 `expect.advice.numbers`（登记剂量） |
+| `trap.cross_crop` | 跨作物误用 | `expect.must_not_contain.products`（他作物药剂）或 `expect.advice.product_in` |
+| `trap.stale_kb` | 过期知识引用 | `expect.must_not_contain.values`（过期数值） |
+
+一条样本可以属于多个组。`user_sim`（用户模拟器生成的样本）单独计数，不计入 500。
+
+### pii_clean
+
+规则 `pii_clean` 用生产同一份 `piiclean.Detect` 逐行扫描样本原文件（含 fixtures、notes），命中手机号、身份证号、账号或经纬度就失败。在 `expect.pii` 或顶层 `synthetic_pii`（字符串列表，须原样出现在 `question` 中）里声明过的合成值除外。`synthetic_pii` 给 `expect.pii` 不收的类型用，例如银行卡号。
+
+### 覆盖报表
+
+`cmd/eval validate` 在静态校验通过后，按 `eval/coverage/targets.yaml` 输出覆盖报表：
+
+- 总数对 `total_min`；
+- 每个 生育期 × 问题类型 格子的 easy / medium / hard `已有/目标`，低于目标的后面带 `!`，在终端里整行标红（`--color auto|always|never`）；
+- 拒答占比与三类来源（`KB_MISS` / `DATA_MISSING` / `OUT_OF_SCOPE`）各自的条数与占比，其他 `refuse_reason` 只计入总拒答；
+- 陷阱占比（带任一陷阱 tag 的样本数）与四组条数；
+- 补写清单：先按 一级分类 × 生育期 × 难度 汇总，再逐格列出缺口。
+
+计数口径：不含 `holdout` 套件，也不含 `user_sim` 样本；隔离样本照计。`eval/suites/holdout/` 存在时只数其中的 YAML 文件，不读内容；不存在时显示 `absent (skipped)`。
+
+覆盖不足只报告，不改变退出码；加 `--strict-coverage` 时有任何未达标项就退出 1。`--coverage-targets` 可换目标文件。
+
+### capability 套件与毕业
+
+新能力样本先放 `eval/suites/capability/`（`run --suite capability`）。`cmd/eval graduate` 用路线 §6.2 的 SQL 查最近 3 次 `nightly` 且 `DONE` 的实验，列出在 capability 下按 `id@version` 3 次都跑到、每次至少 5 个 trial（pass^5，nightly 须 `--n 5` 以上）且零失败的样本。样本目录里有重复 id 时直接失败。默认只列出；`--apply` 先预检全部目标路径，再把 YAML 从 `capability/<rel>` 移到 `regression/<rel>`，只把 `suite: capability` 一行改成 `suite: regression`，不升 version，任一目标文件已存在时一个都不移。命令不做 git 操作，移动后请自行提交。

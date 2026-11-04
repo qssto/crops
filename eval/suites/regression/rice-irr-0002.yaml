@@ -2,6 +2,8 @@ id: rice-irr-0002
 version: 2
 suite: regression
 difficulty: easy
+crop: rice
+stage: 抽穗扬花期
 tags: [L4, irrigate.depth]
 question: 1号田快抽穗了，田里水层怎么管？
 context:

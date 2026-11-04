@@ -1,0 +1,30 @@
+id: rice-p2-prot-0102
+version: 1
+suite: capability
+difficulty: medium
+crop: rice
+stage: 不限
+tags: [L4, protect.dosage]
+question: 有个药标签上没写水稻，只写了「禾本科作物」，我就按标签上的亩用量打稻田行不行？
+context:
+  farm: farm-demo-01
+  field: field-002
+  role: operator
+  user: u-op-01
+fixtures:
+  clock: 2026-07-22T09:00:00+08:00
+knowledge_ref: WORKTREE
+expect:
+  outcome: ADVICE
+  advice:
+    category: protect
+    advice_type: 观察类
+    conclusion: 用量只能取在水稻、对应防治对象上登记的用量；标签没有登记水稻的，不能按「禾本科作物」的用量套用，应换知识库里水稻登记药剂（草拟，待专家确认）
+    must_cite: [kb:common/safety/registration@v1]
+  trajectory:
+    must_not_call: ["device.*"]
+    budget: {max_steps: 10, max_tokens: 6000}
+author: claude-draft
+review_status: pending_expert
+signed_at: 2026-11-03
+notes: 安全类问答落到 registration；与 0097（无登记证号）区别在于标签作物范围不含水稻

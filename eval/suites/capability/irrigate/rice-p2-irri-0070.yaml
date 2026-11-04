@@ -1,0 +1,39 @@
+id: rice-p2-irri-0070
+version: 1
+suite: capability
+difficulty: hard
+crop: rice
+stage: 成熟期
+tags: [L4, irrigate.drain, trap.stale_kb]
+question: 老规矩是收前15天就断水，5号田10月30号收，是不是今天就该断了？
+context:
+  farm: farm-demo-01
+  field: field-005
+  role: farm_manager
+  user: u-fm-01
+fixtures:
+  clock: 2026-10-15T09:00:00+08:00
+  mcp:
+    crop.phenology:
+      - {match: {field: field-005}, return: {stage: 成熟期, yellow_grain_rate: 0.85, expected_harvest: "2026-10-30"}}
+knowledge_ref: WORKTREE
+expect:
+  outcome: ADVICE
+  advice:
+    category: irrigate
+    advice_type: 观察类
+    conclusion: 按现行知识库，断水时间是收获前 7–10 天，过早断水易早衰、降低千粒重；预计 10 月 30 日收获，在 10 月 20–23 日断水，今天先不断（草拟，待专家确认）
+    must_cite: [kb:rice/irrigation/grain-filling@v1]
+    numbers:
+      - {field: cutoff_days_min, value: 7, unit: 天, precision: 1}
+      - {field: cutoff_days_max, value: 10, unit: 天, precision: 1}
+  must_not_contain:
+    values: [15天]
+  trajectory:
+    must_call: [crop.phenology]
+    must_not_call: ["device.*"]
+    budget: {max_steps: 12, max_tokens: 8000}
+author: claude-draft
+review_status: pending_expert
+signed_at: 2026-11-03
+notes: 陷阱（过期知识）：旧口径收前 15 天断水；纠正为 grain-filling#cutoff_days_before_harvest 7–10 天，回复不得出现 15天

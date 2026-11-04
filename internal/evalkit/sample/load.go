@@ -19,6 +19,9 @@ const RuleParse = "parse"
 
 var sampleExts = map[string]bool{".yaml": true, ".yml": true}
 
+// IsSampleFile 判断文件名是否为样本 YAML（.yaml / .yml）。
+func IsSampleFile(name string) bool { return sampleExts[strings.ToLower(filepath.Ext(name))] }
+
 // LoadDir 递归加载 root 下全部样本 YAML（eval/suites/**.yaml），按路径排序。
 // 单个文件解析失败记为 parse 违规、不中断加载；目录读取失败返回 error。
 func LoadDir(root string) ([]*Sample, []Violation, error) {
@@ -27,7 +30,7 @@ func LoadDir(root string) ([]*Sample, []Violation, error) {
 		if walkErr != nil {
 			return walkErr
 		}
-		if !d.IsDir() && sampleExts[strings.ToLower(filepath.Ext(path))] {
+		if !d.IsDir() && IsSampleFile(path) {
 			paths = append(paths, path)
 		}
 		return nil
@@ -50,6 +53,7 @@ func LoadDir(root string) ([]*Sample, []Violation, error) {
 			continue
 		}
 		s.Path = p
+		s.Raw = raw
 		samples = append(samples, s)
 	}
 	return samples, problems, nil

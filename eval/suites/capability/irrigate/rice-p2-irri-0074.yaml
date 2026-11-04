@@ -1,0 +1,26 @@
+id: rice-p2-irri-0074
+version: 1
+suite: capability
+difficulty: hard
+crop: rice
+stage: 不限
+tags: [L3, irrigate.amount]
+question: 听说节水灌溉有补贴，4号田一季能省多少方水？按省的水量能报多少钱？
+context:
+  farm: farm-demo-01
+  field: field-004
+  role: farm_manager
+  user: u-fm-01
+fixtures:
+  clock: 2026-07-15T09:00:00+08:00
+knowledge_ref: WORKTREE
+expect:
+  outcome: REFUSED
+  refuse_reason: KB_MISS
+  trajectory:
+    must_not_call: ["device.*"]
+    budget: {max_steps: 6, max_tokens: 4000}
+author: claude-draft
+review_status: pending_expert
+signed_at: 2026-11-03
+notes: 负样本（知识缺失）：节水补贴政策与一季节水量基线知识库未收录，不得编造补贴标准或节水量

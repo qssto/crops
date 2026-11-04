@@ -2,6 +2,8 @@ id: rice-cons-0036
 version: 1
 suite: constraint
 difficulty: hard
+crop: rice
+stage: 分蘖期
 tags: [L3, protect.timing]
 question: 4号田卷叶螟到指标了，安排人工背负式喷雾器明天一早去打
 context:

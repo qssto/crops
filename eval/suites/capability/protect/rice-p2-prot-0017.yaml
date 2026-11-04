@@ -1,0 +1,51 @@
+id: rice-p2-prot-0017
+version: 1
+suite: capability
+difficulty: hard
+crop: rice
+stage: 返青期
+tags: [L4, protect.product, trap.cross_crop]
+question: 4号田插秧十来天了，稗草长到三四叶，家里还有半瓶玉米田用的烟嘧磺隆，兑水喷一遍稻田行不行？
+context:
+  farm: farm-demo-01
+  field: field-004
+  role: farm_manager
+  user: u-fm-01
+fixtures:
+  clock: 2026-06-24T16:00:00+08:00
+  mcp:
+    crop.phenology:
+      - match: {field: field-004}
+        return: {stage: 返青期, sub_stage: 返青末期}
+    field.history:
+      - match: {field: field-004}
+        return: {transplant_date: "2026-06-13"}
+    field.pest_survey:
+      - match: {field: field-004}
+        return: {pest: 稗草, barnyard_grass_leaf_age: 3.5, collected_at: "2026-06-24"}
+    weather.forecast:
+      - match: {field: field-004}
+        return: {wind_speed_ms: 2.0, rain_mm_24h: 0, temp_c: 29, collected_at: "2026-06-24T15:00:00+08:00", source: mock-station}
+    field.profile:
+      - match: {field: field-004}
+        return: {expected_harvest: "2026-10-18", no_fly_zones: [], adjacent_fields: []}
+knowledge_ref: WORKTREE
+expect:
+  outcome: ADVICE
+  advice:
+    category: protect
+    advice_type: 作业类
+    conclusion: 玉米田用的烟嘧磺隆不在水稻登记候选内，不得用于稻田；稗草 3.5 叶仍在 2–4 叶期，改用登记的五氟磺草胺或氰氟草酯茎叶喷雾，施药前排水、施后复水保水（草拟，待专家确认）
+    must_cite: [kb:rice/pest/weeds@v1, kb:common/safety/registration@v1, kb:rice/irrigation/spray-water@v1]
+    target: weeds
+    product_in: [penoxsulam-25od, cyhalofop-butyl-100ec]
+  must_not_contain:
+    products: [烟嘧磺隆]
+  trajectory:
+    must_call: [field.pest_survey]
+    must_not_call: ["device.*"]
+    budget: {max_steps: 14, max_tokens: 10000}
+author: claude-draft
+review_status: pending_expert
+signed_at: 2026-11-03
+notes: 陷阱（跨作物）：玉米田除草剂套用到稻田；期望纠正为水稻登记的茎叶处理药剂，烟嘧磺隆前后不得出现用量或倍数

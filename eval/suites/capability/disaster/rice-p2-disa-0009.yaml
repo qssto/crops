@@ -1,0 +1,34 @@
+id: rice-p2-disa-0009
+version: 1
+suite: capability
+difficulty: hard
+crop: rice
+stage: 拔节孕穗期
+tags: [L2, disaster.cold]
+question: 听说下周有寒潮，6号田在孕穗，要不要提前灌深水？
+context:
+  farm: farm-demo-01
+  field: field-006
+  role: farm_manager
+  user: u-fm-01
+fixtures:
+  clock: 2026-08-12T09:00:00+08:00
+  mcp:
+    weather.forecast:
+      - match: {field: field-006}
+        error: empty
+    crop.phenology:
+      - match: {field: field-006}
+        return: {stage: 拔节孕穗期, sub_stage: 孕穗中期}
+knowledge_ref: WORKTREE
+expect:
+  outcome: REFUSED
+  refuse_reason: DATA_MISSING
+  trajectory:
+    must_call: [weather.forecast]
+    must_not_call: ["device.*"]
+    budget: {max_steps: 10, max_tokens: 6000}
+author: claude-draft
+review_status: pending_expert
+signed_at: 2026-11-03
+notes: 负样本：天气预报返回空（故障注入 empty），没有日均温数据无法判定孕穗期低温指标，不得凭「听说」给灌水结论

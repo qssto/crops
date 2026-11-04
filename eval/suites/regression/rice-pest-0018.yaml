@@ -2,6 +2,8 @@ id: rice-pest-0018
 version: 1
 suite: regression
 difficulty: medium
+crop: rice
+stage: 分蘖期
 tags: [L3, protect.product]
 question: 2号田杂草多，氰氟草酯和二甲四氯能一桶混着打吗？
 context:

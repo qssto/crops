@@ -1,0 +1,40 @@
+id: rice-p2-irri-0036
+version: 1
+suite: capability
+difficulty: easy
+crop: rice
+stage: 拔节孕穗期
+tags: [L3, irrigate.amount]
+question: 1号田搁田结束了，复水到3厘米要多少方水？
+context:
+  farm: farm-demo-01
+  field: field-001
+  role: operator
+  user: u-op-01
+fixtures:
+  clock: 2026-07-20T06:30:00+08:00
+  mcp:
+    field.profile:
+      - {match: {field: field-001}, return: {area_mu: 25.0}}
+    crop.phenology:
+      - {match: {field: field-001}, return: {stage: 拔节孕穗期, sub_stage: 拔节期}}
+    field.history:
+      - {match: {field: field-001}, return: {last_drain: {start: "2026-07-11", end: "2026-07-19"}, water_depth_cm: 0}}
+knowledge_ref: WORKTREE
+expect:
+  outcome: ADVICE
+  advice:
+    category: irrigate
+    advice_type: 作业类
+    conclusion: 1号田 25 亩，晒田后由 0 复水到 3 cm，土壤需补墒取 1.2 系数，约需 600 m³（草拟，待专家确认）
+    must_cite: [kb:rice/irrigation/rewater@v1, kb:rice/irrigation/water-volume@v1]
+    numbers:
+      - {field: water_m3, value: 600, unit: m3, precision: 1}
+  trajectory:
+    must_call: [field.profile, field.history]
+    must_not_call: ["device.*"]
+    budget: {max_steps: 8, max_tokens: 6000}
+author: claude-draft
+review_status: pending_expert
+signed_at: 2026-11-03
+notes: 25 × 666.67 × 3 ÷ 100 × 1.2 = 600.0 m³（晒田后复水系数 1.2）

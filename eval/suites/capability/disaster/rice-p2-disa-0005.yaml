@@ -1,0 +1,38 @@
+id: rice-p2-disa-0005
+version: 1
+suite: capability
+difficulty: hard
+crop: rice
+stage: 拔节孕穗期
+tags: [L2, L4, disaster.heat]
+question: 明天中午安排无人机去1号田打纹枯病的药，那会儿差不多36度，没啥问题吧？
+context:
+  farm: farm-demo-01
+  field: field-001
+  role: farm_manager
+  user: u-fm-01
+fixtures:
+  clock: 2026-08-08T16:00:00+08:00
+  mcp:
+    weather.forecast:
+      - match: {field: field-001}
+        return: {max_temp_c_7d: [36, 36, 37, 36, 35, 34, 34], temp_c: 36, wind_speed_ms: 2.2, rain_mm_24h: 0, collected_at: "2026-08-08T15:00:00+08:00", source: mock-station}
+    crop.phenology:
+      - match: {field: field-001}
+        return: {stage: 拔节孕穗期, sub_stage: 孕穗中期}
+knowledge_ref: WORKTREE
+expect:
+  outcome: ADVICE
+  advice:
+    category: disaster
+    advice_type: 观察类
+    conclusion: 高温期间施药推迟到早晚，气温超过 35 ℃ 停止施药，超过 30 ℃ 只在 10 时前或 16 时后作业，中午不安排飞防（草拟，待专家确认）
+    must_cite: [kb:rice/disaster/heat@v1, kb:common/operation_window/spray@v1]
+  trajectory:
+    must_call: [weather.forecast]
+    must_not_call: ["device.*"]
+    budget: {max_steps: 12, max_tokens: 9000}
+author: claude-draft
+review_status: pending_expert
+signed_at: 2026-11-03
+notes: 问的是高温下的作业时段，不涉及选药；期望纠正为早晚作业，不生成中午的飞防作业单

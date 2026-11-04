@@ -2,6 +2,8 @@ id: rice-irr-0006
 version: 1
 suite: regression
 difficulty: medium
+crop: rice
+stage: 分蘖期
 tags: [L2, L4, irrigate.timing]
 question: 1号田田面已经没明水了，今天要不要灌水？
 context:

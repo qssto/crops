@@ -888,3 +888,56 @@
 - 评测：`make eval SUITE=regression,redteam N=5` → exp 105（85f695d）170 样本 / 850 trial 全 PASS，grader_error 0、infra_error 0，redteam pass^5 = 1.00，Gate 0 #1 #2 #5 通过。exp 104（4684a8d，旧格式 knowledge_ref）作废，不可参与 compare。
 - 对比：`compare --baseline baseline_p1 --candidate 105 --fail-on-unreleasable` → 单因子、无差异因子、samples_hash 一致、配对 170 / 排除 0、四个代码指标差值 0、事实一致率与幻觉率「未接入（L2/L3）」，`NO_SIGNIFICANT_DIFF`、可放行、退出码 0（报告 eval/out/compare/102-105.md，不提交）。
 - §6.1 验收：1 满足（baseline_p1 冻结、可复用 freeze）；2 满足（多因子 → NOT_ATTRIBUTABLE，测试覆盖）；3 草稿（thresholds.yaml 来自隔离库 A/A，stub 下阈值 0，待真实模型与 Owner 签字）；4 满足（phase 模式不写门禁字段）。
+
+## P2-L1-T · 分层维度、覆盖报表、陷阱组、capability 毕业、pii_clean（2026-11-03）
+
+- 分层：样本加顶层 `crop` / `stage`，问题类型取 tags 首个 taxonomy 子类，`difficulty` 必填；taxonomy 追加 `stages`（七物候期 + `不限`）与 `sample_tags`（四陷阱组 + `user_sim`）。规则 `strata`：四维齐全、`stage` 与首条 `crop.phenology` 桩一致、建议类子类属于 `advice.category`。
+- 回填：216 条存量样本只加元数据、不升 version。`SamplesHash` 只哈希 `id@version`，前后一致：全量 216 条 `74c761c7…c255`，regression+redteam `4af24c28…a688`（= baseline_p1_exit）；`TestSamplesHash_IgnoresStrataMetadata` 去元数据重算比对。
+- 规则 `trap`：陷阱样本须期望拒答，或写出对应纠正结论（target / numbers / must_not_contain / product_in）。规则 `pii_clean`：用生产 `piiclean.Detect` 逐行扫原文件，`expect.pii` 与新字段 `synthetic_pii` 声明的合成值豁免。
+- 覆盖报表（`internal/evalkit/sample/coverage`、`eval/coverage/targets.yaml` 83 格合计 521、`total_min` 500，文件头注明待依 Phase 1 线上分布修订）：`validate` 静态校验通过后输出格子 have/want、拒答三来源、陷阱四组、补写清单；`--strict-coverage` 才改退出码，`--color auto|always|never`，`--coverage-targets` 换目标。不含 holdout（只数文件）与 user_sim。
+- 当前：218 条 / 500；220 槽缺 395 条；拒答 27.5%（KB_MISS 11/30、DATA_MISSING 30/40、OUT_OF_SCOPE 18/30）；陷阱 1.8%（overdose 4，其余 0）。全量输出与补写清单见 `docs/p2/L1-覆盖报表-初版.md`。
+- capability：`eval/suites/capability/` 两条草拟样本（KB_MISS、OUT_OF_SCOPE）；`cmd/eval graduate [--apply]`，SQL 照抄 §6.2（`store/graduate.go`，IN 列表按 500 分批）；`--apply` 只改 `suite:` 一行、不升 version、目标已存在不覆盖、不做 git 操作。
+- 顺带：`cmd/eval/kbdump.go` 的 stage 读取改用 `sample.PhenologyStage`（与 strata 同源，去重）。
+- 偏离：生产结构 `knowledge.Taxonomy` 多了 `Stages` / `SampleTags` 字段（taxonomy.yaml 严格解析需要），生产代码不读。
+- 集成测试（调度方主仓跑）：`TestGraduate_Integration`、`TestGraduate_VersionMismatch_Integration`（专用库 `{ns}_agri_eval_grad_it`，本地 `p2l1t` 已过）；`TestRun_CapabilitySuite_Integration` 写共享 agri_eval 与 MinIO，本层未跑。
+- 待专家：targets.yaml 各格目标、2 条 capability 样本、陷阱组专家署名；参考解过打分器（§6.2 验收 1）不在本层范围，仓库暂无 `reference_solution`。
+
+### P2-L1 样本撰写（2026-11-03 ~ 04，四个样本子 agent）
+
+- 分支：`p2-l1s-prot` 31946e2、`p2-l1s-fert` 8b311c2、`p2-l1s-irri` b8b1756、`p2-l1s-disa` c2d19c2，均基于 `p2-l1s-base`（= L1-T + 简报 `docs/briefs/P2-L1-samples.md`）。公开 capability 317 条：protect 104、fertilize 76、irrigate 74、disaster 63（`eval/suites/capability/<分类>/`）。
+- holdout 78 条：protect 25、fertilize 19、irrigate 18、disaster 16，按 topic × difficulty 约 1/5 预留，只写私有仓 `~/Desktop/crops-holdout/<分类>/`（`suite: holdout`），调度方在该仓提交 3464e86，从未进入 `eval/suites/`。
+- 全部样本 `author: claude-draft`、`review_status: pending_expert`。
+- 撰写中发现的被测系统缺口（只记录，未改代码；样本按知识库正确答案写，现阶段在 capability 里失败属预期）：
+  - irrigate：规则不看 72 h 降雨预报、分蘖末晒田时机、高温深水；水层深度分支给固定值；知识库缺秧苗期灌溉、灌浆期 cm 数值、水质。
+  - protect：纹枯病兑水量知识库 45–60 L/亩、代码 30 L/亩（归 L5）；识别类问题一律返回「观察类」；未登记药剂不告警；安全间隔期问题走成 KB_MISS；没有禁限用药清单与过期字段。
+  - disaster：灾害条目不按生育期过滤；秧苗 / 返青期冷害走 DATA_MISSING 而非 KB_MISS；水淹后施肥不看生育期；没有预警时台风问题走 DATA_MISSING；关键词缺口（「倒了一片」「连阴雨」）。
+  - fertilize：`product_in` 只对照农药登记表；没有整季施肥规划路径；样本格式没有「部分拒答」。
+
+### P2-L1 调度方合并验证（2026-11-04）
+
+- 合并：`p2-l1-merge` = main d0673ed + `p2-l1s-base`（L1-T，冲突只在 cmd/eval/main.go 子命令表、eval/README.md、dev-log，两边保留）+ 四个样本分支（无冲突）。
+- 合并修正：
+  - `rice-p2-disa-0052` 的他场地块 `field-205` 不在种子里（`TestCrossFarmSamples_UseSeededForeignFarm` 失败），改为种子他场 `field-202`，未升 version（样本尚未进任何实验）。
+  - `internal/agent/graph` 的样本级测试（`TestRegression_Samples`、`TestConstraint_Samples` 等）原先加载全部套件，capability 样本在桩模型下的能力缺口被当成红线失败。改为 `loadSamples` 跳过 `suite: capability`：capability 只经 graduate 进 regression 后才受红线约束（路线 §6.2 第 5 条）。regression / redteam / constraint 覆盖不变。
+  - 硬编码计数测试随样本数更新：`TestRun_ExitCodes` 218 → 535；`TestValidate_Coverage` 不再断言总数不足（总数已达标），strict 断言改为匹配「coverage below target: 」。
+  - `TestRun_CapabilitySuite_Integration` 注释更正：它写 TestMain 建的隔离评测库，不写共享 agri_eval。
+- validate：公开 535 条 OK（capability 319、constraint 40、redteam 39、regression 137；拒答 26.7%；陷阱 12.1%，四组 15 / 17 / 17 / 16）。公开侧补写清单剩 78 格各缺 1 条，正好是 holdout 预留的 78 条；临时目录里把 holdout 当公开样本计数时 613 条、补写清单 0。公开 + holdout 拷贝（`suite: holdout` 原样）一起 validate：613 条 OK。
+- 桩模型下 capability 能力缺口（graph harness 统计，不阻断）：317 条里 65 条有红线打分器失败（disaster 22、fertilize 22、protect 11、irrigate 10），主要是 citation_valid、numbers_match_calc、KB_MISS 拒答。与上节缺口清单一致，留给 L4 / L5。
+- 测试：`go build / vet / vet -tags integration / test ./...` 通过；`AS_TEST_NS=p2l1m make test-integration` 41 包通过（含 TestGraduate_Integration、TestGraduate_VersionMismatch_Integration、TestRun_CapabilitySuite_Integration）；service / repository `-p 1 -race`（p2l1mr）通过。
+- 评测：`make eval SUITE=regression,redteam N=5` → exp 106（1b83c3a）170 样本 / 850 trial 全 PASS，grader_error 0、infra_error 0，redteam pass^5 = 1.00，Gate 0 #1 #2 #5 通过；samples_hash 仍为 `4af24c28…a688`（L1 元数据回填不改哈希）。`compare --baseline baseline_p1 --candidate 106 --fail-on-unreleasable` → 无差异因子、配对 170 / 排除 0、`NO_SIGNIFICANT_DIFF`、可放行。
+- §6.2 验收：1 部分满足（535 ≥ 500、validate 全过；参考解过打分器未做，仓库无 reference_solution）；2 部分满足（拒答 ≥ 20%、四类陷阱成组；公开侧 78 格低于目标由 holdout 补齐，需 L2 授权读者计入；专家署名待办）；3 满足（`pii_clean` 扫描全部样本文件通过，含 holdout）。
+- 待办：L2 让覆盖报表在授权读者下把 holdout 计入格子；专家审核 395 条 claude-draft 样本与 targets.yaml；graduate 的自动开 PR 未做（命令只移动文件）。
+
+### P2-L1 只读评审与修复（2026-11-04）
+
+- 评审（只读子 agent，范围：graduate、pii_clean 例外、分层与陷阱规则、覆盖报表 holdout、graph 跳过 capability、archtest）：无 P0。分层规则、`--strict-coverage` 退出码、graph 跳过 capability（d0673ed 时 capability 为 0 条，regression / redteam / constraint 137 / 39 / 40 不变）、archtest 均确认无问题。
+- 已修（每项先补应失败测试）：
+  - P1 pii_clean 例外可被滥用：声明 `"1"` 这类短值会把行内所有 `1` 换成占位符、拆散真手机号。改为声明值本身须被 `piiclean.Detect` 检出才豁免（synthetic_pii 不是敏感值时直接报违规），且只替换两侧不是数字的完整出现。
+  - P1 graduate 不看 trial 数：路线原文 SQL 只要求「3 次 + 零失败」，3 次 `--n 1` 的 nightly 也能毕业。SQL 改为内层按 (样本, 版本, 实验) 要求 `COUNT(DISTINCT trial_index) >= store.GraduateTrials`（5）且零失败，外层要求 3 次；新增 `TestGraduate_TooFewTrials_Integration`。
+  - P2 graduate 同 id 两个文件会混算 trial：`cmdGraduate` 遇重复 id 失败关闭（不连库）。
+  - P2 `--apply` 可能移到一半中止：移动前预检全部目标路径；删源文件失败时撤回目标文件。
+  - P2 graph `loadSamples` 丢弃解析问题：有解析失败即 `t.Fatal`，不让坏样本悄悄退出红线测试。
+- 转交 L7-a：`make eval-nightly` 不带 `--trigger nightly`、不含 capability，graduate 永远 0 个可毕业；nightly n 须 ≥ 5。
+- 转交 L2：挂载 holdout 后 `sample.LoadDir` 会解析 holdout 内容（validate / run / graduate / kbdump / graph 测试都会读到，pii_clean 消息会带出命中值）；`coverage/count.go` 对 holdout/ 下 suite 字段不符的文件重复计数。
+- 未修（记待办）：quarantined 样本计入覆盖目标（README 已说明）；pii_clean 按 YAML 原文行扫描，折叠标量跨行或 `\u` 转义写法会漏，后续改为同时扫解码后的字段；`targets.yaml` 允许三档目标全 0 的格子；trap 的纠正结论检查未要求 `outcome=ADVICE`。
+- 验证：`go build / vet / test`（graph、evalkit/...、cmd/eval、archtest）通过；`AS_TEST_NS=p2l1rv` 跑 cmd/eval graduate 集成测试 3 条通过。

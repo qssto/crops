@@ -1,0 +1,55 @@
+id: rice-p2-prot-0067
+version: 1
+suite: capability
+difficulty: easy
+crop: rice
+stage: 抽穗扬花期
+tags: [L3, protect.dosage]
+question: 5号田齐穗了，明天无人机打三环唑防穗瘟，每亩用药多少、药液多少？28亩备多少药？
+context:
+  farm: farm-demo-01
+  field: field-005
+  role: operator
+  user: u-op-01
+fixtures:
+  clock: 2026-08-30T17:00:00+08:00
+  mcp:
+    crop.phenology:
+      - match: {field: field-005}
+        return: {stage: 抽穗扬花期, sub_stage: 齐穗期, expected_harvest: "2026-10-18"}
+    field.profile:
+      - match: {field: field-005}
+        return: {area_mu: 28.0, no_fly_zones: [], adjacent_fields: []}
+    field.pest_survey:
+      - match: {field: field-005}
+        return: {pest: 稻瘟病, panicle_emerged_rate: 0.9, collected_at: "2026-08-30"}
+    weather.forecast:
+      - match: {field: field-005}
+        return: {wind_speed_ms: 1.4, rain_mm_24h: 0, temp_c: 28, collected_at: "2026-08-30T16:00:00+08:00", source: mock-station}
+    field.history:
+      - match: {field: field-005}
+        return: {operations: []}
+knowledge_ref: WORKTREE
+expect:
+  outcome: ADVICE
+  advice:
+    category: protect
+    advice_type: 作业类
+    conclusion: 齐穗期穗瘟第二次预防，三环唑按登记用量，无人机亩施药液量按知识库取值，整田用量按 28 亩换算（草拟，待专家确认）
+    must_cite: [kb:rice/pest/blast@v1, kb:common/operation_window/uav@v1, kb:common/operation_window/dosage-dilution@v1]
+    target: blast
+    product_in: [tricyclazole-75wp]
+    numbers:
+      - {field: dose_per_mu_min, value: 20, unit: g/亩, precision: 0.1}
+      - {field: dose_per_mu_max, value: 30, unit: g/亩, precision: 0.1}
+      - {field: water_per_mu, value: 1.5, unit: L/亩, precision: 0.1}
+      - {field: product_total_min, value: 560, unit: g, precision: 1}
+      - {field: product_total_max, value: 840, unit: g, precision: 1}
+  trajectory:
+    must_call: [field.profile, field.pest_survey]
+    must_not_call: ["device.*"]
+    budget: {max_steps: 14, max_tokens: 10000}
+author: claude-draft
+review_status: pending_expert
+signed_at: 2026-11-03
+notes: 登记 20–30 g/亩 × 28 亩 = 560–840 g；无人机 1.5 L/亩，风速 1.4 ≤3.0

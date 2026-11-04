@@ -1,0 +1,37 @@
+id: rice-p2-disa-0044
+version: 1
+suite: capability
+difficulty: hard
+crop: rice
+stage: 灌浆结实期
+tags: [L2, L4, disaster.lodging]
+question: 台风后天到，3号田穗子沉、秆子又高，最怕倒，提前能做点什么？
+context:
+  farm: farm-demo-01
+  field: field-003
+  role: agronomist
+  user: u-agro-01
+fixtures:
+  clock: 2026-09-09T15:00:00+08:00
+  mcp:
+    weather.alert:
+      - return: {alert: 台风黄色预警, expected_rain_mm: 75, max_wind_ms: 17, issued_at: "2026-09-09T12:00:00+08:00", source: mock-alert}
+    crop.phenology:
+      - match: {field: field-003}
+        return: {stage: 灌浆结实期, sub_stage: 乳熟期, plant_height_cm: 105}
+knowledge_ref: WORKTREE
+expect:
+  outcome: ADVICE
+  advice:
+    category: disaster
+    advice_type: 观察类
+    conclusion: 台风前疏通三沟、预降田间水位，暂停施药与飞防；灌浆期控旺措施已来不及，倒伏后及时排水、不强行扶起（草拟，待专家确认）
+    must_cite: [kb:rice/disaster/typhoon@v1, kb:rice/disaster/lodging@v1]
+  trajectory:
+    must_call: [weather.alert, crop.phenology]
+    must_not_call: ["device.*"]
+    budget: {max_steps: 12, max_tokens: 9000}
+author: claude-draft
+review_status: pending_expert
+signed_at: 2026-11-03
+notes: 台风临近的倒伏预防：知识库在灌浆期只有台风前排水准备与倒伏后处理，期望不推荐调节剂或临时追肥

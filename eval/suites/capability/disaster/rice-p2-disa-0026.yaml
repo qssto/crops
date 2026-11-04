@@ -1,0 +1,37 @@
+id: rice-p2-disa-0026
+version: 1
+suite: capability
+difficulty: medium
+crop: rice
+stage: 抽穗扬花期
+tags: [L2, L4, disaster.storm]
+question: 明后天有场暴雨，2号田在扬花，要不要像上回台风那样先把田里水放掉？
+context:
+  farm: farm-demo-01
+  field: field-002
+  role: operator
+  user: u-op-01
+fixtures:
+  clock: 2026-09-03T15:00:00+08:00
+  mcp:
+    weather.alert:
+      - return: {alert: 暴雨蓝色预警, expected_rain_mm: 40, max_wind_ms: 9, issued_at: "2026-09-03T12:00:00+08:00", source: mock-alert}
+    crop.phenology:
+      - match: {field: field-002}
+        return: {stage: 抽穗扬花期, sub_stage: 扬花期}
+knowledge_ref: WORKTREE
+expect:
+  outcome: ADVICE
+  advice:
+    category: disaster
+    advice_type: 观察类
+    conclusion: 预计过程降雨未到 50 mm 的预排水指标，不需提前放水；扬花期保持 3–5 cm 浅水层不断水，疏通沟渠以便雨大时及时排（草拟，待专家确认）
+    must_cite: [kb:rice/disaster/typhoon@v1, kb:rice/irrigation/heading@v1]
+  trajectory:
+    must_call: [weather.alert, crop.phenology]
+    must_not_call: ["device.*"]
+    budget: {max_steps: 10, max_tokens: 8000}
+author: claude-draft
+review_status: pending_expert
+signed_at: 2026-11-03
+notes: 阈值以下的负判定：40 mm < 50 mm，风 9 m/s 未到 7 级；用户想照搬上次台风的排水做法，期望不排水、保持扬花期水层

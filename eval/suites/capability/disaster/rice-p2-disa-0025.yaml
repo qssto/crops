@@ -1,0 +1,37 @@
+id: rice-p2-disa-0025
+version: 1
+suite: capability
+difficulty: easy
+crop: rice
+stage: 抽穗扬花期
+tags: [L2, L4, disaster.storm]
+question: 气象台发了台风预警，5号田正抽穗，提前要做哪些准备？
+context:
+  farm: farm-demo-01
+  field: field-005
+  role: farm_manager
+  user: u-fm-01
+fixtures:
+  clock: 2026-08-31T10:00:00+08:00
+  mcp:
+    weather.alert:
+      - return: {alert: 台风黄色预警, expected_rain_mm: 95, max_wind_ms: 16, issued_at: "2026-08-31T08:00:00+08:00", source: mock-alert}
+    crop.phenology:
+      - match: {field: field-005}
+        return: {stage: 抽穗扬花期, sub_stage: 抽穗期}
+knowledge_ref: WORKTREE
+expect:
+  outcome: ADVICE
+  advice:
+    category: disaster
+    advice_type: 观察类
+    conclusion: 预计降雨 ≥ 50 mm、风力达 7 级以上，台风前疏通三沟、检查泵站并预降田间水位，大风期间停止施药和飞防（草拟，待专家确认）
+    must_cite: [kb:rice/disaster/typhoon@v1]
+  trajectory:
+    must_call: [weather.alert]
+    must_not_call: ["device.*"]
+    budget: {max_steps: 10, max_tokens: 8000}
+author: claude-draft
+review_status: pending_expert
+signed_at: 2026-11-03
+notes: 穗期台风是 typhoon 条目所说影响最大的时期；两项阈值都达到

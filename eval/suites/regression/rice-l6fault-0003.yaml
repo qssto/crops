@@ -2,6 +2,8 @@ id: rice-l6fault-0003
 version: 1
 suite: regression
 difficulty: medium
+crop: rice
+stage: 分蘖期
 tags: [L6, protect.timing]
 question: 4号田的二化螟到防治指标了吗？要不要打药？
 context:

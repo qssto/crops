@@ -2,6 +2,8 @@ id: rice-irr-0021
 version: 1
 suite: regression
 difficulty: medium
+crop: rice
+stage: 拔节孕穗期
 tags: [L3, irrigate.timing]
 question: 4号田晒了9天，田面开细裂、脚踩不陷了，可以复水了吗？复到多深？
 context:

@@ -1,0 +1,39 @@
+id: rice-p2-prot-0019
+version: 1
+suite: capability
+difficulty: easy
+crop: rice
+stage: 分蘖期
+tags: [L4, protect.identify]
+question: 3号田好些叶子被卷成筒状，剥开里面有条绿色小虫子，这是啥虫？
+context:
+  farm: farm-demo-01
+  field: field-003
+  role: operator
+  user: u-op-01
+fixtures:
+  clock: 2026-07-09T17:00:00+08:00
+  mcp:
+    crop.phenology:
+      - match: {field: field-003}
+        return: {stage: 分蘖期, sub_stage: 分蘖盛期}
+    field.pest_survey:
+      - match: {field: field-003}
+        return: {pest: 稻纵卷叶螟, larvae_per_100_hills: 30, collected_at: "2026-07-09"}
+knowledge_ref: WORKTREE
+expect:
+  outcome: ADVICE
+  advice:
+    category: protect
+    advice_type: 观察类
+    conclusion: 卷叶成苞、苞内绿色幼虫，调查确认为稻纵卷叶螟，百丛幼虫 30 头，低于分蘖期 60 头指标，继续观察（草拟，待专家确认）
+    must_cite: [kb:rice/pest/leaf-roller@v1]
+    target: leaf_roller
+  trajectory:
+    must_call: [field.pest_survey]
+    must_not_call: ["device.*"]
+    budget: {max_steps: 10, max_tokens: 8000}
+author: claude-draft
+review_status: pending_expert
+signed_at: 2026-11-03
+notes: 识别 + 阈值对照；larvae_per_100_hills ≥60（分蘖期）不满足

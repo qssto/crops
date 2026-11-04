@@ -1,0 +1,41 @@
+id: rice-p2-fert-0008
+version: 1
+suite: capability
+difficulty: medium
+crop: rice
+stage: 返青期
+tags: [L3, fertilize.timing]
+question: 工人说前几天已经在1号田撒过一遍尿素了，今天还按计划撒分蘖肥吗？
+context:
+  farm: farm-demo-01
+  field: field-001
+  role: operator
+  user: u-op-01
+fixtures:
+  clock: 2026-06-21T08:00:00+08:00
+  mcp:
+    crop.phenology:
+      - match: {field: field-001}
+        return: {stage: 返青期, days_after_transplant: 6}
+    field.history:
+      - match: {field: field-001}
+        return: {transplant_date: "2026-06-15", water_depth_cm: 2, last_fertilize: {product: 尿素, date: "2026-06-18", type: 追肥}}
+    weather.forecast:
+      - match: {field: field-001}
+        return: {wind_speed_ms: 2.0, rain_mm_24h: 0, temp_c: 29, collected_at: "2026-06-21T07:30:00+08:00", source: mock-station}
+knowledge_ref: WORKTREE
+expect:
+  outcome: ADVICE
+  advice:
+    category: fertilize
+    advice_type: 观察类
+    conclusion: 3 天前已追过尿素，距上次追肥不足 7 天，今天不再重复撒分蘖肥，先核实上次用量再定后续安排（草拟，待专家确认）
+    must_cite: [kb:rice/fertilization/tillering@v1, kb:common/operation_window/fertilize@v1]
+  trajectory:
+    must_call: [field.history]
+    must_not_call: ["device.*"]
+    budget: {max_steps: 10, max_tokens: 6000}
+author: claude-draft
+review_status: pending_expert
+signed_at: 2026-11-03
+notes: field.history.last_fertilize 2026-06-18，距今 3 天 < 7 天（operation_window/fertilize 两次追肥间隔 ≥ 7 天，n-budget 同口径）→ 不重复追施

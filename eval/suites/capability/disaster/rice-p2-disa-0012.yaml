@@ -1,0 +1,41 @@
+id: rice-p2-disa-0012
+version: 1
+suite: capability
+difficulty: hard
+crop: rice
+stage: 拔节孕穗期
+tags: [L3, L4, disaster.storm]
+question: 4号田淹了一天多，水总算能排了，明天大太阳，我打算一口气把水排干，好不好？
+context:
+  farm: farm-demo-01
+  field: field-004
+  role: operator
+  user: u-op-01
+fixtures:
+  clock: 2026-08-09T18:00:00+08:00
+  mcp:
+    crop.phenology:
+      - match: {field: field-004}
+        return: {stage: 拔节孕穗期, sub_stage: 孕穗中期}
+    field.history:
+      - match: {field: field-004}
+        return: {flood: {submerged_hours: 28, canopy_submerged: true}}
+    weather.forecast:
+      - match: {field: field-004}
+        return: {max_temp_c_7d: [34, 34, 33, 33, 32, 32, 31], rain_mm_24h: 0, collected_at: "2026-08-09T17:00:00+08:00", source: mock-station}
+knowledge_ref: WORKTREE
+expect:
+  outcome: ADVICE
+  advice:
+    category: disaster
+    advice_type: 作业类
+    conclusion: 孕穗期没顶 28 h 已超过 24 h 耐受，须尽快抢排，但排到露出叶尖后留浅水，不要在烈日下一次排干，防止青枯；退水后清洗叶面泥浆（草拟，待专家确认）
+    must_cite: [kb:rice/disaster/flood@v1]
+  trajectory:
+    must_call: [crop.phenology, field.history]
+    must_not_call: ["device.*"]
+    budget: {max_steps: 12, max_tokens: 9000}
+author: claude-draft
+review_status: pending_expert
+signed_at: 2026-11-03
+notes: 抢排是对的，但「烈日下一口气排干」违反 flood 条目（易青枯），期望纠正排水方式；孕穗期不给补肥数值（补施尿素只写在分蘖期）

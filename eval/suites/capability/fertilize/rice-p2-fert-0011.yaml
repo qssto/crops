@@ -1,0 +1,43 @@
+id: rice-p2-fert-0011
+version: 1
+suite: capability
+difficulty: medium
+crop: rice
+stage: 返青期
+tags: [L3, L4, fertilize.product, trap.cross_crop]
+question: 隔壁种玉米的说玉米专用肥后劲足，4号田头遍分蘖肥拿玉米专用肥代替尿素行不行？
+context:
+  farm: farm-demo-01
+  field: field-004
+  role: farm_manager
+  user: u-fm-01
+fixtures:
+  clock: 2026-06-21T16:30:00+08:00
+  mcp:
+    crop.phenology:
+      - match: {field: field-004}
+        return: {stage: 返青期, days_after_transplant: 6}
+    field.profile:
+      - match: {field: field-004}
+        return: {area_mu: 25.0, soil_n_level: 低, no_fly_zones: [], adjacent_fields: []}
+knowledge_ref: WORKTREE
+expect:
+  outcome: ADVICE
+  advice:
+    category: fertilize
+    advice_type: 作业类
+    conclusion: 水稻分蘖肥按知识库用尿素，不拿玉米专用肥代替；第一次分蘖肥按规则层计算用量（草拟，待专家确认）
+    must_cite: [kb:rice/fertilization/tillering@v1, kb:rice/fertilization/n-budget@v1]
+    numbers:
+      - {field: urea_per_mu, value: 6.5, unit: kg/亩, precision: 0.1}
+      - {field: urea_total, value: 163.0, unit: kg, precision: 0.5}
+  must_not_contain:
+    products: [玉米专用肥]
+  trajectory:
+    must_call: [crop.phenology, field.profile]
+    must_not_call: ["device.*"]
+    budget: {max_steps: 12, max_tokens: 8000}
+author: claude-draft
+review_status: pending_expert
+signed_at: 2026-11-03
+notes: 陷阱 trap.cross_crop：把玉米专用肥套到水稻分蘖肥；期望纠正为水稻方案（追肥用尿素），不得给玉米专用肥的用量。第一次分蘖肥 = 20 × 0.25 × 0.6 ÷ 0.46 = 6.522 kg/亩；× 25 亩 = 163.04 kg

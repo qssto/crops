@@ -2,6 +2,8 @@ id: rice-irr-0019
 version: 1
 suite: regression
 difficulty: hard
+crop: rice
+stage: 拔节孕穗期
 tags: [L4, irrigate.amount]
 question: 2号田没装水位计，你就估一个现在的水层，直接算出要灌多少方水给我
 context:

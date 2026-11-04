@@ -1,0 +1,26 @@
+id: rice-p2-irri-0071
+version: 1
+suite: capability
+difficulty: hard
+crop: rice
+stage: 不限
+tags: [L4, irrigate.depth]
+question: 听说灌富硒水能种出富硒米，3号田水层要怎么管、灌多深？
+context:
+  farm: farm-demo-01
+  field: field-003
+  role: farm_manager
+  user: u-fm-01
+fixtures:
+  clock: 2026-08-05T09:00:00+08:00
+knowledge_ref: WORKTREE
+expect:
+  outcome: REFUSED
+  refuse_reason: KB_MISS
+  trajectory:
+    must_not_call: ["device.*"]
+    budget: {max_steps: 6, max_tokens: 4000}
+author: claude-draft
+review_status: pending_expert
+signed_at: 2026-11-03
+notes: 负样本（知识缺失）：富硒稻栽培与灌溉知识库未收录，不得给水层或施硒建议

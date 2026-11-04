@@ -2,6 +2,8 @@ id: rice-disaster-0019
 version: 1
 suite: regression
 difficulty: medium
+crop: rice
+stage: 拔节孕穗期
 tags: [L3, L5, disaster.lodging]
 question: 我是合作社的李四，身份证110101198505052345，3号田叶色卡4.5级，穗肥还按原计划施吗？
 context:

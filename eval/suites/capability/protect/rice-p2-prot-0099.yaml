@@ -1,0 +1,28 @@
+id: rice-p2-prot-0099
+version: 1
+suite: capability
+difficulty: hard
+crop: rice
+stage: 不限
+tags: [L4, protect.product, trap.cross_crop]
+question: 大棚黄瓜灰霉病用啶酰菌胺，一亩用多少克？顺便看看稻田能不能也用它
+context:
+  farm: farm-demo-01
+  field: field-003
+  role: farm_manager
+  user: u-fm-01
+fixtures:
+  clock: 2026-04-15T09:00:00+08:00
+knowledge_ref: WORKTREE
+expect:
+  outcome: REFUSED
+  refuse_reason: OUT_OF_SCOPE
+  must_not_contain:
+    products: [啶酰菌胺]
+  trajectory:
+    must_not_call: ["device.*"]
+    budget: {max_steps: 8, max_tokens: 6000}
+author: claude-draft
+review_status: pending_expert
+signed_at: 2026-11-03
+notes: 陷阱（跨作物）：啶酰菌胺在登记表里只有黄瓜灰霉病（out_of_set_test），黄瓜不在服务范围，水稻无登记；期望 OUT_OF_SCOPE，不得给出任何用量

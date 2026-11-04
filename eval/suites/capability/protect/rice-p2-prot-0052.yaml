@@ -1,0 +1,42 @@
+id: rice-p2-prot-0052
+version: 1
+suite: capability
+difficulty: medium
+crop: rice
+stage: 抽穗扬花期
+tags: [L4, protect.identify, trap.similar_pest]
+question: 2号田一片片白穗，我看是二化螟钻的，但拔了几根拔不出来，穗颈那里是灰褐色的，到底是啥？
+context:
+  farm: farm-demo-01
+  field: field-002
+  role: agronomist
+  user: u-agro-01
+fixtures:
+  clock: 2026-08-31T08:00:00+08:00
+  mcp:
+    crop.phenology:
+      - match: {field: field-002}
+        return: {stage: 抽穗扬花期, sub_stage: 齐穗期}
+    field.pest_survey:
+      - match: {field: field-002}
+        return: {pest: 稻瘟病, symptom: 穗颈瘟, blast_centers: 2, panicle_emerged_rate: 0.4, collected_at: "2026-08-30"}
+    weather.history:
+      - match: {field: field-002}
+        return: {rain_days_7d: 3, collected_at: "2026-08-31T07:00:00+08:00", source: mock-station}
+knowledge_ref: WORKTREE
+expect:
+  outcome: ADVICE
+  advice:
+    category: protect
+    advice_type: 观察类
+    conclusion: 穗颈灰褐、白穗拔不出，调查判为穗颈瘟，不是二化螟虫伤白穗（后者茎内有蛀孔、易拔出）；抽穗率已过 5%，属穗瘟防治时期，需尽快安排防治（草拟，待专家确认）
+    must_cite: [kb:rice/pest/blast@v1]
+    target: blast
+  trajectory:
+    must_call: [field.pest_survey]
+    must_not_call: ["device.*"]
+    budget: {max_steps: 10, max_tokens: 8000}
+author: claude-draft
+review_status: pending_expert
+signed_at: 2026-11-03
+notes: 陷阱（相似病虫害）：穗颈瘟白穗被误认为二化螟；与 0051 方向相反；抽穗期只有 neck-blast-prevent 适用（panicle_emerged_rate 0.4 ≥0.05），叶瘟中心阈值不适用

@@ -1,0 +1,37 @@
+id: rice-p2-disa-0055
+version: 1
+suite: capability
+difficulty: easy
+crop: rice
+stage: 成熟期
+tags: [L2, L4, disaster.storm]
+question: 台风说后天到，6号田稻子已经黄了，下礼拜就收，田里还要准备啥？
+context:
+  farm: farm-demo-01
+  field: field-006
+  role: farm_manager
+  user: u-fm-01
+fixtures:
+  clock: 2026-10-06T09:00:00+08:00
+  mcp:
+    crop.phenology:
+      - match: {field: field-006}
+        return: {stage: 成熟期, sub_stage: 黄熟期, expected_harvest: "2026-10-13"}
+    weather.alert:
+      - return: {alert: 台风蓝色预警, expected_rain_mm: 70, max_wind_ms: 14.5, issued_at: "2026-10-06T07:00:00+08:00", source: mock-alert}
+knowledge_ref: WORKTREE
+expect:
+  outcome: ADVICE
+  advice:
+    category: disaster
+    advice_type: 观察类
+    conclusion: 预计降雨 ≥ 50 mm、风力 7 级以上；台风前疏通三沟、提前排水降低田间水位，暂停施药；成熟期按收获前断水要求，雨后及时排清积水，机收田块尽早落干保证收割机下田（草拟，待专家确认）
+    must_cite: [kb:rice/disaster/typhoon@v1, kb:rice/irrigation/grain-filling@v1]
+  trajectory:
+    must_call: [weather.alert, crop.phenology]
+    must_not_call: ["device.*"]
+    budget: {max_steps: 10, max_tokens: 8000}
+author: claude-draft
+review_status: pending_expert
+signed_at: 2026-11-03
+notes: 成熟期台风前准备：typhoon 条目全生育期适用，配合 grain-filling 收获前断水与机收落干；知识库没有台风前抢收标准，期望不主动建议抢收或给抢收时间

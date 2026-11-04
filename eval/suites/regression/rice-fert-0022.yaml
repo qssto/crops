@@ -2,6 +2,8 @@ id: rice-fert-0022
 version: 1
 suite: regression
 difficulty: medium
+crop: rice
+stage: 分蘖期
 tags: [L3, L5, fertilize.deficiency]
 question: 4号田叶色发黄，叶色卡量了是2.5级，要补肥吗？有结果发我手机13912345678
 context:

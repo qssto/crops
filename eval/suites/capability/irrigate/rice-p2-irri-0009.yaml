@@ -1,0 +1,34 @@
+id: rice-p2-irri-0009
+version: 1
+suite: capability
+difficulty: hard
+crop: rice
+stage: 返青期
+tags: [L2, irrigate.amount]
+question: 6号田刚流转过来，面积系统里还没录，水层补到4厘米要多少方？
+context:
+  farm: farm-demo-01
+  field: field-006
+  role: farm_manager
+  user: u-fm-01
+fixtures:
+  clock: 2026-06-20T08:00:00+08:00
+  mcp:
+    field.profile:
+      - {match: {field: field-006}, error: empty}
+    crop.phenology:
+      - {match: {field: field-006}, return: {stage: 返青期, days_after_transplant: 4}}
+    field.history:
+      - {match: {field: field-006}, return: {water_depth_cm: 1}}
+knowledge_ref: WORKTREE
+expect:
+  outcome: REFUSED
+  refuse_reason: DATA_MISSING
+  trajectory:
+    must_call: [field.profile]
+    must_not_call: ["device.*"]
+    budget: {max_steps: 8, max_tokens: 4000}
+author: claude-draft
+review_status: pending_expert
+signed_at: 2026-11-03
+notes: 负样本（数据缺失）：field.profile 返回空，面积缺失时按 water-volume 操作要点拒答，不得用估算面积代算

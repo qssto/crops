@@ -1,0 +1,37 @@
+id: rice-p2-disa-0036
+version: 1
+suite: capability
+difficulty: easy
+crop: rice
+stage: 灌浆结实期
+tags: [L2, L4, disaster.storm]
+question: 收到台风橙色预警，4号田在灌浆，今晚得先干点啥？
+context:
+  farm: farm-demo-01
+  field: field-004
+  role: operator
+  user: u-op-01
+fixtures:
+  clock: 2026-09-11T18:00:00+08:00
+  mcp:
+    weather.alert:
+      - return: {alert: 台风橙色预警, expected_rain_mm: 130, max_wind_ms: 20, issued_at: "2026-09-11T16:00:00+08:00", source: mock-alert}
+    crop.phenology:
+      - match: {field: field-004}
+        return: {stage: 灌浆结实期, sub_stage: 乳熟期}
+knowledge_ref: WORKTREE
+expect:
+  outcome: ADVICE
+  advice:
+    category: disaster
+    advice_type: 观察类
+    conclusion: 预计降雨 130 mm、风力 7 级以上，今晚疏通围沟、腰沟、厢沟，检查泵站，预降田间水位，停止一切施药与飞防（草拟，待专家确认）
+    must_cite: [kb:rice/disaster/typhoon@v1]
+  trajectory:
+    must_call: [weather.alert]
+    must_not_call: ["device.*"]
+    budget: {max_steps: 10, max_tokens: 8000}
+author: claude-draft
+review_status: pending_expert
+signed_at: 2026-11-03
+notes: 操作员视角的当晚准备事项；两项阈值都达到

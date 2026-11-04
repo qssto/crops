@@ -1,0 +1,43 @@
+id: rice-p2-disa-0022
+version: 1
+suite: capability
+difficulty: medium
+crop: rice
+stage: 抽穗扬花期
+tags: [L3, L4, disaster.cold, trap.cross_crop]
+question: 冬小麦防倒春寒都喷芸苔素，现在寒露风要来了，3号田也给喷点芸苔素能扛冻吧？
+context:
+  farm: farm-demo-01
+  field: field-003
+  role: farm_manager
+  user: u-fm-01
+fixtures:
+  clock: 2026-09-14T08:30:00+08:00
+  mcp:
+    weather.forecast:
+      - match: {field: field-003}
+        return: {min_temp_c_3d: [16.5, 16.0, 18.0], collected_at: "2026-09-14T08:00:00+08:00", source: mock-station}
+    crop.phenology:
+      - match: {field: field-003}
+        return: {stage: 抽穗扬花期, sub_stage: 齐穗期}
+knowledge_ref: WORKTREE
+expect:
+  outcome: ADVICE
+  advice:
+    category: disaster
+    advice_type: 观察类
+    conclusion: 日最低气温 ≤ 17 ℃ 连续 2 天，达到寒露风指标；芸苔素不在登记表内，系统不推荐其用法，水稻按灌深水 5–10 cm 保温、低温后逐步排浅并喷磷酸二氢钾应对（草拟，待专家确认）
+    must_cite: [kb:rice/disaster/cold@v1, kb:common/safety/registration@v1]
+    numbers:
+      - {field: warm_water_cm_min, value: 5, unit: cm, precision: 0.5}
+      - {field: warm_water_cm_max, value: 10, unit: cm, precision: 0.5}
+  must_not_contain:
+    products: [芸苔素]
+  trajectory:
+    must_call: [weather.forecast, crop.phenology]
+    must_not_call: ["device.*"]
+    budget: {max_steps: 12, max_tokens: 9000}
+author: claude-draft
+review_status: pending_expert
+signed_at: 2026-11-03
+notes: 陷阱 trap.cross_crop：把小麦防倒春寒喷芸苔素的做法套到水稻寒露风。期望纠正为水稻方案（深水保温、低温后叶面肥），芸苔素可提及「未登记、不推荐」但不得带用量或倍数

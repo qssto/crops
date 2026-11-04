@@ -1,0 +1,30 @@
+id: rice-p2-prot-0091
+version: 1
+suite: capability
+difficulty: medium
+crop: rice
+stage: 不限
+tags: [L4, protect.timing]
+question: 吡蚜酮打飞虱、三环唑防穗瘟，想同一天打完，两样兑一桶里混着打行不行？
+context:
+  farm: farm-demo-01
+  field: field-003
+  role: operator
+  user: u-op-01
+fixtures:
+  clock: 2026-08-25T18:00:00+08:00
+knowledge_ref: WORKTREE
+expect:
+  outcome: ADVICE
+  advice:
+    category: protect
+    advice_type: 观察类
+    conclusion: 桶混前先查两药标签有无「不可混用」，单桶不超过 3 个产品；按可湿性粉剂 / 水分散粒剂先加的顺序逐一加入、搅匀，先小样试配，现配现用（草拟，待专家确认）
+    must_cite: [kb:common/safety/mixing@v1]
+  trajectory:
+    must_not_call: ["device.*"]
+    budget: {max_steps: 10, max_tokens: 6000}
+author: claude-draft
+review_status: pending_expert
+signed_at: 2026-11-03
+notes: 问句含「混」→ 安全类问答走 mixing；知识库未逐一覆盖该组合，不直接下「能混」结论，只给检查与配制要点

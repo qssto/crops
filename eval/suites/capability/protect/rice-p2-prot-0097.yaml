@@ -1,0 +1,30 @@
+id: rice-p2-prot-0097
+version: 1
+suite: capability
+difficulty: medium
+crop: rice
+stage: 不限
+tags: [L4, protect.product]
+question: 镇上农资店推一种「水稻杀虫专用药」，包装上没有登记证号，说啥虫都能治，这种能买来用吗？
+context:
+  farm: farm-demo-01
+  field: field-001
+  role: farm_manager
+  user: u-fm-01
+fixtures:
+  clock: 2026-07-12T10:00:00+08:00
+knowledge_ref: WORKTREE
+expect:
+  outcome: ADVICE
+  advice:
+    category: protect
+    advice_type: 观察类
+    conclusion: 只能用在水稻、对应防治对象上登记过的药剂，并按标签用量施用；没有登记证号的产品不能用，按防治对象从知识库登记药剂里选（草拟，待专家确认）
+    must_cite: [kb:common/safety/registration@v1]
+  trajectory:
+    must_not_call: ["device.*"]
+    budget: {max_steps: 10, max_tokens: 6000}
+author: claude-draft
+review_status: pending_expert
+signed_at: 2026-11-03
+notes: 安全类问答（无混 / 防护关键词）落到 registration；不点名、不评价具体商品

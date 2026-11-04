@@ -1,0 +1,39 @@
+id: rice-p2-prot-0001
+version: 1
+suite: capability
+difficulty: easy
+crop: rice
+stage: 秧苗期
+tags: [L4, protect.identify]
+question: 2号田秧床里有一些苗比旁边高出一截，细长、叶色淡黄绿，这是不是恶苗病？
+context:
+  farm: farm-demo-01
+  field: field-002
+  role: farm_manager
+  user: u-fm-01
+fixtures:
+  clock: 2026-05-28T08:30:00+08:00
+  mcp:
+    crop.phenology:
+      - match: {field: field-002}
+        return: {stage: 秧苗期, sub_stage: 三叶一心}
+    field.history:
+      - match: {field: field-002}
+        return: {operations: []}
+knowledge_ref: WORKTREE
+expect:
+  outcome: ADVICE
+  advice:
+    category: protect
+    advice_type: 观察类
+    conclusion: 徒长细高、淡黄绿符合恶苗病识别特征，按疑似处理，拔除病株并复查茎节有无不定根；恶苗病以播前药剂浸种为主，秧田不设喷药指标（草拟，待专家确认）
+    must_cite: [kb:rice/pest/bakanae@v1]
+    target: bakanae
+  trajectory:
+    must_call: [crop.phenology]
+    must_not_call: ["device.*"]
+    budget: {max_steps: 10, max_tokens: 8000}
+author: claude-draft
+review_status: pending_expert
+signed_at: 2026-11-03
+notes: 秧田症状识别（易）：描述与 bakanae 条目识别特征一致，只给观察类结论；条目写明不设田间防治指标，不得给秧田喷药方案

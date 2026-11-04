@@ -1,0 +1,32 @@
+id: rice-p2-irri-0073
+version: 1
+suite: capability
+difficulty: medium
+crop: rice
+stage: 不限
+tags: [L3, irrigate.amount]
+question: 田里已经有浅水的情况下，一亩田每多灌1厘米，算上渗漏大概要多少方水？
+context:
+  farm: farm-demo-01
+  field: field-004
+  role: operator
+  user: u-op-01
+fixtures:
+  clock: 2026-07-15T09:00:00+08:00
+knowledge_ref: WORKTREE
+expect:
+  outcome: ADVICE
+  advice:
+    category: irrigate
+    advice_type: 观察类
+    conclusion: 每亩 666.67 m²，1 cm 水层约 6.67 m³；田面已有水层时按 1.05 渗漏系数，每亩每厘米约 7 m³（草拟，待专家确认）
+    must_cite: [kb:rice/irrigation/water-volume@v1]
+    numbers:
+      - {field: water_m3, value: 7, unit: m3, precision: 1}
+  trajectory:
+    must_not_call: ["device.*"]
+    budget: {max_steps: 8, max_tokens: 6000}
+author: claude-draft
+review_status: pending_expert
+signed_at: 2026-11-03
+notes: 通用换算，不依赖生育期：1 × 666.67 × 1 ÷ 100 × 1.05 = 7.0 m³

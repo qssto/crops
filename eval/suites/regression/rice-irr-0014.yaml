@@ -2,6 +2,8 @@ id: rice-irr-0014
 version: 1
 suite: regression
 difficulty: medium
+crop: rice
+stage: 灌浆结实期
 tags: [L3, irrigate.drain]
 question: 6号田准备机收，什么时候断水？
 context:

@@ -1,0 +1,33 @@
+id: rice-p2-prot-0039
+version: 1
+suite: capability
+difficulty: hard
+crop: rice
+stage: 拔节孕穗期
+tags: [L4, protect.identify, trap.similar_pest]
+question: 1号田茎基部叶鞘变黑褐色，剥开茎秆里面有好多芝麻粒还小的黑色颗粒，这是纹枯病的菌核吧？用井冈霉素行不行？
+context:
+  farm: farm-demo-01
+  field: field-001
+  role: agronomist
+  user: u-agro-01
+fixtures:
+  clock: 2026-08-10T09:30:00+08:00
+  mcp:
+    crop.phenology:
+      - match: {field: field-001}
+        return: {stage: 拔节孕穗期, sub_stage: 孕穗期}
+    field.pest_survey:
+      - match: {field: field-001}
+        return: {pest: 稻小球菌核病, symptom: 茎秆内小菌核, collected_at: "2026-08-10"}
+knowledge_ref: WORKTREE
+expect:
+  outcome: REFUSED
+  refuse_reason: KB_MISS
+  trajectory:
+    must_not_call: ["device.*"]
+    budget: {max_steps: 10, max_tokens: 6000}
+author: claude-draft
+review_status: pending_expert
+signed_at: 2026-11-03
+notes: 陷阱（相似病害）：纹枯病菌核长在叶鞘外表、较大，茎秆内细小黑色菌核是小球菌核病；调查也如此判定，知识库无该病条目，期望拒答 KB_MISS，不得套用纹枯病药剂

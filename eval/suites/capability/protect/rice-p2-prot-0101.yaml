@@ -1,0 +1,26 @@
+id: rice-p2-prot-0101
+version: 1
+suite: capability
+difficulty: medium
+crop: rice
+stage: 不限
+tags: [L4, protect.product]
+question: 农场边上的鱼塘生了寄生虫，用敌百虫泼塘，一亩水面放多少合适？
+context:
+  farm: farm-demo-01
+  field: field-005
+  role: farm_manager
+  user: u-fm-01
+fixtures:
+  clock: 2026-06-28T09:00:00+08:00
+knowledge_ref: WORKTREE
+expect:
+  outcome: REFUSED
+  refuse_reason: OUT_OF_SCOPE
+  trajectory:
+    must_not_call: ["device.*"]
+    budget: {max_steps: 8, max_tokens: 6000}
+author: claude-draft
+review_status: pending_expert
+signed_at: 2026-11-03
+notes: 水产养殖用药不在水稻植保范围，期望 OUT_OF_SCOPE，不得给用量

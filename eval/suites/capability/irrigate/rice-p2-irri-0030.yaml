@@ -1,0 +1,41 @@
+id: rice-p2-irri-0030
+version: 1
+suite: capability
+difficulty: hard
+crop: rice
+stage: 拔节孕穗期
+tags: [L4, irrigate.timing, disaster.cold]
+question: 预报说后天开始连着两三天日均温只有16度，3号田正好在孕穗，什么时候灌深水、灌多深？
+context:
+  farm: farm-demo-01
+  field: field-003
+  role: agronomist
+  user: u-agro-01
+fixtures:
+  clock: 2026-08-10T09:00:00+08:00
+  mcp:
+    crop.phenology:
+      - {match: {field: field-003}, return: {stage: 拔节孕穗期, sub_stage: 孕穗期}}
+    weather.forecast:
+      - {match: {field: field-003}, return: {rain_mm_72h: 5, temp_c: 22, mean_temp_c_forecast: [16, 16, 17], collected_at: "2026-08-10T08:00:00+08:00", source: mock-station}}
+    field.history:
+      - {match: {field: field-003}, return: {water_depth_cm: 3}}
+knowledge_ref: WORKTREE
+expect:
+  outcome: ADVICE
+  advice:
+    category: irrigate
+    advice_type: 作业类
+    conclusion: 孕穗期日均温 ≤ 17 ℃ 持续 2 天即达低温防御指标，降温前一天灌深水 5–10 cm 保温，低温过后逐步排浅到 3–5 cm，不急排（草拟，待专家确认）
+    must_cite: [kb:rice/disaster/cold@v1, kb:rice/irrigation/heading@v1]
+    numbers:
+      - {field: depth_cm_min, value: 5, unit: cm, precision: 0.5}
+      - {field: depth_cm_max, value: 10, unit: cm, precision: 0.5}
+  trajectory:
+    must_call: [crop.phenology, weather.forecast]
+    must_not_call: ["device.*"]
+    budget: {max_steps: 14, max_tokens: 10000}
+author: claude-draft
+review_status: pending_expert
+signed_at: 2026-11-03
+notes: 难点：cold#booting-cold（孕穗期日均温 ≤ 17 ℃ 持续 2 天）→ warm_water_cm 5–10 cm；要在低温来临前灌；规则层水层分支只给 heading 3–5 cm（见回报）

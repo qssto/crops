@@ -2,6 +2,8 @@ id: rice-disaster-0001
 version: 2
 suite: regression
 difficulty: medium
+crop: rice
+stage: 抽穗扬花期
 tags: [L2, L4, disaster.heat]
 question: 下周连续高温，正好赶上5号田抽穗扬花，要怎么防？
 context:

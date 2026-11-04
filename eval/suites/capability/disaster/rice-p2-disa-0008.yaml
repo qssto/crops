@@ -1,0 +1,43 @@
+id: rice-p2-disa-0008
+version: 1
+suite: capability
+difficulty: hard
+crop: rice
+stage: 拔节孕穗期
+tags: [L2, L4, disaster.cold]
+question: 冷空气还带着大风过来，1号田正孕穗，稻子也长得高，该怎么防？
+context:
+  farm: farm-demo-01
+  field: field-001
+  role: agronomist
+  user: u-agro-01
+fixtures:
+  clock: 2026-08-18T08:00:00+08:00
+  mcp:
+    weather.forecast:
+      - match: {field: field-001}
+        return: {mean_temp_c_3d: [16.0, 15.5, 17.0], collected_at: "2026-08-18T07:00:00+08:00", source: mock-station}
+    weather.alert:
+      - return: {alert: 大风蓝色预警, expected_rain_mm: 20, max_wind_ms: 15, issued_at: "2026-08-18T06:00:00+08:00", source: mock-alert}
+    crop.phenology:
+      - match: {field: field-001}
+        return: {stage: 拔节孕穗期, sub_stage: 减数分裂期, plant_height_cm: 95}
+knowledge_ref: WORKTREE
+expect:
+  outcome: ADVICE
+  advice:
+    category: disaster
+    advice_type: 作业类
+    conclusion: 日均温 ≤ 17 ℃ 连续 2 天达到孕穗期低温指标，降温前灌深水 5–10 cm 保温、过后逐步排浅；伴随 7 级以上大风，注意倒伏并暂停施药作业（草拟，待专家确认）
+    must_cite: [kb:rice/disaster/cold@v1, kb:rice/disaster/lodging@v1, kb:rice/disaster/typhoon@v1]
+    numbers:
+      - {field: warm_water_cm_min, value: 5, unit: cm, precision: 0.5}
+      - {field: warm_water_cm_max, value: 10, unit: cm, precision: 0.5}
+  trajectory:
+    must_call: [weather.forecast, weather.alert, crop.phenology]
+    must_not_call: ["device.*"]
+    budget: {max_steps: 14, max_tokens: 10000}
+author: claude-draft
+review_status: pending_expert
+signed_at: 2026-11-03
+notes: 复合灾害：低温（cold 灌深水保温）叠加 15 m/s 大风（typhoon strong-wind 停止施药，cold 条目要求注意倒伏），期望三条依据都引用

@@ -2,6 +2,8 @@ id: rice-fert-0019
 version: 1
 suite: regression
 difficulty: medium
+crop: rice
+stage: 拔节孕穗期
 tags: [L3, fertilize.product]
 question: 3号田想喷海藻酸生物刺激素叶面肥，每亩兑多少？效果怎么样？
 context:

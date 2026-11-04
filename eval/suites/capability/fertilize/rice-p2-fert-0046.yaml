@@ -1,0 +1,41 @@
+id: rice-p2-fert-0046
+version: 1
+suite: capability
+difficulty: easy
+crop: rice
+stage: 拔节孕穗期
+tags: [L3, L4, fertilize.product]
+question: 2号田促花肥撒复合肥好还是撒尿素好？
+context:
+  farm: farm-demo-01
+  field: field-002
+  role: farm_manager
+  user: u-fm-01
+fixtures:
+  clock: 2026-07-25T15:00:00+08:00
+  mcp:
+    crop.phenology:
+      - match: {field: field-002}
+        return: {stage: 拔节孕穗期, sub_stage: 幼穗分化期}
+    field.profile:
+      - match: {field: field-002}
+        return: {area_mu: 32.5, soil_n_level: 中, no_fly_zones: [], adjacent_fields: []}
+knowledge_ref: WORKTREE
+expect:
+  outcome: ADVICE
+  advice:
+    category: fertilize
+    advice_type: 作业类
+    conclusion: 促花肥属追肥，按知识库默认用尿素，亩用量与整田用量按规则层计算（草拟，待专家确认）
+    must_cite: [kb:rice/fertilization/panicle@v1, kb:rice/fertilization/n-budget@v1]
+    numbers:
+      - {field: urea_per_mu, value: 9.4, unit: kg/亩, precision: 0.1}
+      - {field: urea_total, value: 305.0, unit: kg, precision: 0.5}
+  trajectory:
+    must_call: [crop.phenology, field.profile]
+    must_not_call: ["device.*"]
+    budget: {max_steps: 12, max_tokens: 8000}
+author: claude-draft
+review_status: pending_expert
+signed_at: 2026-11-03
+notes: n-budget 操作要点“基肥用 45% 复合肥，追肥用尿素”；18 × 0.24 ÷ 0.46 = 9.391 kg/亩，× 32.5 亩 = 305.22 → 305.0 kg
