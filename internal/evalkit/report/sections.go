@@ -61,10 +61,30 @@ func renderSnapshot(ew *errWriter, s evalkit.Snapshot) {
 	ew.printf("## 配置快照\n\n| 项 | 值 |\n|----|----|\n")
 	ew.printf("| git_sha | `%s`%s |\n", s.GitSHA, dirty)
 	ew.printf("| prompt_version | %s |\n| model_tier | %s |\n| model | %s |\n", dash(s.PromptVersion), dash(s.ModelTier), dash(s.Model))
-	ew.printf("| knowledge_ref | %s |\n| samples_hash | `%s` |\n\n", dash(s.KnowledgeRef), s.SamplesHash)
+	ew.printf("| knowledge_ref | %s |\n| samples_hash | `%s` |\n", dash(s.KnowledgeRef), s.SamplesHash)
+	// P2 L0 字段：P1 及以前的快照没有，未填不输出。
+	if s.LoaderStrategy != "" || s.RetrievalStrategy != "" || s.JudgeVersions != nil {
+		ew.printf("| loader_strategy | %s |\n| retrieval_strategy | %s |\n| judge_versions | %s |\n",
+			dash(s.LoaderStrategy), dash(s.RetrievalStrategy), judgeVersionsText(s))
+	}
+	if len(s.Suites) > 0 {
+		ew.printf("| suites | %s |\n| n | %d |\n", strings.Join(s.Suites, ","), s.N)
+	}
+	if s.WallTime != "" {
+		ew.printf("| token_used | %d |\n| cost | %.4f |\n| wall_time | %s |\n", s.TokenUsed, s.Cost, s.WallTime)
+	}
+	ew.printf("\n")
 	if s.Model == evalkit.ModelStub {
 		ew.printf("> 模型为桩（%s）：真实模型未验证（ONEAPI_* 未设置），本报告只反映编排与护栏行为。\n\n", evalkit.ModelStub)
 	}
+}
+
+// judgeVersionsText 是 judge_versions 的报告文本；未接 judge 时标「无（未接 judge）」。
+func judgeVersionsText(s evalkit.Snapshot) string {
+	if k := s.JudgeVersionsKey(); k != "" {
+		return k
+	}
+	return "无（未接 judge）"
 }
 
 // quarantineNote 附在门禁行后：隔离样本未运行，门禁与红线结论不覆盖它们（不能读成「全部通过」）。

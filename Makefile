@@ -74,3 +74,14 @@ eval-nightly:
 # 只做样本静态校验，不装配 agent
 validate:
 	$(GO) run ./cmd/eval validate
+
+# P2 L0：冻结基线（P1 实验加 BACKFILL=eval/baselines/xxx.yaml 补录快照）、对比（MODE=phase 为阶段级，REFERENCE 仅 phase）、A/A 阈值草稿
+.PHONY: eval-freeze eval-compare eval-aa
+eval-freeze:
+	$(GO) run ./cmd/eval baseline freeze --name $(NAME) --exp $(EXP) $(if $(BACKFILL),--backfill $(BACKFILL))
+
+eval-compare:
+	$(GO) run ./cmd/eval compare --baseline $(BASELINE) --candidate $(CANDIDATE) $(if $(MODE),--mode $(MODE)) $(if $(REFERENCE),--reference $(REFERENCE)) $(if $(FAIL_ON_UNRELEASABLE),--fail-on-unreleasable)
+
+eval-aa:
+	$(GO) run ./cmd/eval aa $(if $(FROM_EXPS),--from-exps $(FROM_EXPS),--runs $(or $(RUNS),3))

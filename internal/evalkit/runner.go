@@ -26,17 +26,19 @@ const DefaultTrials = 3
 
 // Trial 是一个样本的一次运行结果（transcript 在 L5 补充）。
 type Trial struct {
-	SampleID     string
-	Suite        string
-	Tags         []string
-	TrialIndex   int
-	Expected     model.Outcome
-	Outcome      model.Outcome
-	RefuseReason string
-	RunID        uint64
-	Card         *model.AdviceCard
-	Latency      time.Duration
-	Error        string
+	SampleID string
+	// SampleVersion 是样本 version（P2 L0：写 trial.sample_version，compare 按 (sample_id, sample_version) 配对）。
+	SampleVersion int
+	Suite         string
+	Tags          []string
+	TrialIndex    int
+	Expected      model.Outcome
+	Outcome       model.Outcome
+	RefuseReason  string
+	RunID         uint64
+	Card          *model.AdviceCard
+	Latency       time.Duration
+	Error         string
 	// Scores 按打分器顺序列出各维度结果；运行出错（Error 非空）时为空。
 	Scores []Score
 	// ToolCalls 是工具名 → 调用次数；UnexpectedCalls 是未在 fixtures.mcp 声明的调用（按顺序的工具名）；
@@ -385,7 +387,7 @@ func (r *Runner) Run(ctx context.Context, samples []*sample.Sample, opts Options
 }
 
 func newTrial(s *sample.Sample, index int) Trial {
-	return Trial{SampleID: s.ID, Suite: s.Suite, Tags: s.Tags, TrialIndex: index, Expected: s.Expect.Outcome}
+	return Trial{SampleID: s.ID, SampleVersion: s.Version, Suite: s.Suite, Tags: s.Tags, TrialIndex: index, Expected: s.Expect.Outcome}
 }
 
 // failedTrial 是未能运行的 trial（INFRA_ERROR）。

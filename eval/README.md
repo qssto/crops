@@ -143,3 +143,18 @@ make eval-nightly GO=go NIGHTLY_N=3 TAGS=L8 # 变量可覆盖，TAGS / BASELINE 
 - 「<1.00」：均值四舍五入为 1.00，但并非每个样本 n 次全过。只有全部样本全过才写 1.00。
 - 「子集」：按 `--tags` 过滤的实验，redteam 单列行标「子集（tag 过滤：…），不代表全量」。
 - 「隔离数」：该套件声明 quarantine、本次未运行的样本数，pass^k 不覆盖它们。
+
+## 配置快照、冻结与对比（P2 L0）
+
+- `run` 建 experiment 行时写完整快照（git、prompt_version、model_tier、model、knowledge_ref、samples_hash、loader_strategy、retrieval_strategy、judge_versions、suites、n），结束时回填 token_used / cost / wall_time；快照有空字段时 store 拒绝写入。建行后任一步失败（含 manifest 上传）实验置 `FAILED`，不停在 RUNNING。
+- knowledge_ref 是内容哈希 `kc:<sha256>`：对样本实际读取的 `knowledge/`（WORKTREE 读工作区，含未提交改动；`kb@<sha>` 读该提交）按路径排序，逐个写入「路径、字节数、内容」后求 sha256；隐藏文件（如 `.DS_Store`）不计入。多个不同内容按哈希排序逗号拼接。`--trigger manual|pr|nightly|release` 写 `trigger_kind`（默认 manual）。样本清单写 MinIO `{exp_id}/manifest.json`。
+- `baseline freeze`：见 `eval/baselines/README.md`。
+- `compare --baseline <名|id> --candidate <id>`：配对集合是两边 `(sample_id, sample_version)` 交集，报告列交集大小与被排除样本。
+  - 失败关闭（不出结论、退出码 1）：`--baseline` 指向的实验在库中未冻结（数字 id 与指针名都查库）；任一边不是 DONE 或没有 trial；快照缺字段（含 JSON `null` / `{}`）；两边 n 或 suites 不同（运行参数，不算因子）；配对交集为空；没有任何质量指标在配对样本上适用。
+  - 单因子（默认）：除 git_sha 外逐项比对注册因子；knowledge_ref 或 judge_versions 不一致直接拒绝（重建 baseline）；差异因子 > 1 结论 `NOT_ATTRIBUTABLE`，报告首行标红「多因子对比，结论不可归因」，不可放行。
+  - `--mode phase`：要求 samples_hash、judge_versions、n、suites 一致，首行并列两边 knowledge_ref 与 `knowledge/` 变更文件；`--reference <id>` 加第三列拆知识侧 / agent 侧，reference 同样须 DONE 且与 baseline 满足阶段级前提；只给整体结论，不写门禁字段。
+  - 出错 trial（infra_error / grader_error）：红线指标按失败计（样本内取最差；全部 trial 出错的样本照样参与配对，值 0）；非红线指标跳过出错 trial；baseline 或 candidate 有任何出错 trial 时结论 `INCOMPLETE`（优先级：NOT_ATTRIBUTABLE > REGRESSED > INCOMPLETE），报告列出受影响样本。
+  - 可放行只有单因子且结论为 `IMPROVED` / `NO_SIGNIFICANT_DIFF`（白名单）；阶段级恒不可放行。`--fail-on-unreleasable` 时不可放行退出码 1（报告照写）；**默认 false**，只在 stdout 打印 `releasable=false`、退出码 0。L7 CI 门禁须显式带该参数（`make eval-compare ... FAIL_ON_UNRELEASABLE=1`）。
+  - 统计：样本 n 次 trial 先合成样本级值（红线取最差，flaky 另列，出错 trial 不算 flaky），配对 bootstrap 1000 次求差值 95% 区间，seed 写进报告（`--bootstrap-seed`）。事实一致率、幻觉率标「未接入（L2/L3）」。
+- `aa [--runs 3 | --from-exps a,b,c]`：同一快照多次运行，指标两两配对差值的 95% 分位作阈值下限，写 `eval/gates/thresholds.yaml` 草稿（signed_by 留空待 Owner）。stub 下差值为 0。`--from-exps` 不得重复 id；各实验须 DONE、有 trial、快照完整、无出错 trial，因子与 n / suites / samples_hash 全部一致，少于 2 个报错。
+- `eval/gates/factors.yaml` 是候选因子登记表，五项（baseline / candidate / metrics / suites / rollback）缺一项单测失败。

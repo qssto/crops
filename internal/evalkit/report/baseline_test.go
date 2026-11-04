@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -37,7 +38,9 @@ func (m *memPutter) PutObject(_ context.Context, bucket, key string, body []byte
 func baselineExperiment() *evalkit.Experiment {
 	exp := testExperiment()
 	exp.Snapshot = evalkit.Snapshot{GitSHA: "1161f7e", PromptVersion: "p0-v1", ModelTier: "standard",
-		Model: evalkit.ModelStub, KnowledgeRef: "WORKTREE", SamplesHash: "abc"}
+		Model: evalkit.ModelStub, KnowledgeRef: "WORKTREE", SamplesHash: "abc",
+		LoaderStrategy: evalkit.LoaderV0, RetrievalStrategy: evalkit.RetrievalProgressive, JudgeVersions: map[string]string{},
+		Suites: []string{"regression"}, Tags: []string{}, N: 2, WallTime: "1m0s"}
 	return exp
 }
 
@@ -65,7 +68,7 @@ func TestPublishBaseline(t *testing.T) {
 		t.Fatalf("report object missing or wrong type: %q", obj.types[reportKey])
 	}
 	var doc snapshotDoc
-	if err := json.Unmarshal(obj.objects[snapKey], &doc); err != nil || doc.ExpID != exp.ID || doc.Snapshot != exp.Snapshot {
+	if err := json.Unmarshal(obj.objects[snapKey], &doc); err != nil || doc.ExpID != exp.ID || !reflect.DeepEqual(doc.Snapshot, exp.Snapshot) {
 		t.Fatalf("snapshot object = %s (%v)", obj.objects[snapKey], err)
 	}
 
@@ -84,7 +87,7 @@ func TestPublishBaseline(t *testing.T) {
 		{"exp_id", got.ExpID == exp.ID},
 		{"model stub", got.Model == evalkit.ModelStub},
 		{"keys", got.ReportKey == "report/"+exp.ID+"/report.md" && got.SnapshotKey == "report/"+exp.ID+"/snapshot.json"},
-		{"snapshot", got.Snapshot == exp.Snapshot},
+		{"snapshot", reflect.DeepEqual(got.Snapshot, exp.Snapshot)},
 		{"generated_at utc", got.GeneratedAt.Equal(now) && got.GeneratedAt.Location() == time.UTC},
 		{"counts", got.N == 2 && got.Samples == 2 && got.Trials == 4},
 		{"gate", strings.HasPrefix(got.Gate, "门禁（Gate 0 自动项")},
@@ -157,7 +160,8 @@ func TestRenderSnapshotSection(t *testing.T) {
 	if err := Render(&b, baselineExperiment()); err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"## 配置快照", "| git_sha | `1161f7e` |", "| model | stub |", "真实模型未验证"} {
+	for _, want := range []string{"## 配置快照", "| git_sha | `1161f7e` |", "| model | stub |", "真实模型未验证",
+		"| loader_strategy | v0 |", "| judge_versions | 无（未接 judge） |", "| wall_time | 1m0s |"} {
 		if !strings.Contains(b.String(), want) {
 			t.Errorf("report missing %q", want)
 		}

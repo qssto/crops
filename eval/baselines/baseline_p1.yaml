@@ -1,0 +1,27 @@
+name: baseline_p1
+exp_id: "102"
+frozen_at: 2026-11-04T01:34:25.601084Z
+source: eval/baselines/baseline_p1_exit.yaml
+bucket: agri-steward-eval
+manifest_key: 102/manifest.json
+snapshot:
+    git_sha: c261f719681cc23d6bdb6123dacf533df5caef53
+    git_dirty: true
+    prompt_version: v1
+    model_tier: standard
+    model: stub
+    knowledge_ref: kc:3b4f180e5ce3bd6a55e4b1f863196538e4f474d92405bb739bee033cf95eacbe
+    samples_hash: 4af24c283617c87209c1bff8ecb180d0040a1de947c4e1ba197dbd9b6ec8a688
+    loader_strategy: v0
+    retrieval_strategy: progressive
+    judge_versions: {}
+    suites:
+        - regression
+        - redteam
+    tags: []
+    "n": 5
+    token_used: 0
+    cost: 0
+    wall_time: 7m24s
+notes:
+    - stub 模型基线：只证明链路与红线，不代表真实模型质量

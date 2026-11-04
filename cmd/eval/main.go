@@ -3,10 +3,16 @@
 //	eval validate [--suites-dir eval/suites] [--taxonomy eval/taxonomy.yaml] [--repo .]
 //	eval run --suite regression [--n 3] [--tags L2,protect] [--out eval/out] [--baseline baseline_p0 [--baselines-dir eval/baselines]]
 //	eval kbdump --suite regression
+//	eval baseline freeze --name baseline_p1 --exp 102 [--backfill eval/baselines/baseline_p1_exit.yaml]
+//	eval compare --baseline <名|exp id> --candidate <id> [--mode factor|phase] [--reference <id>] [--fail-on-unreleasable]
+//	eval aa [--runs 3 | --from-exps a,b,c] [--out eval/gates/thresholds.yaml]
 //
 // validate 只做样本静态校验、不装配 agent；run 先校验再经 app.Build 装配被测 agent 回放并出报告
 // （--baseline 时另把报告与配置快照上传 agri-steward-eval 的 report/{exp_id}/ 并写 baseline yaml）；
 // kbdump 按样本情境（taxonomy tag + crop.phenology fixture）跑 progressive_loader，打印命中的 kb_id@version。
+// baseline freeze / compare / aa 是 P2 L0：冻结基线（P1 实验补录快照）、单因子 / 阶段级对比、A/A 噪声阈值草稿。
+// 三者失败关闭：实验须 DONE 且有 trial、快照完整，--baseline 须在库中已冻结；compare 有出错 trial 时结论 INCOMPLETE，
+// --fail-on-unreleasable 时不可放行退出码 1。
 package main
 
 import (
@@ -20,7 +26,9 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"slices"
 	"strings"
+	"time"
 
 	"agri-steward/internal/agent/harness/policy"
 	"agri-steward/internal/agent/knowledge"
@@ -29,9 +37,11 @@ import (
 	"agri-steward/internal/evalkit"
 	"agri-steward/internal/evalkit/grader"
 	"agri-steward/internal/evalkit/grader/code"
+	"agri-steward/internal/evalkit/reduce"
 	"agri-steward/internal/evalkit/report"
 	"agri-steward/internal/evalkit/sample"
 	"agri-steward/internal/evalkit/store"
+	"agri-steward/internal/repository"
 )
 
 const (
@@ -48,7 +58,7 @@ const (
 	contractsDir = "contracts"
 	// toolPolicyFile 是 --repo 下工具策略（no_model_actuate 取其 actuate 集合，与生产同一份）。
 	toolPolicyFile = "policy/tool_policy.yaml"
-	usageString    = "usage: eval <validate|run|kbdump> [flags]"
+	usageString    = "usage: eval <validate|run|kbdump|baseline|compare|aa> [flags]"
 )
 
 func main() {
@@ -71,6 +81,12 @@ func run(args []string, stdout, stderr io.Writer) int {
 		err = cmdRun(ctx, args[1:], stdout, stderr)
 	case "kbdump":
 		err = cmdKBDump(ctx, args[1:], stdout)
+	case "baseline":
+		err = cmdBaseline(ctx, args[1:], stdout, stderr)
+	case "compare":
+		err = cmdCompare(ctx, args[1:], stdout, stderr)
+	case "aa":
+		err = cmdAA(ctx, args[1:], stdout, stderr)
 	default:
 		fmt.Fprintln(stderr, usageString)
 		return exitUsage
@@ -104,11 +120,14 @@ func (f *sampleFlags) register(fs *flag.FlagSet) {
 
 // loadedSamples 是通过静态校验的样本及校验所用的 taxonomy / 知识库 / 打分器；refNotes 为参考解不判定维度说明。
 type loadedSamples struct {
-	samples  []*sample.Sample
-	tx       *knowledge.Taxonomy
-	kb       *knowledge.Store
-	graders  []grader.Grader
-	refNotes []string
+	samples []*sample.Sample
+	tx      *knowledge.Taxonomy
+	kb      *knowledge.Store
+	// kbContent 是快照 knowledge_ref 内容哈希用的读取器（knowledge.NewTrackedRepoReader）：WORKTREE 只算 git 已跟踪文件、
+	// 与 git 读法口径一致，遇符号链接报错。kb 本身仍用 NewRepoReader 加载（与生产一致）。
+	kbContent knowledge.TreeReader
+	graders   []grader.Grader
+	refNotes  []string
 }
 
 // loadValidSamples 加载并静态校验全部样本（含 L3 must_cite / product_in 知识库规则、L4 参考解过全部打分器）。
@@ -138,7 +157,7 @@ func (f *sampleFlags) loadValidSamples() (*loadedSamples, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &loadedSamples{samples: samples, tx: tx, kb: kb, graders: graders, refNotes: ref.Notes()}, nil
+	return &loadedSamples{samples: samples, tx: tx, kb: kb, kbContent: knowledge.NewTrackedRepoReader(f.repo), graders: graders, refNotes: ref.Notes()}, nil
 }
 
 func cmdValidate(args []string, stdout io.Writer) error {
@@ -181,10 +200,14 @@ func cmdRun(ctx context.Context, args []string, stdout, stderr io.Writer) (err e
 	outRoot := fs.String("out", defaultOut, "报告输出根目录")
 	baseline := fs.String("baseline", "", "非空时把报告与配置快照上传 report/{exp_id}/ 并写 {baselines-dir}/{name}.yaml（要求 n >= 3）")
 	baselinesDir := fs.String("baselines-dir", defaultBaselines, "baseline yaml 目录")
+	trigger := fs.String("trigger", store.TriggerManual, "触发方式 manual|pr|nightly|release（写 experiment.trigger_kind）")
 	var inf infraFlags
 	inf.register(fs)
 	if err := fs.Parse(args); err != nil {
 		return err
+	}
+	if !store.ValidTrigger(*trigger) {
+		return fmt.Errorf("%w: %q", store.ErrBadTrigger, *trigger)
 	}
 	if *n < 1 {
 		return fmt.Errorf("n must be >= 1, got %d", *n)
@@ -214,7 +237,7 @@ func cmdRun(ctx context.Context, args []string, stdout, stderr io.Writer) (err e
 	}
 	// baseline 上传后还要写 experiment.report_key，故连接在函数末尾才关。
 	defer func() { err = errors.Join(err, in.close()) }()
-	exp, id, err := runWithStore(ctx, in, ls, selected, opts)
+	exp, id, err := runWithStore(ctx, in, ls, selected, opts, *trigger)
 	if err != nil {
 		return err
 	}
@@ -243,19 +266,17 @@ func cmdRun(ctx context.Context, args []string, stdout, stderr io.Writer) (err e
 	return nil
 }
 
-// runWithStore 先在 agri_eval.experiment 建行，回放并跑全部打分器后同事务写 trial 并置 DONE；返回实验与 experiment.id。
-func runWithStore(ctx context.Context, in *infra, ls *loadedSamples, samples []*sample.Sample, opts evalkit.Options) (*evalkit.Experiment, uint64, error) {
+// runWithStore 先在 agri_eval.experiment 建行（带配置快照）并把样本清单写 MinIO {id}/manifest.json，
+// 回放并跑全部打分器后同事务写 trial、回填快照结果字段并置 DONE；返回实验与 experiment.id。
+// 建行之后任一步失败（含 panic）都把实验置 FAILED（store.Fail），不让它停在 RUNNING，见 recordRun。
+func runWithStore(ctx context.Context, in *infra, ls *loadedSamples, samples []*sample.Sample, opts evalkit.Options,
+	trigger string) (*evalkit.Experiment, uint64, error) {
 	wall := clock.System{}
-	snap, err := snapshot(ctx, in, samples)
+	snap, err := snapshot(ctx, in, ls, samples, opts)
 	if err != nil {
 		return nil, 0, err
 	}
-	exps := store.New(in.evalDB)
-	id, err := exps.Start(ctx, opts.Suites, store.TriggerManual, snap.GitSHA, wall.Now())
-	if err != nil {
-		return nil, 0, err
-	}
-	opts.ExperimentID = store.FormatID(id)
+	// runner 先于建行装配：装配失败不留实验行。
 	runner, err := evalkit.NewRunner(evalkit.PoolEnv(in.pool, in.deps), wall.Now,
 		evalkit.WithQuestion(in.question), evalkit.WithGraders(ls.kb, ls.graders...),
 		evalkit.WithApprover(evalkit.ScriptApproverByRole(in.approvers[0], in.approvers[1], in.approversByRole)), evalkit.WithDevices(in.devices),
@@ -264,19 +285,83 @@ func runWithStore(ctx context.Context, in *infra, ls *loadedSamples, samples []*
 	if err != nil {
 		return nil, 0, err
 	}
-	exp, err := runner.Run(ctx, samples, opts)
+	replay := func(ctx context.Context, id uint64) (*evalkit.Experiment, error) {
+		opts.ExperimentID = store.FormatID(id)
+		exp, err := runner.Run(ctx, samples, opts)
+		if err != nil {
+			return nil, err
+		}
+		exp.Snapshot = withResults(snap, exp)
+		return exp, nil
+	}
+	return recordRun(ctx, store.New(in.evalDB), in.objects, in.evalBucket, trigger, snap, evalkit.SampleRefs(samples), wall.Now, replay)
+}
+
+// experimentLifecycle 是 run 用到的实验状态写入（store.Experiments 实现；单测替换以覆盖失败路径）。
+type experimentLifecycle interface {
+	Start(ctx context.Context, trigger string, snap evalkit.Snapshot, at time.Time) (uint64, error)
+	Finish(ctx context.Context, id uint64, exp *evalkit.Experiment) error
+	Fail(ctx context.Context, id uint64, at time.Time) error
+}
+
+// recordRun 建行写清单后执行 replay 并 Finish。建行之后 replay 出错、Finish 出错都置 FAILED；replay panic 时
+// 先置 FAILED（结果写 stderr）再用原值重新 panic，不吞原 panic。
+func recordRun(ctx context.Context, exps experimentLifecycle, obj repository.ObjectPutter, bucket, trigger string,
+	snap evalkit.Snapshot, refs []string, now func() time.Time,
+	replay func(ctx context.Context, id uint64) (*evalkit.Experiment, error)) (_ *evalkit.Experiment, _ uint64, err error) {
+	id, err := startExperiment(ctx, exps, obj, bucket, trigger, snap, refs, now)
 	if err != nil {
 		return nil, 0, err
 	}
-	exp.Snapshot = snap
+	defer func() {
+		if r := recover(); r != nil {
+			// markFailed 恒返回非 nil（原因或置失败错误），写 stderr 后原值重新 panic。
+			fmt.Fprintln(os.Stderr, "eval:", markFailed(ctx, exps, id, fmt.Errorf("panic: %v", r), now))
+			panic(r)
+		}
+		if err != nil {
+			err = markFailed(ctx, exps, id, err, now)
+		}
+	}()
+	exp, err := replay(ctx, id)
+	if err != nil {
+		return nil, 0, err
+	}
 	if err := exps.Finish(ctx, id, exp); err != nil {
 		return nil, 0, err
 	}
 	return exp, id, nil
 }
 
-// snapshot 采集配置快照（评测设计 §12.1）：git、提示词版本、模型档位与 provider、知识版本、样本集哈希。
-func snapshot(ctx context.Context, in *infra, samples []*sample.Sample) (evalkit.Snapshot, error) {
+// startExperiment 建 RUNNING 实验行并写样本清单；清单写失败时把实验置 FAILED 后返回错误。
+func startExperiment(ctx context.Context, exps experimentLifecycle, obj repository.ObjectPutter, bucket, trigger string,
+	snap evalkit.Snapshot, refs []string, now func() time.Time) (uint64, error) {
+	id, err := exps.Start(ctx, trigger, snap, now())
+	if err != nil {
+		return 0, err
+	}
+	if _, err := store.PutManifest(ctx, obj, bucket, id, snap.SamplesHash, refs); err != nil {
+		return 0, markFailed(ctx, exps, id, err, now)
+	}
+	return id, nil
+}
+
+// failTimeout 是置 FAILED 的上限：上下文不随 ctx 取消（中断后仍能落库），但库挂起时不无限等。
+const failTimeout = 10 * time.Second
+
+// markFailed 把实验置 FAILED 并返回原错误（置失败本身出错时一并返回）。
+func markFailed(ctx context.Context, exps experimentLifecycle, id uint64, cause error, now func() time.Time) error {
+	fctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), failTimeout)
+	defer cancel()
+	if err := exps.Fail(fctx, id, now()); err != nil {
+		return errors.Join(cause, fmt.Errorf("mark experiment %d FAILED: %w", id, err))
+	}
+	return fmt.Errorf("experiment %d marked FAILED: %w", id, cause)
+}
+
+// snapshot 采集配置快照（评测设计 §12.1、P2 §6.1）：git、提示词版本、模型档位与 provider、知识内容哈希、样本集哈希、
+// 加载 / 检索策略、judge 版本（现无 judge，为空表）与运行参数 suites / tags / n。
+func snapshot(ctx context.Context, in *infra, ls *loadedSamples, samples []*sample.Sample, opts evalkit.Options) (evalkit.Snapshot, error) {
 	sha, err := gitSHA(ctx)
 	if err != nil {
 		return evalkit.Snapshot{}, err
@@ -285,9 +370,31 @@ func snapshot(ctx context.Context, in *infra, samples []*sample.Sample) (evalkit
 	if err != nil {
 		return evalkit.Snapshot{}, err
 	}
+	kref, err := evalkit.KnowledgeRef(ctx, ls.kbContent, samples, knowledge.RefWorktree)
+	if err != nil {
+		return evalkit.Snapshot{}, err
+	}
 	return evalkit.Snapshot{GitSHA: sha, GitDirty: dirty, PromptVersion: in.model.PromptVersion,
 		ModelTier: in.model.DefaultTier, Model: in.model.Provider,
-		KnowledgeRef: evalkit.KnowledgeRefs(samples), SamplesHash: evalkit.SamplesHash(samples)}, nil
+		KnowledgeRef: kref, SamplesHash: evalkit.SamplesHash(samples),
+		LoaderStrategy: evalkit.LoaderV0, RetrievalStrategy: evalkit.RetrievalProgressive, JudgeVersions: map[string]string{},
+		Suites: opts.Suites, Tags: recordedTags(opts.Tags), N: opts.N}, nil
+}
+
+// recordedTags 是写进快照的样本筛选条件：没有 --tags 时记空表（非 nil），与「快照没记录 tags」（nil，旧实验）区分。
+func recordedTags(tags []string) []string {
+	if tags == nil {
+		return []string{}
+	}
+	return slices.Clone(tags)
+}
+
+// withResults 回填快照的运行结果：token_used 为全部 trial 的 LLM token 合计（桩模型为 0），
+// cost 在 L7-b 价目表接入前记 0；wall_time 由 store.Finish 按 started_at / finished_at 计算。
+func withResults(snap evalkit.Snapshot, exp *evalkit.Experiment) evalkit.Snapshot {
+	snap.TokenUsed = reduce.Reduce(exp.Trials).Metrics.Tokens
+	snap.Cost = 0
+	return snap
 }
 
 func gitSHA(ctx context.Context) (string, error) {

@@ -1,0 +1,62 @@
+# 候选因子登记表（P2 §6.1 功能任务 8、§8 降级与回滚）。
+# 每个优化策略五项缺一项不进入排期：baseline / candidate / metrics / suites / rollback。
+# 单测 internal/evalkit/compare（TestRepoFactorTable）校验本文件每行五项齐全。
+# metrics 中「六可信度指标」= citation_coverage / numeric_accuracy / refusal_accuracy / over_conservative_rate /
+# fact_consistency / hallucination_rate（后两项待 L2 judge 接入）。
+factors:
+  - name: rule_offload.operation_window
+    layer: L4
+    baseline: "baseline_p1.r2（作业窗口筛选只拒收、不注入）"
+    candidate: 'rule_offload.operation_window 取 {"mode":"on"}'
+    metrics: [六可信度指标, 驳回原因分布, P95 延迟, token 成本]
+    suites: [regression, 作业窗口陷阱组, holdout（发版时）]
+    rollback: "关开关即回到只拒收；拒收规则常开不回退"
+  - name: rule_offload.tank_mix
+    layer: L4
+    baseline: "baseline_p1.r2（混用禁忌判断只拒收、不注入）"
+    candidate: 'rule_offload.tank_mix 取 {"mode":"on"}'
+    metrics: [六可信度指标, conflict_blocked 红线, 驳回原因分布, P95 延迟, token 成本]
+    suites: [regression, 混用禁忌陷阱组, holdout（发版时）]
+    rollback: "关开关即回到只拒收；拒收规则常开不回退"
+  - name: rule_offload.pest_priority
+    layer: L4
+    baseline: "baseline_p1.r2（多病虫害并发优先级排序只拒收、不注入）"
+    candidate: 'rule_offload.pest_priority 取 {"mode":"on"}'
+    metrics: [六可信度指标, 驳回原因分布, P95 延迟, token 成本]
+    suites: [regression, 多病虫害并发陷阱组, holdout（发版时）]
+    rollback: "关开关即回到只拒收；拒收规则常开不回退"
+  - name: loader_strategy
+    layer: L5
+    baseline: "v0（enable_loader_v1 关）"
+    candidate: "v1（enable_loader_v1 开）"
+    metrics: [加载命中率, 加载精度, 无关知识注入率, 六可信度指标]
+    suites: [regression 全量（按问题类型切片）]
+    rollback: "关 enable_loader_v1 回 v0，不发版"
+  - name: enable_compaction
+    layer: L6
+    baseline: "enable_compaction 关"
+    candidate: "enable_compaction 开 + 压缩阈值"
+    metrics: [白名单保留率, 结论一致率, 单会话 token 成本, 压缩触发率]
+    suites: [多轮长会话样本, regression]
+    rollback: "关 enable_compaction；已压缩会话按 MinIO 原文恢复"
+  - name: prompt_version
+    layer: 配置
+    baseline: "当前 prompt_version"
+    candidate: "新提示词版本"
+    metrics: [六可信度指标, explanation_quality, token 成本]
+    suites: [全部套件含 holdout]
+    rollback: "配置回滚到上一提示词版本（母文档 L4 已具备）"
+  - name: model_tier
+    layer: 配置
+    baseline: "当前 model_tier"
+    candidate: "D1 批准范围内的其他档位"
+    metrics: [六可信度指标, P95 延迟, token 成本]
+    suites: [全部套件含 holdout]
+    rollback: "配置回滚到原档位"
+  - name: judge_gate
+    layer: L2
+    baseline: "LLM-judge 只出报告"
+    candidate: "LLM-judge 维度进门禁"
+    metrics: [加权 Kappa（区间下限）, 专家间 Kappa, 月度复核一致性]
+    suites: [分层校准集]
+    rollback: "一致性下降即从门禁配置移除，退回只出报告"

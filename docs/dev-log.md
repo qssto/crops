@@ -826,3 +826,65 @@
 - 评测：exp 101（`p1-l8-merge`，`make eval-nightly`）与 exp 102（main `c261f71`，`BASELINE=baseline_p1_exit`）均为 170 样本 / 850 trial 全 PASS，redteam 39 / regression 131 红线 pass^5 = 1.00，Gate 0 #1 #2 #5 通过，flaky 无；exp 103（`SUITE=constraint N=5`）40 样本 / 200 trial 全 PASS，constraint_blocked 适用 200 失败 0。全部 stub 模型。
 - 提交：P1-L8 进 main `c261f71`（未推送）；`eval/baselines/baseline_p1_exit.yaml`（exp 102）、`docs/p1/Phase1验收报告.md`、`docs/p1/Phase2启动包.md` 随收口文档提交。
 - 人工项：Gate 1 #1 #7 待田间数据，#4 #5 待演练，#9 待签字；D5、法规签字为空，gray-preflight 真实运行应 FAIL；业务库 migrate / seed 未执行。
+
+## P2-L0 · 基线冻结与实验配置快照（2026-11-03）
+
+- 无新迁移（用调度方的 `0002_experiment_p2`）、无新依赖；生产代码不 import evalkit。
+- 快照：`evalkit.Snapshot` 补 loader_strategy（v0）、retrieval_strategy（progressive）、judge_versions（空表）、suites、n、token_used、cost、wall_time；`MissingConfig()` / `Missing()` 列空字段。`SampleRefs` 与 `SamplesHash` 共用，哈希口径不变。
+- store：`Start(ctx, trigger, snap, at)` 快照有空字段返回 `ErrEmptySnapshot`、trigger 非法返回 `ErrBadTrigger`；`Finish` 算 wall_time 并回填快照；trial 写 `sample_version`；experiment 的 UPDATE 一律 `AND frozen = 0`，冻结后返回 `ErrFrozen`。新文件 `read.go`（Get / Trials / PairedSamples，交集 SQL 照抄 §6.1）、`freeze.go`（Freeze 补录 + 置 frozen 同事务、RecordCompare）、`manifest.go`（MinIO `{id}/manifest.json`）。
+- reduce：`QualityMetric` 接口与注册表（`quality.go`）：引用覆盖率、数值准确率、拒答正确率（红线，样本内取最差）、过度保守率（均值），事实一致率 / 幻觉率注册为「未接入（L2/L3）」。
+- compare（新包）：可比因子注册表（knowledge_ref、judge_versions 为 Pinned）；单因子 / 阶段级；配对 bootstrap（PCG 固定 seed、1000 次）；A/A 阈值；factors.yaml 校验。
+- cmd/eval：`run --trigger`、写 manifest；新子命令 `baseline freeze`、`compare`、`aa`（`baseline.go` / `compare.go` / `aa.go` / `evalstore.go`），Makefile 加 `eval-freeze` / `eval-compare` / `eval-aa`。
+- freeze --backfill 按 yaml 的 suites / tags 重选当前样本，samples_hash 必须等于 yaml（exp 102 单测 `TestLoadBackfill_P1Exit` 通过），只接受 stub 模型来源。指针已存在拒绝覆盖。
+- 产物：`eval/gates/factors.yaml`（§8 八行）；`eval/gates/thresholds.yaml` 草稿（隔离库 3 × regression 131 样本 n=5，stub 下四个指标阈值 0，judge 两项 null，signed_by 空）。
+- 集成：`cmd/eval` 加 TestMain，建 `{AS_TEST_NS}_agri_eval_it` 隔离评测库（AUTO_INCREMENT 900000000，避开共享 bucket 的对象键），`TestL0_RunFreezeCompare_Integration` 走 run → 伪 P1 实验 freeze --backfill → 冻结后 UPDATE 被拒 → compare factor / 多因子 / phase / knowledge_ref 拒绝 → aa。
+- 待调度方：共享库 `make migrate-eval` 后对 exp 102 执行 `make eval-freeze NAME=baseline_p1 EXP=102 BACKFILL=eval/baselines/baseline_p1_exit.yaml`，提交生成的 `eval/baselines/baseline_p1.yaml`。
+
+### P2-L0 审查修复（2026-11-03）
+
+- 原则：失败关闭。数据不完整一律报错或判不可放行，每项先写复现用例再修。无迁移、无新依赖；`experiment.status` 新增取值 `FAILED`（varchar(16) 够用，迁移注释仍写 RUNNING / DONE，未改 migrations/）。
+- 空配对：compare 两边（含 `--reference`）须 DONE 且有 trial，快照须完整（JSON `null` / `{}` 解出的零值快照被拒）；配对交集为空返回 `ErrNoPairs`，没有任何指标 Samples > 0 返回 `ErrNoMetric`。freeze 同样要求 DONE 且 trial > 0（`ErrNotDone` / `ErrNoTrials`）。
+- 出错 trial（决定，选项：保留在配对内）：红线指标把 infra_error / 本维度 grader_error 按失败计 0，样本内取最差；全部 trial 出错的样本适用性未知，红线按适用、值 0，**不从配对里消失**；非红线指标跳过出错 trial；出错 trial 不算 flaky。baseline 或 candidate 有任何出错 trial → 结论 `INCOMPLETE`，不可放行，报告逐边列受影响样本。结论阻断规则注册表的优先级 NOT_ATTRIBUTABLE > REGRESSED > INCOMPLETE；可放行是白名单（IMPROVED / NO_SIGNIFICANT_DIFF），新增结论默认不可放行。
+- knowledge_ref 改为内容哈希 `kc:<sha256>`（`evalkit.KnowledgeContentRef`）：knowledge/ 文件按路径排序，逐个写入「路径 \0 字节数 \0 内容」，隐藏文件不计入，使工作区与 git 树口径一致。WORKTREE 读工作区（dirty 如实反映）。`baseline freeze --backfill` 按实验 git_sha 的提交内容计算。
+  - exp 102 是 `git_dirty: true`，跑的是当时的工作区，按 `c261f71` 提交内容补录只是近似（已知偏差）。核对结果：当前 knowledge/（WORKTREE 与 HEAD）与 `c261f71` 的 knowledge/ 都是 `kc:3b4f180e5ce3bd6a55e4b1f863196538e4f474d92405bb739bee033cf95eacbe`，相同。
+  - TODO（L7）：内容哈希只盖 knowledge/；提示词改了但 prompt_version 没升时，快照看不出差异（因子对比会误判同配置）。L7 CI 加检查：prompts/ 有变更而 prompt_version 未变即失败。
+- 可比性：Check 先要求两边快照完整，再按运行参数注册表 `compare.RunParams` 校验：n、suites（排序后比较）两种模式都要求一致，samples_hash 只在阶段级要求。运行参数不进因子计数。
+  - 决定：阶段级也要求 suites 一致。samples_hash 已锁定样本清单，但按套件的红线归约（pass^k）依赖 suites 标签，拿不准时按失败关闭处理；以后若确有「同样本不同 suites」的阶段对比再放开。
+- A/A：`--from-exps` 去重（重复报 `ErrAADuplicate`）；每个实验须 DONE、有 trial、快照完整、无出错 trial（`ErrAAErrors`，出错按失败计会抬高噪声阈值），因子与 n / suites / samples_hash 全部一致；少于 2 个报 `ErrAATooFew`。在隔离库 p2l0_agri_eval_it 用新校验重跑 900000010-12，阈值草稿除 generated_at 外不变，未改 thresholds.yaml。
+- 指针文件：不覆盖已有指针（早先的 stat 只为不连库就失败；本轮用 `O_CREATE|O_EXCL`，第二轮改为临时文件 fsync 后 `os.Link`，见下节）。实验已冻结时走 pointer-only：`store.MatchFrozen` 要求已冻结、DONE、有 trial，且库中快照与这次补录算出的一致，才只补写指针（stdout `pointer-only`），否则 `ErrFrozenMismatch`。compare 的 `--baseline` 解析出 id 后查库要求 `frozen = 1`（`errBaselineNotFrozen`）。
+- `--reference` 走与候选同样的前提：DONE、有 trial、与 baseline 过 `Check(ModePhase)`；只允许阶段级（`compare.ErrReferencePhaseOnly`）。
+- `compare --fail-on-unreleasable`：不可放行时退出码 1（报告照写）。默认 false，L7 CI 须显式开启（Makefile `FAIL_ON_UNRELEASABLE=1`），见 eval/README.md。
+- judge_versions 规范文本改为维度排序、维度与版本各自 `strconv.Quote`，`{"a":"b,c=d"}` 与 `{"a":"b","c":"d"}` 不再撞车。
+- run：manifest 上传失败（及建行后任一步失败）经 `store.Experiments.Fail` 置 FAILED，走同一带冻结守卫的 UPDATE，只接受 RUNNING；置失败用不随 ctx 取消的上下文。
+- 测试：compare `TestRun_FailClosed`（RUNNING 0 trial、baseline 无 trial、版本全不同、无适用指标、null / {} 快照、n / suites 不同、reference 非阶段级 / 未 DONE / 不可比）、`TestRun_ErrorTrials_FourOfFiveCrash`、`TestRun_ErrorTrials_AllCrash`（10 样本 × 5 次全崩）、`TestAA_FailClosed`；reduce `TestRedLine_ErrorTrialsFail`、`TestSampleValues`（b@1 改为 0）；evalkit `TestKnowledgeContentRef`、`TestKnowledgeRef`、`TestJudgeVersionsKey_NoCollision`；cmd/eval `TestResolveBaseline_RequiresFrozen`、`TestWritePointer_Exclusive`、`TestReleaseGate`、`TestStartExperiment_ManifestFailMarksFailed`、`TestMarkFailed_IgnoresCancel`、`TestL0Commands_FlagErrors`（加 aa 重复 id）。集成（`AS_TEST_NS=p2l0fix`）：`TestL0_RunFreezeCompare_Integration`（加 kc: 补录与 pointer-only / 不一致拒绝）、新增 `TestL0_FailClosed_Integration`（0 trial / RUNNING 不能冻结、Fail 守卫、未冻结 baseline 拒绝、RUNNING 候选拒绝、--fail-on-unreleasable 退出码）。
+- 待办（只记录，未改）：
+  - flaky 质量样本取 min 还是 mean、以及在报告里列翻转清单（L3 负责）；
+  - compare 还不读 eval/gates/thresholds.yaml，显著性只看 bootstrap 区间（L7 负责）；
+  - A/A 用重抽均值差绝对值的 95% 分位作阈值，口径待 Owner 确认；
+  - 报告的被排除样本只列前 50 条（总数照写），全量清单待需要时再加（L7 负责）。
+
+### P2-L0 第二轮审查修复（2026-11-03）
+
+- 原则不变：失败关闭，每项先写应失败测试再修；无迁移、无新依赖。
+- 样本覆盖：baseline 有而 candidate 未配对的 sample_id@version（含 candidate 换了版本的样本）数 > 0 → `INCOMPLETE`、不可放行（阻断注册表追加 `(*Result).uncovered`，优先级仍 NOT_ATTRIBUTABLE > REGRESSED > INCOMPLETE），报告「配对」节全量列出这些样本（不截断）。candidate 多跑的样本只列为排除、不阻断。
+- 只改了版本的样本（决定，失败关闭）：§6.1 的配对键是 (sample_id, sample_version)，§8 单因子要求被比较的只差一个因子；样本版本变了即样本集变了，两边已不是同一道题，不能在单因子下直接对比。做法：按当前样本用 baseline 配置重跑（同一时段）得到新 baseline，再与 candidate 对比；报告里写明这一做法。
+- 样本筛选条件：快照新增 `tags`（空表 = 不按 tag 筛选；nil = 没记录，按缺字段拒绝，旧实验因此不可比）。tags 进运行参数注册表 `compare.RunParams`（两种模式都要求一致），不计入因子；A/A 同样要求一致，阈值草稿记录 tags。freeze --backfill 取 yaml 的 tags。
+- 快照格式校验（`evalkit.Snapshot.Malformed`，格式注册表 `snapshotFormats`）：knowledge_ref 按逗号分段，每段须 `kc:` 前缀且哈希非空；suites / tags 不得有空元素。`compare.RequireComplete` 把缺字段与格式错一并报出。exp 104（跑在 4684a8d，knowledge_ref = `WORKTREE`、无 tags）作 baseline 或 candidate 都被拒（`TestRun_RejectsOldFormatSnapshot_Exp104`）。
+- knowledge_ref 两种读法一致：`GitReader.List` 改为 `git ls-tree -r -z`（不受 core.quotePath 影响，中文文件名原样；保留 mode 以识别符号链接，故未用 `--name-only`）；新 `knowledge.TrackedWorktreeReader` 只列 `git ls-files -z -- knowledge/` 的已跟踪文件（含已暂存新文件，已删文件跳过），内容取磁盘，未跟踪 / 备份文件不计入。两种读法遇符号链接（含路径中的目录链接）都返回 `knowledge.ErrSymlink`。cmd/eval 的快照与补录用 `knowledge.NewTrackedRepoReader`，知识库加载仍用 `NewRepoReader`（与生产一致）。重算：当前工作区、HEAD、c261f71 均为 `kc:3b4f180e5ce3bd6a55e4b1f863196538e4f474d92405bb739bee033cf95eacbe`（三者相等，与上一轮相同；knowledge/ 18 个文件，全是普通 blob）。exp 102 冻结命令不变。
+- 指针文件原子写：同目录 `.baseline-*.tmp` 写完、chmod 0644、fsync、close 后 `os.Link` 到目标（目标已存在即失败，保持不覆盖），再删临时文件。读者只见到不存在或完整内容；崩溃最多留下临时文件。
+- pointer-only 限同名：库里没有基线名列且不加迁移，冻结前把名字写入 eval bucket 的 `{id}/baseline.json`（`store.PutBaselineName`，对象先于不可逆的冻结写）；pointer-only 时 `store.CheckBaselineName` 要求与登记名一致，名字不同、对象读不到或内容不符都返回 `store.ErrBaselineName`（`--name baseline_p1.r2 --exp 102` 被拒）。已知局限：两个进程用不同名字并发冻结同一实验时，后写的对象可能覆盖先写的名字（Freeze 的 `AND frozen = 0` 只让一个成功，但名字对象不在同一事务里），L7 前不处理。
+- pointer-only 的 frozen_at：库里没有冻结时间列，取实验 finished_at（早于实际冻结时间），并在指针 notes 写明。
+- run 失败置 FAILED：抽出 `recordRun`（runner 装配移到建行之前，装配失败不留行）；建行后 replay 出错、Finish 出错都置 FAILED；replay panic 时先置 FAILED（结果写 stderr）再原值重新 panic，此前 panic 会让实验停在 RUNNING。`markFailed` 的上下文不随 ctx 取消但有 10s 超时（`failTimeout`）。
+- 其他：重复的 `minAARuns` 合并为 `compare.MinAARuns`；无格式参数的 `fmt.Errorf` 改为 `errors.New`。
+- A/A 阈值草稿：旧草稿的实验没有 tags，按新校验不可用，在隔离库 p2l0fix2_agri_eval_it 用 `aa --runs 3` 重跑生成（stub 下四个指标阈值仍为 0，judge 两项 null，signed_by 空）。
+- 测试：compare `TestRun_BaselineUncovered_Incomplete`、`TestCheck_TagsRunParam`、`TestRequireComplete_Format`、`TestRun_RejectsOldFormatSnapshot_Exp104`；knowledge `TestGitReader_List_NonASCII`、`TestTrackedWorktreeReader`、`TestReaders_RejectSymlink`；evalkit `TestKnowledgeContentRef_WorktreeEqualsHEAD`、`TestKnowledgeContentRef_SymlinkRejected`；cmd/eval `TestMarkFailed_HasTimeout`、`TestRecordRun_MarksFailed`、`TestWritePointer_Atomic`（并发 8 个写者只有 1 个成功、无残留临时文件、权限 0644；改前的 O_EXCL 实现也能通过，它只防回退）、`TestCheckBaselineName`、`TestPointerOnlyFrozenAt`。集成（`AS_TEST_NS=p2l0fix2b`）：pointer-only 换名被拒、frozen_at 说明、`WORKTREE` 格式的 knowledge_ref 被拒。
+- 待办（L7）：`compare --fail-on-unreleasable` 仍默认 false。CI 调用必须显式传该参数（或 `FAIL_ON_UNRELEASABLE=1`），并自检：故意构造一个不可放行的对比，确认退出码为 1。
+
+### P2-L0 调度方合并验证与基线冻结（2026-11-04）
+
+- 两轮只读审查：第一轮 P0 两条（空配对、error trial 被跳过，均失败放行）与 P1/P2 共 10 条 → 3fd8544；第二轮无 P0，P1 四条（样本子集可放行、knowledge_ref 两种读法不一致、快照格式不校验）与 P2/P3 → 85f695d。第二轮逐条回退验证新测试确实会失败。
+- 主仓验证（85f695d）：`go build / vet / vet -tags integration / test ./...` 通过；`AS_TEST_NS=p2l0s make test-integration` 42 包通过；service `-p 1 -race`（p2l0sr）通过，repository `-p 1 -race` 首轮遇本地 MySQL 在建分区表时崩溃（容器 Exited 2），`docker start` 后以 p2l0ur 重跑通过。
+- 共享库：`make migrate-eval` → agri_eval 版本 2；`make eval-freeze NAME=baseline_p1 EXP=102 BACKFILL=eval/baselines/baseline_p1_exit.yaml` → `frozen: exp_id=102 pointer=eval/baselines/baseline_p1.yaml manifest=agri-steward-eval/102/manifest.json backfilled=true`（knowledge_ref `kc:3b4f180e…acbe`，exp 102 原 git_dirty = true，补录按 c261f71 内容，属已知近似）。
+- 评测：`make eval SUITE=regression,redteam N=5` → exp 105（85f695d）170 样本 / 850 trial 全 PASS，grader_error 0、infra_error 0，redteam pass^5 = 1.00，Gate 0 #1 #2 #5 通过。exp 104（4684a8d，旧格式 knowledge_ref）作废，不可参与 compare。
+- 对比：`compare --baseline baseline_p1 --candidate 105 --fail-on-unreleasable` → 单因子、无差异因子、samples_hash 一致、配对 170 / 排除 0、四个代码指标差值 0、事实一致率与幻觉率「未接入（L2/L3）」，`NO_SIGNIFICANT_DIFF`、可放行、退出码 0（报告 eval/out/compare/102-105.md，不提交）。
+- §6.1 验收：1 满足（baseline_p1 冻结、可复用 freeze）；2 满足（多因子 → NOT_ATTRIBUTABLE，测试覆盖）；3 草稿（thresholds.yaml 来自隔离库 A/A，stub 下阈值 0，待真实模型与 Owner 签字）；4 满足（phase 模式不写门禁字段）。

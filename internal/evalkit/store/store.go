@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -21,14 +22,39 @@ const (
 	StatusInfraError  = evalkit.StatusInfraError
 	StatusGraderError = evalkit.StatusGraderError
 
-	experimentDone = "DONE"
-	// TriggerManual 是 make eval / 本地手动触发。
-	TriggerManual = "manual"
-	gitSHALen     = 40
+	experimentRunning = "RUNNING"
+	experimentDone    = "DONE"
+	// experimentFailed 是建行后运行中途失败（样本清单写入、回放或落库出错）的实验状态；compare / freeze 只认 DONE。
+	experimentFailed = "FAILED"
+	gitSHALen        = 40
 )
 
-// ErrBadGitSHA 表示 git_sha 不是 40 位。
-var ErrBadGitSHA = errors.New("store: git_sha must be 40 hex chars")
+// experiment.trigger_kind 取值（P2 L0：cmd/eval run --trigger）。
+const (
+	// TriggerManual 是 make eval / 本地手动触发（默认）。
+	TriggerManual  = "manual"
+	TriggerPR      = "pr"
+	TriggerNightly = "nightly"
+	TriggerRelease = "release"
+)
+
+// Triggers 是合法的 trigger_kind。
+var Triggers = []string{TriggerManual, TriggerPR, TriggerNightly, TriggerRelease}
+
+var (
+	// ErrBadGitSHA 表示 git_sha 不是 40 位。
+	ErrBadGitSHA = errors.New("store: git_sha must be 40 hex chars")
+	// ErrEmptySnapshot 表示配置快照缺字段（P2 起新实验必须带完整快照）。
+	ErrEmptySnapshot = errors.New("store: snapshot has empty fields")
+	// ErrBadTrigger 表示 trigger_kind 不在 Triggers 内。
+	ErrBadTrigger = errors.New("store: trigger must be manual|pr|nightly|release")
+	// ErrFrozen 表示实验已冻结（frozen = 1），任何修改都被拒绝；要改基线须另跑实验并冻结为新名字（如 .r2）。
+	ErrFrozen = errors.New("store: experiment is frozen")
+	// ErrNotFound 表示 experiment 不存在。
+	ErrNotFound = errors.New("store: experiment not found")
+	// ErrNotRunning 表示实验已不在 RUNNING（Fail 只用于中途失败的实验）。
+	ErrNotRunning = errors.New("store: experiment is not RUNNING")
+)
 
 // Experiments 读写 agri_eval。db 须指向 agri_eval 库。
 type Experiments struct {
@@ -38,16 +64,29 @@ type Experiments struct {
 // New 构造 Experiments。
 func New(db *repository.DB) *Experiments { return &Experiments{db: db} }
 
-// Start 插入 RUNNING 状态的 experiment，返回自增 id（同连接取 LastInsertId）。
-func (s *Experiments) Start(ctx context.Context, suites []string, trigger, gitSHA string, at time.Time) (uint64, error) {
-	if len(gitSHA) != gitSHALen {
-		return 0, fmt.Errorf("%w: %q", ErrBadGitSHA, gitSHA)
+// ValidTrigger 报告 trigger 是否为合法 trigger_kind。
+func ValidTrigger(trigger string) bool { return slices.Contains(Triggers, trigger) }
+
+// Start 插入 RUNNING 状态的 experiment（suite 取 snap.Suites 逗号拼接，snapshot 写配置快照），返回自增 id（同连接取 LastInsertId）。
+func (s *Experiments) Start(ctx context.Context, trigger string, snap evalkit.Snapshot, at time.Time) (uint64, error) {
+	if !ValidTrigger(trigger) {
+		return 0, fmt.Errorf("%w: %q", ErrBadTrigger, trigger)
+	}
+	if missing := snap.MissingConfig(); len(missing) > 0 {
+		return 0, fmt.Errorf("%w: %s", ErrEmptySnapshot, strings.Join(missing, ","))
+	}
+	if len(snap.GitSHA) != gitSHALen {
+		return 0, fmt.Errorf("%w: %q", ErrBadGitSHA, snap.GitSHA)
+	}
+	b, err := json.Marshal(snap)
+	if err != nil {
+		return 0, fmt.Errorf("store: snapshot: %w", err)
 	}
 	var id int64
-	err := s.db.WithContext(ctx).Transaction(func(tx *repository.DB) error {
+	err = s.db.WithContext(ctx).Transaction(func(tx *repository.DB) error {
 		res, err := tx.Statement.ConnPool.ExecContext(ctx,
-			"INSERT INTO experiment (suite, trigger_kind, git_sha, status, started_at) VALUES (?, ?, ?, 'RUNNING', ?)",
-			strings.Join(suites, ","), trigger, gitSHA, at)
+			"INSERT INTO experiment (suite, trigger_kind, git_sha, status, started_at, snapshot) VALUES (?, ?, ?, ?, ?, ?)",
+			strings.Join(snap.Suites, ","), trigger, snap.GitSHA, experimentRunning, at, string(b))
 		if err != nil {
 			return fmt.Errorf("insert experiment: %w", err)
 		}
@@ -62,9 +101,20 @@ func (s *Experiments) Start(ctx context.Context, suites []string, trigger, gitSH
 	return uint64(id), nil
 }
 
-// Finish 在一个事务内批量写 trial 并把 experiment 置为 DONE。
+// Finish 在一个事务内批量写 trial、回填快照的 wall_time（token_used / cost 由调用方填入 exp.Snapshot）并把 experiment 置为 DONE。
 func (s *Experiments) Finish(ctx context.Context, id uint64, exp *evalkit.Experiment) error {
-	err := s.db.WithContext(ctx).Transaction(func(tx *repository.DB) error {
+	exp.Snapshot.WallTime = WallTime(exp.StartedAt, exp.FinishedAt)
+	if missing := exp.Snapshot.Missing(); len(missing) > 0 {
+		return fmt.Errorf("%w: %s", ErrEmptySnapshot, strings.Join(missing, ","))
+	}
+	snap, err := json.Marshal(exp.Snapshot)
+	if err != nil {
+		return fmt.Errorf("store: snapshot: %w", err)
+	}
+	err = s.db.WithContext(ctx).Transaction(func(tx *repository.DB) error {
+		if err := lockUnfrozen(tx, id); err != nil {
+			return err
+		}
 		if len(exp.Trials) > 0 {
 			query, args, err := trialInsert(id, exp)
 			if err != nil {
@@ -74,22 +124,80 @@ func (s *Experiments) Finish(ctx context.Context, id uint64, exp *evalkit.Experi
 				return fmt.Errorf("insert trials: %w", err)
 			}
 		}
-		res := tx.Exec("UPDATE experiment SET status = ?, finished_at = ? WHERE id = ?", experimentDone, exp.FinishedAt, id)
-		if res.Error != nil {
-			return fmt.Errorf("finish experiment: %w", res.Error)
-		}
-		if res.RowsAffected != 1 {
-			return fmt.Errorf("finish experiment %d: not found", id)
-		}
-		return nil
+		return guardedUpdate(tx, id, "status = ?, finished_at = ?, snapshot = ?", experimentDone, exp.FinishedAt, string(snap))
 	})
 	if err != nil {
-		return fmt.Errorf("store: %w", err)
+		return fmt.Errorf("store: finish %d: %w", id, err)
 	}
 	return nil
 }
 
-const trialCols = "(experiment_id, sample_id, trial_index, suite, run_id, status, passed, scores, latency_ms, created_at)"
+// Fail 把仍在 RUNNING 的实验置 FAILED 并记 finished_at（走带冻结守卫的 UPDATE）；已结束或已冻结返回错误。
+func (s *Experiments) Fail(ctx context.Context, id uint64, at time.Time) error {
+	err := s.db.WithContext(ctx).Transaction(func(tx *repository.DB) error {
+		rec, err := getRecord(tx, id, true)
+		if err != nil {
+			return err
+		}
+		if rec.Status != experimentRunning {
+			return fmt.Errorf("%w: %d status=%s", ErrNotRunning, id, rec.Status)
+		}
+		return guardedUpdate(tx, id, "status = ?, finished_at = ?", experimentFailed, at)
+	})
+	if err != nil {
+		return fmt.Errorf("store: fail %d: %w", id, err)
+	}
+	return nil
+}
+
+// WallTime 是快照 wall_time 的文本：墙钟时长取整到秒。
+func WallTime(started, finished time.Time) string {
+	return finished.Sub(started).Round(time.Second).String()
+}
+
+// guardedUpdateSQL 是 experiment 的唯一 UPDATE 形状：一律带 AND frozen = 0（P2 L0，冻结后只读）。
+func guardedUpdateSQL(set string) string {
+	return "UPDATE experiment SET " + set + " WHERE id = ? AND frozen = 0"
+}
+
+// guardedUpdate 执行带冻结守卫的 UPDATE；0 行时区分「已冻结」「不存在」与「值未变」（驱动按 changed rows 计数）。
+func guardedUpdate(tx *repository.DB, id uint64, set string, args ...any) error {
+	res := tx.Exec(guardedUpdateSQL(set), append(args, id)...)
+	if res.Error != nil {
+		return fmt.Errorf("update experiment: %w", res.Error)
+	}
+	if res.RowsAffected == 1 {
+		return nil
+	}
+	return frozenState(tx, id, false)
+}
+
+// lockUnfrozen 在事务内对 experiment 行加锁并要求未冻结。
+func lockUnfrozen(tx *repository.DB, id uint64) error { return frozenState(tx, id, true) }
+
+// frozenState 读 experiment.frozen：行不存在返回 ErrNotFound，已冻结返回 ErrFrozen；lock 时 FOR UPDATE。
+func frozenState(tx *repository.DB, id uint64, lock bool) error {
+	q := "SELECT frozen FROM experiment WHERE id = ?"
+	if lock {
+		q += " FOR UPDATE"
+	}
+	var frozen []bool
+	if err := tx.Raw(q, id).Scan(&frozen).Error; err != nil {
+		return fmt.Errorf("read experiment.frozen: %w", err)
+	}
+	switch {
+	case len(frozen) == 0:
+		return fmt.Errorf("%w: %d", ErrNotFound, id)
+	case frozen[0]:
+		return fmt.Errorf("%w: %d", ErrFrozen, id)
+	}
+	return nil
+}
+
+const trialCols = "(experiment_id, sample_id, sample_version, trial_index, suite, run_id, status, passed, scores, latency_ms, created_at)"
+
+// trialColCount 是 trialCols 的列数。
+const trialColCount = 11
 
 // scoreJSON 是 trial.scores 中一个维度的取值；error 非空即 grader_error。
 type scoreJSON struct {
@@ -106,7 +214,7 @@ type scoreJSON struct {
 // trialInsert 拼批量插入；scores 为维度名 → 结果，passed = status 为 PASS，run_id 为 0 时写 NULL。
 func trialInsert(id uint64, exp *evalkit.Experiment) (string, []any, error) {
 	rows := make([]string, 0, len(exp.Trials))
-	args := make([]any, 0, len(exp.Trials)*10)
+	args := make([]any, 0, len(exp.Trials)*trialColCount)
 	for _, t := range exp.Trials {
 		scores := make(map[string]scoreJSON, len(t.Scores))
 		for _, sc := range t.Scores {
@@ -122,8 +230,8 @@ func trialInsert(id uint64, exp *evalkit.Experiment) (string, []any, error) {
 			runID = t.RunID
 		}
 		status := t.Status()
-		rows = append(rows, "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
-		args = append(args, id, t.SampleID, t.TrialIndex, t.Suite, runID, status, status == StatusPass,
+		rows = append(rows, "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+		args = append(args, id, t.SampleID, t.SampleVersion, t.TrialIndex, t.Suite, runID, status, status == StatusPass,
 			string(b), t.Latency.Milliseconds(), exp.FinishedAt)
 	}
 	return "INSERT INTO trial " + trialCols + " VALUES " + strings.Join(rows, ", "), args, nil
@@ -143,12 +251,11 @@ func (s *Experiments) SetReportKey(ctx context.Context, id uint64, key string) e
 	if key == "" || len(key) > reportKeyMax {
 		return fmt.Errorf("%w: %q", ErrBadReportKey, key)
 	}
-	res := s.db.WithContext(ctx).Exec("UPDATE experiment SET report_key = ? WHERE id = ?", key, id)
-	if res.Error != nil {
-		return fmt.Errorf("store: set report_key: %w", res.Error)
-	}
-	if res.RowsAffected != 1 {
-		return fmt.Errorf("store: set report_key: experiment %d not found", id)
+	err := s.db.WithContext(ctx).Transaction(func(tx *repository.DB) error {
+		return guardedUpdate(tx, id, "report_key = ?", key)
+	})
+	if err != nil {
+		return fmt.Errorf("store: set report_key: %w", err)
 	}
 	return nil
 }

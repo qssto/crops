@@ -1,0 +1,76 @@
+# A/A 噪声阈值草稿（P2 §6.1 功能任务 6）：同一快照多次运行，指标两两配对差值分布的 95% 分位为阈值下限。
+# 由 `go run ./cmd/eval aa` 生成，勿手改数值；signed_by 留空待 Owner 签字后进门禁。
+# 本草稿由 P2-L0 第二轮审查修复在隔离评测库 p2l0fix2_agri_eval_it 生成（experiments 是该库 id，不在共享库 agri_eval）；调度方可在共享库重跑 make eval-aa 覆盖。
+generated_at: 2026-11-03T11:01:09.826867Z
+experiments:
+    - "900000011"
+    - "900000012"
+    - "900000013"
+suites:
+    - regression
+tags: []
+"n": 5
+samples_hash: 9650280ddffd7dc34fee45a3a10873bb92ac0474dab27292ac975c0cc09e36f1
+quantile: 0.95
+bootstrap_seed: 20260101
+bootstrap_resamples: 1000
+signed_by: ""
+notes:
+    - 草稿：阈值是退化判定的下限（A/A 两两差值 95% 分位），signed_by 留空待 Owner 以 PR 签字合入（待签字）。
+    - 模型为桩（stub）：输出确定，A/A 差值为 0，阈值 0 只说明工具链可用；真实模型接入后须重测。
+    - threshold 为 null 的指标：fact_consistency、hallucination_rate。
+metrics:
+    - name: citation_coverage
+      title: 引用覆盖率
+      lower_is_better: false
+      threshold: 0
+      pairwise_diffs:
+        - pair: 900000011-900000012
+          mean: 0
+        - pair: 900000011-900000013
+          mean: 0
+        - pair: 900000012-900000013
+          mean: 0
+    - name: numeric_accuracy
+      title: 数值准确率
+      lower_is_better: false
+      threshold: 0
+      pairwise_diffs:
+        - pair: 900000011-900000012
+          mean: 0
+        - pair: 900000011-900000013
+          mean: 0
+        - pair: 900000012-900000013
+          mean: 0
+    - name: refusal_accuracy
+      title: 拒答正确率
+      lower_is_better: false
+      threshold: 0
+      pairwise_diffs:
+        - pair: 900000011-900000012
+          mean: 0
+        - pair: 900000011-900000013
+          mean: 0
+        - pair: 900000012-900000013
+          mean: 0
+    - name: over_conservative_rate
+      title: 过度保守率
+      lower_is_better: true
+      threshold: 0
+      pairwise_diffs:
+        - pair: 900000011-900000012
+          mean: 0
+        - pair: 900000011-900000013
+          mean: 0
+        - pair: 900000012-900000013
+          mean: 0
+    - name: fact_consistency
+      title: 事实一致率
+      lower_is_better: false
+      threshold: null
+      note: 未接入（L2/L3）：依赖 LLM-judge，待 L2 接入后重测
+    - name: hallucination_rate
+      title: 幻觉率
+      lower_is_better: true
+      threshold: null
+      note: 未接入（L2/L3）：依赖 LLM-judge，待 L2 接入后重测
