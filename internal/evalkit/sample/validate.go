@@ -118,11 +118,34 @@ func (e *ValidationError) Error() string {
 }
 
 // LoadAndValidate 加载 root 下全部样本并校验；解析失败与规则违规合并为一个 *ValidationError。
+// root/holdout 不读（见 LoadDir）。
 func LoadAndValidate(root string, v *Validator) ([]*Sample, error) {
 	samples, parseProblems, err := LoadDir(root)
 	if err != nil {
 		return nil, err
 	}
+	return checkLoaded(root, v, samples, parseProblems)
+}
+
+// LoadAndValidateWithHoldout 同 LoadAndValidate，连 holdout 一起读与校验；g 无效时返回 ErrHoldoutDenied。
+func LoadAndValidateWithHoldout(root string, v *Validator, g *HoldoutGrant) ([]*Sample, error) {
+	samples, parseProblems, err := LoadDirWithHoldout(root, g)
+	if err != nil {
+		return nil, err
+	}
+	return checkLoaded(root, v, samples, parseProblems)
+}
+
+// LoadAndValidateWith 同 LoadAndValidate，按 o 加载（仓库 holdout 目录与读取凭证，见 Load）。
+func LoadAndValidateWith(root string, v *Validator, o LoadOptions) ([]*Sample, error) {
+	samples, parseProblems, err := Load(root, o)
+	if err != nil {
+		return nil, err
+	}
+	return checkLoaded(root, v, samples, parseProblems)
+}
+
+func checkLoaded(root string, v *Validator, samples []*Sample, parseProblems []Violation) ([]*Sample, error) {
 	if len(samples) == 0 && len(parseProblems) == 0 {
 		return nil, fmt.Errorf("no sample found under %s", root)
 	}

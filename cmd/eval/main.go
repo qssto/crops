@@ -7,6 +7,8 @@
 //	eval baseline freeze --name baseline_p1 --exp 102 [--backfill eval/baselines/baseline_p1_exit.yaml]
 //	eval compare --baseline <名|exp id> --candidate <id> [--mode factor|phase] [--reference <id>] [--fail-on-unreleasable]
 //	eval aa [--runs 3 | --from-exps a,b,c] [--out eval/gates/thresholds.yaml]
+//	eval resume --exp <id> [--holdout]（P2 L7-a：补跑缺失 / INFRA_ERROR trial，见 resume.go）
+//	eval promptcheck --base origin/main（P2 L7-a：prompts/ 改了 prompt_version 必须变，见 promptcheck.go）
 //
 // validate 只做样本静态校验、不装配 agent，并输出分层覆盖报表与补写清单（P2 L1-T）；run 先校验再经 app.Build 装配被测 agent 回放并出报告
 // （--baseline 时另把报告与配置快照上传 agri-steward-eval 的 report/{exp_id}/ 并写 baseline yaml）；
@@ -60,7 +62,7 @@ const (
 	contractsDir = "contracts"
 	// toolPolicyFile 是 --repo 下工具策略（no_model_actuate 取其 actuate 集合，与生产同一份）。
 	toolPolicyFile = "policy/tool_policy.yaml"
-	usageString    = "usage: eval <validate|run|kbdump|graduate|baseline|compare|aa> [flags]"
+	usageString    = "usage: eval <validate|run|kbdump|graduate|baseline|compare|aa|resume|promptcheck|judge> [flags]"
 )
 
 func main() {
@@ -91,6 +93,12 @@ func run(args []string, stdout, stderr io.Writer) int {
 		err = cmdCompare(ctx, args[1:], stdout, stderr)
 	case "aa":
 		err = cmdAA(ctx, args[1:], stdout, stderr)
+	case "resume":
+		err = cmdResume(ctx, args[1:], stdout, stderr)
+	case "promptcheck":
+		err = cmdPromptCheck(ctx, args[1:], stdout)
+	case "judge":
+		err = cmdJudge(ctx, args[1:], stdout, stderr)
 	default:
 		fmt.Fprintln(stderr, usageString)
 		return exitUsage
@@ -114,6 +122,8 @@ type sampleFlags struct {
 	dir      string
 	taxonomy string
 	repo     string
+	// holdout 非 nil 时连 holdout 一起加载（authorizeHoldout 签发；P2 L2）。
+	holdout *sample.HoldoutGrant
 }
 
 func (f *sampleFlags) register(fs *flag.FlagSet) {
@@ -132,6 +142,8 @@ type loadedSamples struct {
 	kbContent knowledge.TreeReader
 	graders   []grader.Grader
 	refNotes  []string
+	// judgeVersions 是 run --judges 追加的 judge 版本（P2 L2），写快照 judge_versions。
+	judgeVersions map[string]string
 }
 
 // loadValidSamples 加载并静态校验全部样本（含 L3 must_cite / product_in 知识库规则、L4 参考解过全部打分器）。
@@ -157,7 +169,7 @@ func (f *sampleFlags) loadValidSamples() (*loadedSamples, error) {
 	graders := append(code.All(schema, tp.Actuate()), code.NewDegradedMatrix(faults))
 	ref := code.NewReferenceCheck(tx, kb, graders)
 	rules := append(sample.DefaultRules(tx, kb), ref)
-	samples, err := sample.LoadAndValidate(f.dir, sample.NewValidator(rules...))
+	samples, err := sample.LoadAndValidateWith(f.dir, sample.NewValidator(rules...), f.loadOptions())
 	if err != nil {
 		return nil, err
 	}
@@ -170,8 +182,14 @@ func cmdValidate(args []string, stdout io.Writer) error {
 	var cf coverageFlags
 	sf.register(fs)
 	cf.register(fs)
+	withHoldout := fs.Bool("holdout", false, "连 holdout 一起校验并计入覆盖报表（须 "+envEvalReader+" 在 "+defaultHoldoutReaders+" 名单中）")
 	if err := fs.Parse(args); err != nil {
 		return err
+	}
+	if *withHoldout {
+		if err := sf.authorizeHoldout(); err != nil {
+			return err
+		}
 	}
 	ls, err := sf.loadValidSamples()
 	if err != nil {
@@ -208,13 +226,27 @@ func cmdRun(ctx context.Context, args []string, stdout, stderr io.Writer) (err e
 	baseline := fs.String("baseline", "", "非空时把报告与配置快照上传 report/{exp_id}/ 并写 {baselines-dir}/{name}.yaml（要求 n >= 3）")
 	baselinesDir := fs.String("baselines-dir", defaultBaselines, "baseline yaml 目录")
 	trigger := fs.String("trigger", store.TriggerManual, "触发方式 manual|pr|nightly|release（写 experiment.trigger_kind）")
+	mode := fs.String("mode", "", "预设 smoke|nightly|release（固定 suite / n / tags / trigger，见 mode.go）；空 = 按 --suite / --n / --tags")
+	smokeList := fs.String("smoke-list", defaultSmokeList, "--mode smoke 的冒烟清单")
+	budget := fs.Int("token-budget", 0, "累计 token 上限，超出停止派发并置 BUDGET_EXCEEDED；0 = 不限（写 NULL，仅 manual 可用）")
 	var inf infraFlags
 	inf.register(fs)
+	var jf judgeFlags
+	jf.register(fs)
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	if !store.ValidTrigger(*trigger) {
-		return fmt.Errorf("%w: %q", store.ErrBadTrigger, *trigger)
+	if err := checkModeFlags(fs, *mode); err != nil {
+		return err
+	}
+	if *mode != "" {
+		*trigger = runModes[*mode].trigger
+	}
+	if err := checkTrigger(*mode, *trigger); err != nil {
+		return err
+	}
+	if err := checkBudget(*trigger, *budget); err != nil {
+		return err
 	}
 	if *n < 1 {
 		return fmt.Errorf("n must be >= 1, got %d", *n)
@@ -223,17 +255,29 @@ func cmdRun(ctx context.Context, args []string, stdout, stderr io.Writer) (err e
 		if err := report.ValidateBaselineName(*baseline); err != nil {
 			return err
 		}
-		if *n < evalkit.DefaultTrials {
-			return fmt.Errorf("baseline needs n >= %d (Gate 0 pass^%d), got %d", evalkit.DefaultTrials, evalkit.DefaultTrials, *n)
-		}
 	}
 
+	// P2 L2 / L7-a：显式点名 holdout 或 --mode release（全部套件须含 holdout）时才校验读者身份并读入 holdout。
+	if wantsHoldout(splitList(*suites)) || *mode == modeRelease {
+		if err := sf.authorizeHoldout(); err != nil {
+			return err
+		}
+	}
 	ls, err := sf.loadValidSamples()
 	if err != nil {
 		return err
 	}
-	opts := evalkit.Options{Suites: splitList(*suites), Tags: splitList(*tags), N: *n}
-	selected := evalkit.Select(ls.samples, opts.Suites, opts.Tags)
+	if err := jf.attach(ls); err != nil {
+		return err
+	}
+	selected, opts, err := selectRun(*mode, *smokeList, ls,
+		evalkit.Options{Suites: splitList(*suites), Tags: splitList(*tags), N: *n, TokenBudget: *budget})
+	if err != nil {
+		return err
+	}
+	if *baseline != "" && opts.N < evalkit.DefaultTrials {
+		return fmt.Errorf("baseline needs n >= %d (Gate 0 pass^%d), got %d", evalkit.DefaultTrials, evalkit.DefaultTrials, opts.N)
+	}
 	if len(selected) == 0 {
 		return fmt.Errorf("no sample matches suite=%v tags=%v", opts.Suites, opts.Tags)
 	}
@@ -244,6 +288,7 @@ func cmdRun(ctx context.Context, args []string, stdout, stderr io.Writer) (err e
 	}
 	// baseline 上传后还要写 experiment.report_key，故连接在函数末尾才关。
 	defer func() { err = errors.Join(err, in.close()) }()
+	opts.Concurrency = in.pool.Size()
 	exp, id, err := runWithStore(ctx, in, ls, selected, opts, *trigger)
 	if err != nil {
 		return err
@@ -253,12 +298,17 @@ func cmdRun(ctx context.Context, args []string, stdout, stderr io.Writer) (err e
 	if err != nil {
 		return err
 	}
-	path, err := report.WriteFile(*outRoot, exp)
+	// P2 L2：holdout 明细只进 report/holdout/ 前缀；本地与公开报告里 holdout 只给 ID 与打分器名。
+	exp, path, err := writeReport(ctx, in.objects, in.evalBucket, *outRoot, exp, stdout)
 	if err != nil {
 		return err
 	}
-	fmt.Fprintf(stdout, "eval done: exp_id=%s samples=%d trials=%d quarantined=%d report=%s transcripts=%d bucket=%s\n",
-		exp.ID, exp.Samples, len(exp.Trials), len(exp.Quarantined), path, uploaded, in.evalBucket)
+	fmt.Fprintf(stdout, "eval done: exp_id=%s samples=%d trials=%d quarantined=%d report=%s transcripts=%d bucket=%s status=%s\n",
+		exp.ID, exp.Samples, len(exp.Trials), len(exp.Quarantined), path, uploaded, in.evalBucket, exp.Gate.Status)
+	// 门禁不过（VOID / BUDGET_EXCEEDED / CI 触发下红线 pass^3 < 1）：报告照写，退出非 0，不发布 baseline。
+	if err := gateVerdict(*trigger, exp); err != nil {
+		return err
+	}
 	if *baseline == "" {
 		return nil
 	}
@@ -284,11 +334,7 @@ func runWithStore(ctx context.Context, in *infra, ls *loadedSamples, samples []*
 		return nil, 0, err
 	}
 	// runner 先于建行装配：装配失败不留实验行。
-	runner, err := evalkit.NewRunner(evalkit.PoolEnv(in.pool, in.deps), wall.Now,
-		evalkit.WithQuestion(in.question), evalkit.WithGraders(ls.kb, ls.graders...),
-		evalkit.WithApprover(evalkit.ScriptApproverByRole(in.approvers[0], in.approvers[1], in.approversByRole)), evalkit.WithDevices(in.devices),
-		// P1-L4 合并统一：回执步骤用与 Deps.ReceiptSecret 相同的进程内密钥签名，排空复用 DrainOutbox。
-		evalkit.WithReceiptSteps(evalkit.ReceiptSteps{Secret: in.receiptSecret, Drain: evalkit.DrainStep}))
+	runner, err := newRunner(in, ls, wall.Now)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -301,7 +347,17 @@ func runWithStore(ctx context.Context, in *infra, ls *loadedSamples, samples []*
 		exp.Snapshot = withResults(snap, exp)
 		return exp, nil
 	}
-	return recordRun(ctx, store.New(in.evalDB), in.objects, in.evalBucket, trigger, snap, evalkit.SampleRefs(samples), wall.Now, replay)
+	exps := gatedExperiments{s: store.New(in.evalDB), budget: opts.TokenBudget, maxRate: in.eval.VoidInfraErrorRate, now: wall.Now}
+	return recordRun(ctx, exps, in.objects, in.evalBucket, trigger, snap, evalkit.SampleRefs(samples), wall.Now, replay)
+}
+
+// newRunner 装配回放被测 agent 的 Runner（run 与 resume 共用）。
+func newRunner(in *infra, ls *loadedSamples, now func() time.Time) (*evalkit.Runner, error) {
+	return evalkit.NewRunner(evalkit.PoolEnv(in.pool, in.deps), now,
+		evalkit.WithQuestion(in.question), evalkit.WithGraders(ls.kb, ls.graders...),
+		evalkit.WithApprover(evalkit.ScriptApproverByRole(in.approvers[0], in.approvers[1], in.approversByRole)), evalkit.WithDevices(in.devices),
+		// P1-L4 合并统一：回执步骤用与 Deps.ReceiptSecret 相同的进程内密钥签名，排空复用 DrainOutbox。
+		evalkit.WithReceiptSteps(evalkit.ReceiptSteps{Secret: in.receiptSecret, Drain: evalkit.DrainStep}))
 }
 
 // experimentLifecycle 是 run 用到的实验状态写入（store.Experiments 实现；单测替换以覆盖失败路径）。
@@ -367,7 +423,7 @@ func markFailed(ctx context.Context, exps experimentLifecycle, id uint64, cause 
 }
 
 // snapshot 采集配置快照（评测设计 §12.1、P2 §6.1）：git、提示词版本、模型档位与 provider、知识内容哈希、样本集哈希、
-// 加载 / 检索策略、judge 版本（现无 judge，为空表）与运行参数 suites / tags / n。
+// 加载 / 检索策略、judge 版本（未开 --judges 为空表）、运行参数 suites / tags / n 与作废阈值（resume 沿用）。
 func snapshot(ctx context.Context, in *infra, ls *loadedSamples, samples []*sample.Sample, opts evalkit.Options) (evalkit.Snapshot, error) {
 	sha, err := gitSHA(ctx)
 	if err != nil {
@@ -384,8 +440,8 @@ func snapshot(ctx context.Context, in *infra, ls *loadedSamples, samples []*samp
 	return evalkit.Snapshot{GitSHA: sha, GitDirty: dirty, PromptVersion: in.model.PromptVersion,
 		ModelTier: in.model.DefaultTier, Model: in.model.Provider,
 		KnowledgeRef: kref, SamplesHash: evalkit.SamplesHash(samples),
-		LoaderStrategy: evalkit.LoaderV0, RetrievalStrategy: evalkit.RetrievalProgressive, JudgeVersions: map[string]string{},
-		Suites: opts.Suites, Tags: recordedTags(opts.Tags), N: opts.N}, nil
+		LoaderStrategy: evalkit.LoaderV0, RetrievalStrategy: evalkit.RetrievalProgressive, JudgeVersions: ls.judgeVersionMap(),
+		Suites: opts.Suites, Tags: recordedTags(opts.Tags), N: opts.N, VoidInfraErrorRate: in.eval.VoidInfraErrorRate}, nil
 }
 
 // recordedTags 是写进快照的样本筛选条件：没有 --tags 时记空表（非 nil），与「快照没记录 tags」（nil，旧实验）区分。

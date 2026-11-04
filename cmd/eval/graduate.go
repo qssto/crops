@@ -40,7 +40,7 @@ func cmdGraduate(ctx context.Context, args []string, stdout, stderr io.Writer) e
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	samples, problems, err := sample.LoadDir(*dir)
+	samples, problems, err := sample.Load(*dir, sample.LoadOptions{HoldoutDir: filepath.Join(defaultRepo, defaultDir, sample.HoldoutDir)})
 	if err != nil {
 		return err
 	}

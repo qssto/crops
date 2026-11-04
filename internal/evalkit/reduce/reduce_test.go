@@ -250,3 +250,19 @@ func TestPassHatK(t *testing.T) {
 		})
 	}
 }
+
+// L2 评审裁决：门禁未开的 judge 出错（AdvisoryError）单列计数，不算通过 / 失败 / grader_error，不进均值，不改样本全过。
+func TestReduceDims_AdvisoryError(t *testing.T) {
+	adv := evalkit.Score{Name: "fact_consistency", Pass: true, AdvisoryError: "grader fact_consistency on s-1#1: bad evidence"}
+	r := Reduce([]evalkit.Trial{
+		trial("s-1", 0, red("schema_valid", true), q("fact_consistency", true, 3)),
+		trial("s-1", 1, red("schema_valid", true), adv),
+	})
+	d := r.Dims[1]
+	if d.Name != "fact_consistency" || d.Pass != 1 || d.Fail != 0 || d.GraderErrors != 0 || d.AdvisoryErrors != 1 || d.Mean != 3 {
+		t.Fatalf("dim = %+v, want pass 1, advisory 1, mean 3", *d)
+	}
+	if len(r.GraderErrors) != 0 || r.Samples[0].AllPass != 2 || r.Samples[0].GraderErrors != 0 {
+		t.Fatalf("grader errors %v, sample = %+v", r.GraderErrors, *r.Samples[0])
+	}
+}

@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 
+	"agri-steward/internal/agent/knowledge"
+	"agri-steward/internal/evalkit/sample"
 	"agri-steward/internal/evalkit/sample/coverage"
 )
 
@@ -45,7 +47,13 @@ func (f *coverageFlags) printCoverage(stdout io.Writer, ls *loadedSamples, sf sa
 	if err != nil {
 		return err
 	}
-	r, err := coverage.Count(ls.samples, ls.tx, tg, sf.dir)
+	count := coverage.Count
+	if sf.holdout != nil {
+		count = func(s []*sample.Sample, tx *knowledge.Taxonomy, t *coverage.Targets, dir string) (*coverage.Report, error) {
+			return coverage.CountWithHoldout(s, tx, t, dir, sf.holdout)
+		}
+	}
+	r, err := count(ls.samples, ls.tx, tg, sf.dir)
 	if err != nil {
 		return err
 	}

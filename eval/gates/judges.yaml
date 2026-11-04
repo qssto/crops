@@ -1,0 +1,12 @@
+# judge 门禁配置（P2 L2，路线 §6.3 功能任务 5-7）：三个维度默认关闭，judge 分数只进报告。
+# kappa_threshold 是 judge-专家二次加权 Kappa 的 bootstrap 95% 区间下限阈值（初步参考 0.6，待实测；评测设计方案参考 0.7）。
+# 校准报告（cmd/eval judge calibrate）标「可进门禁」的维度，以 PR 把对应 enabled 改为 true；未达标维度保持 false。
+# 当前没有真实 judge 模型与专家（待真实模型、待专家），任何维度都不得打开。
+kappa_threshold: 0.6
+dimensions:
+  fact_consistency:
+    enabled: false
+  conclusion_match:
+    enabled: false
+  explanation_quality:
+    enabled: false

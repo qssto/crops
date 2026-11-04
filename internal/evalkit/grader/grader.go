@@ -130,6 +130,12 @@ type Grader interface {
 	Grade(ctx context.Context, t *Trial) (Score, error)
 }
 
+// Advisory 由「出错不改 trial 状态」的打分器实现（门禁未开的 LLM-judge，L2 评审裁决）：Advisory() 为真时
+// 运行器把 Grade 的错误记进 Score.AdvisoryError（报告单列、转人工队列），不记 grader_error。
+type Advisory interface {
+	Advisory() bool
+}
+
 // Score 是一次打分结果。
 type Score struct {
 	Pass     bool

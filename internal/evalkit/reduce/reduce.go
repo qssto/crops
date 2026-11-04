@@ -22,6 +22,8 @@ type Dim struct {
 	Pass         int
 	Fail         int
 	GraderErrors int
+	// AdvisoryErrors 是门禁未开的 judge 出错次数（Score.AdvisoryError）：不计通过 / 失败 / grader_error，不进均值。
+	AdvisoryErrors int
 	// Applicable 是已打分（非 grader_error）且不是 NotApplicable 的 trial 数（P1-L8-A 审查修复）：
 	// 为 0 而 Pass > 0 时该维度在本次实验里全是默认放行，报告标「无适用样本」，不能读成「通过」。
 	Applicable int
@@ -168,6 +170,10 @@ func (r *Result) collectDims(trials []evalkit.Trial) {
 				d.GraderErrors++
 				continue
 			}
+			if sc.AdvisoryError != "" {
+				d.AdvisoryErrors++
+				continue
+			}
 			if sc.Pass {
 				d.Pass++
 			} else {
@@ -216,7 +222,7 @@ func (r *Result) collectSamples(trials []evalkit.Trial) {
 		graderErr := false
 		for _, sc := range t.Scores {
 			graderErr = graderErr || sc.Error != ""
-			if sc.Error == "" && !sc.NotApplicable {
+			if sc.Error == "" && sc.AdvisoryError == "" && !sc.NotApplicable {
 				s.Applicable[sc.Name]++
 			}
 		}

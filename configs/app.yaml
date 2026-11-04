@@ -70,3 +70,9 @@ alerts:
   no_citation_window: 2m
   backlog_refresh: 30s
   audit_write_timeout: 500ms
+# 评测调度与作废门禁（P2-L7a）：trial 并发度 = floor(qpm × 0.7 / llm_calls_per_trial)，至少 1（桩模型缺省 = 1）；
+# 实验结束 infra_error 占比 > void_infra_error_rate 或存在 grader_error 即 VOID。AS_EVAL_QPM 等覆盖。
+eval:
+  qpm: 5
+  llm_calls_per_trial: 3
+  void_infra_error_rate: 0.05

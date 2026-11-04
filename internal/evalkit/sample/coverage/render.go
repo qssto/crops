@@ -32,9 +32,12 @@ func Render(w io.Writer, r *Report, tx *knowledge.Taxonomy, opt RenderOptions) e
 	p.line(r.Counted < t.TotalMin, "coverage: %d / %d samples%s (%s; quarantined %d still counted)",
 		r.Counted, t.TotalMin, mark(r.Counted < t.TotalMin), suiteSummary(r.BySuite), r.Quarantined)
 	p.line(false, "user_sim: %d (counted separately, not in total)", r.UserSim)
-	if r.HoldoutPresent {
+	switch {
+	case r.HoldoutReader != "":
+		p.line(false, "holdout: %d file(s), %d counted (reader %s; counts only)", r.Holdout, r.HoldoutCounted, r.HoldoutReader)
+	case r.HoldoutPresent:
 		p.line(false, "holdout: %d file(s) (content not read, not in total)", r.Holdout)
-	} else {
+	default:
 		p.line(false, "holdout: absent (skipped)")
 	}
 	p.renderCells(r)

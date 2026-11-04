@@ -1,0 +1,126 @@
+# P2 L7-a：评测门禁公共流程（pr-smoke / nightly / release 调用）。服务用 deploy/docker-compose.yml 起 MySQL / Redis / MinIO，
+# 密钥只来自 GitHub secrets（作业环境变量，docker compose 插值与 config.Load 都读环境变量，不落 deploy/.env）。
+# migrations/**/*.sql 不入库：迁移须由部署方提供（私有制品 / secret 挂载），缺失时迁移前一步明确失败（CI 迁移来源待定）。
+name: eval-gate
+
+on:
+  workflow_call:
+    inputs:
+      mode:
+        description: make eval MODE（smoke | nightly | release）
+        required: true
+        type: string
+      token_budget:
+        description: run --token-budget（CI 触发必须 > 0）
+        required: true
+        type: string
+      prompt_base:
+        description: 非空时先跑 eval promptcheck --base（PR 取 base sha）
+        required: false
+        type: string
+        default: ""
+      selfcheck:
+        description: 跑 compare --fail-on-unreleasable 自检（不可放行必须退出 1）
+        required: false
+        type: boolean
+        default: true
+      baseline:
+        description: 非空时对本次实验跑 compare --fail-on-unreleasable（须连已冻结该基线的评测库）
+        required: false
+        type: string
+        default: ""
+      non_blocking:
+        description: true 时失败不阻断（nightly）
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  eval:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    continue-on-error: ${{ inputs.non_blocking }}
+    env:
+      MYSQL_ROOT_PASSWORD: ${{ secrets.EVAL_MYSQL_ROOT_PASSWORD }}
+      REDIS_PASSWORD: ${{ secrets.EVAL_REDIS_PASSWORD }}
+      MINIO_USER: ${{ secrets.EVAL_MINIO_USER }}
+      MINIO_PASSWORD: ${{ secrets.EVAL_MINIO_PASSWORD }}
+      AUTH_JWT_SECRET: ${{ secrets.EVAL_AUTH_JWT_SECRET }}
+      # 输入经环境变量传给 run 脚本，不直接插值进 shell（防注入）。
+      EVAL_MODE: ${{ inputs.mode }}
+      EVAL_TOKEN_BUDGET: ${{ inputs.token_budget }}
+      EVAL_PROMPT_BASE: ${{ inputs.prompt_base }}
+      EVAL_BASELINE: ${{ inputs.baseline }}
+      EVAL_NON_BLOCKING: ${{ inputs.non_blocking }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          # 不把 token（release 时为 EVAL_HOLDOUT_TOKEN）写进 .git/config，后续步骤拿不到。
+          persist-credentials: false
+          # release 须含 holdout（L2 以 submodule 挂载）；未挂载时 run --mode release 失败关闭。
+          submodules: ${{ inputs.mode == 'release' && 'recursive' || 'false' }}
+          token: ${{ inputs.mode == 'release' && secrets.EVAL_HOLDOUT_TOKEN || github.token }}
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: prompt_version 检查
+        if: inputs.prompt_base != ''
+        run: make eval-promptcheck GO=go PROMPT_BASE="$EVAL_PROMPT_BASE"
+
+      - name: 启动 MySQL / Redis / MinIO
+        run: docker compose -f deploy/docker-compose.yml up -d --wait
+
+      - name: 检查迁移来源
+        run: |
+          if ! ls migrations/*.up.sql migrations/eval/*.up.sql > /dev/null 2>&1; then
+            echo "::error title=CI 迁移来源待定::migrations/*.up.sql 或 migrations/eval/*.up.sql 不存在（按约定 migrations/**/*.sql 不入库）。须由部署方在本步骤前提供迁移（例如下载私有制品或挂载 secret），评测门禁不跳过迁移。"
+            exit 1
+          fi
+
+      - name: 迁移业务库与评测库
+        run: make migrate migrate-eval GO=go
+
+      - name: compare --fail-on-unreleasable 自检（不可放行退出 1）
+        if: inputs.selfcheck
+        env:
+          AS_TEST_NS: ci
+        run: go test -tags integration -count=1 -p 1 -run '^TestL0_FailClosed_Integration$' ./cmd/eval
+
+      - name: make eval MODE=${{ inputs.mode }}
+        id: run
+        run: |
+          set -o pipefail
+          make eval GO=go MODE="$EVAL_MODE" TOKEN_BUDGET="$EVAL_TOKEN_BUDGET" | tee eval-run.log
+          echo "exp_id=$(grep -o 'exp_id=[0-9]*' eval-run.log | head -1 | cut -d= -f2)" >> "$GITHUB_OUTPUT"
+
+      - name: compare --fail-on-unreleasable
+        if: inputs.baseline != ''
+        env:
+          EVAL_CANDIDATE: ${{ steps.run.outputs.exp_id }}
+        run: make eval-compare GO=go BASELINE="$EVAL_BASELINE" CANDIDATE="$EVAL_CANDIDATE" FAIL_ON_UNRELEASABLE=1
+
+      # 只传公开报告 report.md（holdout 只列 ID）；holdout 明细只在 MinIO report/holdout/，不进 artifact。
+      - name: 上传报告
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: eval-${{ inputs.mode }}-${{ github.run_id }}
+          path: eval/out/*/report.md
+          if-no-files-found: ignore
+
+      # continue-on-error（nightly）下作业不阻断，失败仍以 error 注解与作业摘要标红上报。
+      - name: 上报失败
+        if: failure()
+        run: |
+          echo "::error title=eval $EVAL_MODE 失败::评测门禁失败（non_blocking=$EVAL_NON_BLOCKING），见失败步骤日志与报告 artifact"
+          {
+            echo "## eval $EVAL_MODE 失败"
+            echo
+            echo "non_blocking=$EVAL_NON_BLOCKING：为 true 时不阻断合并，但本次评测未通过，请查看失败步骤日志与报告 artifact。"
+          } >> "$GITHUB_STEP_SUMMARY"

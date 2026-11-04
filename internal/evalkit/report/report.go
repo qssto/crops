@@ -90,7 +90,7 @@ func (s *stats) meanLatency() time.Duration {
 	return s.latencies / time.Duration(s.trials)
 }
 
-// Render 输出 Markdown：首行门禁结论，然后配置快照、总览、隔离样本（有才输出）、Gate 0 自动项、baseline 指标、分项打分、红线 pass^k、
+// Render 输出 Markdown：首行门禁终态（L7-a 判定后才有：VOID / BUDGET_EXCEEDED 原因与作废阈值）与门禁结论，然后配置快照、总览、隔离样本（有才输出）、Gate 0 自动项、baseline 指标、分项打分、红线 pass^k、
 // flaky / unexpected_call / error 清单、按 tag 分组统计、trial 明细。聚合一律取 reduce.Reduce 的结果。
 func Render(w io.Writer, exp *evalkit.Experiment) error {
 	r := reduce.Reduce(exp.Trials)
@@ -110,6 +110,9 @@ func Render(w io.Writer, exp *evalkit.Experiment) error {
 
 	ew := &errWriter{w: w}
 	ew.printf("# 评测报告 %s\n\n", exp.ID)
+	if line := GuardLine(exp.Gate); line != "" {
+		ew.printf("> %s\n\n", line)
+	}
 	ew.printf("> %s%s\n\n", GateLine(r), quarantineNote(exp))
 	ew.printf("> %s\n\n", ProviderLine(exp.Snapshot))
 	renderSnapshot(ew, exp.Snapshot)
@@ -186,6 +189,8 @@ func failedDims(t evalkit.Trial) string {
 		switch {
 		case sc.Error != "":
 			out = append(out, fmt.Sprintf("%s: grader_error %s", sc.Name, sc.Error))
+		case sc.AdvisoryError != "":
+			out = append(out, fmt.Sprintf("%s: judge_error %s", sc.Name, sc.AdvisoryError))
 		case !sc.Pass:
 			out = append(out, fmt.Sprintf("%s: %s", sc.Name, sc.Evidence))
 		}

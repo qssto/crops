@@ -16,7 +16,7 @@ import (
 type DepsFunc func(ctx context.Context, slot *env.Slot, s *sample.Sample) (app.Deps, error)
 
 // PoolEnv 是基于 trial schema 池的 EnvFunc：每个 trial 取一个槽位，按样本 fixtures.clock 重置，
-// 经 app.Build 装配；release 归还槽位。
+// 经 app.Build 装配；release 按前缀删槽位 Redis 键后归还槽位（并发 trial 互不可见对方的键）。
 func PoolEnv(pool *env.Pool, deps DepsFunc) EnvFunc {
 	return func(ctx context.Context, s *sample.Sample, _ int) (*app.App, func() error, error) {
 		at, err := FixtureTime(s)
@@ -41,7 +41,7 @@ func PoolEnv(pool *env.Pool, deps DepsFunc) EnvFunc {
 			pool.Release(slot)
 			return nil, nil, fmt.Errorf("build app: %w", err)
 		}
-		return a, func() error { pool.Release(slot); return nil }, nil
+		return a, func() error { return pool.ReleaseClean(context.WithoutCancel(ctx), slot) }, nil
 	}
 }
 

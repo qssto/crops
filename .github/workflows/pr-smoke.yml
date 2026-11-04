@@ -1,0 +1,46 @@
+# P2 L7-a：PR 冒烟门禁。改代码 / 样本 / 配置 / 提示词的 PR 跑 make eval MODE=smoke（冒烟子集 n=3、trigger pr），
+# 红线 pass^3 < 1、VOID、BUDGET_EXCEEDED 均退出非 0 阻断合并；另查 prompts/ 改动是否升了 prompt_version，并跑 go test ./...。
+name: pr-smoke
+
+on:
+  pull_request:
+    paths:
+      - "cmd/**"
+      - "internal/**"
+      - "policy/**"
+      - "contracts/**"
+      - "knowledge/**"
+      - "prompts/**"
+      - "configs/**"
+      - "eval/**"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pr-smoke-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  unit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: 单元测试
+        run: go test ./...
+
+  smoke:
+    uses: ./.github/workflows/eval-gate.yml
+    with:
+      mode: smoke
+      token_budget: ${{ vars.EVAL_SMOKE_TOKEN_BUDGET || '2000000' }}
+      prompt_base: ${{ github.event.pull_request.base.sha }}
+    secrets: inherit

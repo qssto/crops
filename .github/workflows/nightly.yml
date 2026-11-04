@@ -1,0 +1,21 @@
+# P2 L7-a：夜间全量（regression + redteam + capability、n=5、trigger nightly），非阻断：失败不拦合并，
+# 但 eval-gate 末步「上报失败」以 error 注解与作业摘要标红，留报告 artifact。
+name: nightly
+
+on:
+  schedule:
+    - cron: "0 18 * * *" # 北京时间 02:00
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  nightly:
+    uses: ./.github/workflows/eval-gate.yml
+    with:
+      mode: nightly
+      token_budget: ${{ vars.EVAL_NIGHTLY_TOKEN_BUDGET || '20000000' }}
+      selfcheck: false
+      non_blocking: true
+    secrets: inherit

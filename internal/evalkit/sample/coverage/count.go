@@ -13,8 +13,9 @@ import (
 	"agri-steward/internal/evalkit/sample"
 )
 
-// HoldoutSuite 是私有 holdout 套件（L2 以 submodule 挂到 eval/suites/holdout/）：只数文件，不读内容、不进格子。
-const HoldoutSuite = "holdout"
+// HoldoutSuite 是私有 holdout 套件（L2 以 submodule 挂到 eval/suites/holdout/）：未授权时只数文件，不读内容、不进格子；
+// 授权读者（CountWithHoldout）把 holdout 样本计入格子与总数。
+const HoldoutSuite = sample.HoldoutDir
 
 // Report 是一次覆盖统计的结果（数据，不含格式）。
 type Report struct {
@@ -28,6 +29,9 @@ type Report struct {
 	// Holdout 是 holdout 目录下的样本文件数；HoldoutPresent 为 false 表示目录不存在（跳过）。
 	Holdout        int
 	HoldoutPresent bool
+	// HoldoutCounted 是计入格子的 holdout 样本数，HoldoutReader 是授权读者；未授权时为 0 / 空。
+	HoldoutCounted int
+	HoldoutReader  string
 
 	// Cells 是 (生育期, 问题类型) → 难度 → 条数，含目标外的格子。
 	Cells map[CellKey]map[string]int
@@ -39,17 +43,34 @@ type Report struct {
 	TrapByGroup map[string]int // 一条样本可属于多个组
 }
 
-// Count 统计 samples（已通过静态校验）的覆盖；suitesDir 只用来数 holdout 文件。
+// Count 统计 samples（已通过静态校验）的覆盖；suitesDir 用来数 holdout 文件。
+// holdout 样本（suite 为 holdout 或路径在 suitesDir/holdout 下）不计入，只按文件数计。
 func Count(samples []*sample.Sample, tx *knowledge.Taxonomy, t *Targets, suitesDir string) (*Report, error) {
+	return count(samples, tx, t, suitesDir, nil)
+}
+
+// CountWithHoldout 同 Count，但把 holdout 样本计入格子与总数（P2-L1 待办：公开侧缺的格子由 holdout 补齐）；
+// g 须是有效凭证，否则返回 sample.ErrHoldoutDenied。报表对 holdout 只出计数。
+func CountWithHoldout(samples []*sample.Sample, tx *knowledge.Taxonomy, t *Targets, suitesDir string, g *sample.HoldoutGrant) (*Report, error) {
+	if g.Reader() == "" {
+		return nil, sample.ErrHoldoutDenied
+	}
+	return count(samples, tx, t, suitesDir, g)
+}
+
+func count(samples []*sample.Sample, tx *knowledge.Taxonomy, t *Targets, suitesDir string, g *sample.HoldoutGrant) (*Report, error) {
 	r := &Report{Targets: t, BySuite: map[string]int{}, Cells: map[CellKey]map[string]int{},
-		RefuseBySrc: map[string]int{}, TrapByGroup: map[string]int{}}
+		RefuseBySrc: map[string]int{}, TrapByGroup: map[string]int{}, HoldoutReader: g.Reader()}
 	for _, s := range samples {
+		holdout := s.Holdout || s.Suite == HoldoutSuite || (s.Path != "" && sample.IsHoldoutPath(suitesDir, s.Path))
 		switch {
-		case s.Suite == HoldoutSuite:
+		case holdout && g == nil:
 			continue // 由 countHoldout 按文件数计，不看内容
 		case slices.Contains(s.Tags, sample.TagUserSim):
 			r.UserSim++
 			continue
+		case holdout:
+			r.HoldoutCounted++
 		}
 		r.Counted++
 		r.BySuite[s.Suite]++

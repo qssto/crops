@@ -23,6 +23,7 @@ const (
 	RuleRefuseRatio = "refuse_ratio"
 	RuleFixtures    = "fixtures"
 	RuleQuarantine  = "quarantine"
+	RuleHoldout     = "holdout_path"
 )
 
 // MinRefuseRatio 是每个套件中应拒答样本的最低占比（P0 §6.1）。
@@ -95,6 +96,7 @@ func DefaultRules(tx *knowledge.Taxonomy, kb KnowledgeOpener) []Rule {
 		PerSample(RuleStrata, strataCheck(tx)),   // P2 L1-T
 		PerSample(RuleTrap, checkTrap),           // P2 L1-T
 		PerSample(RulePIIClean, checkPIIClean),   // P2 L1-T
+		PerSample(RuleHoldout, checkHoldout),     // P2 L2 评审修复
 	}
 }
 

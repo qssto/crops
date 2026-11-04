@@ -1,0 +1,27 @@
+# P2 L7-a：发布评测（全部套件含 holdout、n=5、trigger release），手动触发；未挂 holdout 失败关闭。
+# 给 baseline 时对本次实验跑 compare --fail-on-unreleasable（不可放行退出 1）。
+name: release
+
+on:
+  workflow_dispatch:
+    inputs:
+      token_budget:
+        description: run --token-budget
+        required: true
+        default: "50000000"
+      baseline:
+        description: 对比的已冻结基线名或 exp id（空 = 不对比）
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    uses: ./.github/workflows/eval-gate.yml
+    with:
+      mode: release
+      token_budget: ${{ inputs.token_budget }}
+      baseline: ${{ inputs.baseline }}
+    secrets: inherit

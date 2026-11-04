@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"agri-steward/internal/evalkit"
+	"agri-steward/internal/evalkit/sample"
 	"agri-steward/internal/repository"
 )
 
@@ -122,7 +123,8 @@ func (s *Experiments) Trials(ctx context.Context, id uint64) ([]evalkit.Trial, e
 }
 
 func (r trialRow) trial() (evalkit.Trial, error) {
-	t := evalkit.Trial{SampleID: r.SampleID, SampleVersion: r.SampleVersion, TrialIndex: r.TrialIndex, Suite: r.Suite}
+	t := evalkit.Trial{SampleID: r.SampleID, SampleVersion: r.SampleVersion, TrialIndex: r.TrialIndex, Suite: r.Suite,
+		Holdout: r.Suite == sample.HoldoutDir}
 	if r.RunID != nil {
 		t.RunID = *r.RunID
 	}
@@ -141,7 +143,8 @@ func (r trialRow) trial() (evalkit.Trial, error) {
 	}
 	for name, sc := range scores {
 		t.Scores = append(t.Scores, evalkit.Score{Name: name, Pass: sc.Pass, Value: sc.Value, RedLine: sc.RedLine,
-			Unknown: sc.Unknown, Evidence: sc.Evidence, Error: sc.Error, NotApplicable: sc.NotApplicable})
+			Unknown: sc.Unknown, Evidence: sc.Evidence, Error: sc.Error, NotApplicable: sc.NotApplicable,
+			AdvisoryError: sc.AdvisoryError})
 	}
 	slices.SortFunc(t.Scores, func(a, b evalkit.Score) int { return strings.Compare(a.Name, b.Name) })
 	return t, nil

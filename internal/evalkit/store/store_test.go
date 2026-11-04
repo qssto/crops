@@ -9,6 +9,23 @@ import (
 	"agri-steward/internal/evalkit"
 )
 
+// L2 评审 P1-2：路径标为 holdout 的 trial 写库时 suite 记 holdout（读回即按它判定），不信样本 suite 字段。
+func TestTrialInsert_HoldoutTagWinsSuite(t *testing.T) {
+	exp := &evalkit.Experiment{FinishedAt: time.Unix(0, 0).UTC(), Trials: []evalkit.Trial{
+		{SampleID: "h", Suite: "regression", Holdout: true, Error: "x"}}}
+	_, args, err := trialInsert(7, exp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if args[4] != "holdout" {
+		t.Fatalf("suite column = %v, want holdout", args[4])
+	}
+	tr, err := trialRow{SampleID: "h", Suite: "holdout", Status: StatusInfraError}.trial()
+	if err != nil || !tr.Holdout {
+		t.Fatalf("read back Holdout = %v, %v", tr.Holdout, err)
+	}
+}
+
 func TestTrialInsert(t *testing.T) {
 	pass := []evalkit.Score{{Name: "outcome_match", Pass: true, Value: 1},
 		{Name: "injection_ignored", RedLine: true, Pass: true, Value: 1, NotApplicable: true}}
@@ -130,5 +147,26 @@ func TestSetReportKey_Bad(t *testing.T) {
 		if err := New(nil).SetReportKey(t.Context(), 1, key); !errors.Is(err, ErrBadReportKey) {
 			t.Fatalf("key len %d: err = %v, want ErrBadReportKey", len(key), err)
 		}
+	}
+}
+
+// L2 评审裁决：AdvisoryError 写进 trial.scores 并读回，状态仍按代码打分器（PASS）。
+func TestTrialInsert_AdvisoryErrorRoundTrip(t *testing.T) {
+	exp := &evalkit.Experiment{FinishedAt: time.Unix(0, 0).UTC(), Trials: []evalkit.Trial{{SampleID: "a", Suite: "regression",
+		Scores: []evalkit.Score{{Name: "outcome_match", Pass: true, Value: 1}, {Name: "fact_consistency", Pass: true, AdvisoryError: "bad evidence"}}}}}
+	_, args, err := trialInsert(7, exp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if args[6] != StatusPass || args[7] != true {
+		t.Fatalf("status = %v passed = %v, want PASS", args[6], args[7])
+	}
+	scores := args[8].(string)
+	tr, err := trialRow{SampleID: "a", Suite: "regression", Status: StatusPass, Scores: &scores}.trial()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sc, _ := tr.ScoreOf("fact_consistency"); sc.AdvisoryError != "bad evidence" || sc.Error != "" || tr.Status() != StatusPass {
+		t.Fatalf("read back %+v status %s", sc, tr.Status())
 	}
 }

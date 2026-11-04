@@ -155,6 +155,7 @@ func renderScores(ew *errWriter, r *reduce.Result) {
 	}
 	ew.printf("\n适用 trial 不含默认放行（样本未声明该维度期望）；标「%s」的维度在本次实验里全部默认放行，通过数不代表该项被验证。\n\n",
 		noApplicable)
+	renderAdvisoryErrors(ew, r)
 	if len(r.RedLines) == 0 {
 		return
 	}
@@ -169,6 +170,21 @@ func renderScores(ew *errWriter, r *reduce.Result) {
 		ew.printf("| %s | %s | %s |\n", s.ID, strings.Join(cells, " | "), fmtPassK(s.N, s.AllPass))
 	}
 	ew.printf("\n")
+}
+
+// renderAdvisoryErrors 列门禁未开的 judge 出错次数（L2 评审裁决）：不计入上表通过 / 失败 / grader_error，
+// 不改 trial 状态，已按 UNKNOWN 转人工队列；没有时不输出。
+func renderAdvisoryErrors(ew *errWriter, r *reduce.Result) {
+	var parts []string
+	for _, d := range r.Dims {
+		if d.AdvisoryErrors > 0 {
+			parts = append(parts, fmt.Sprintf("%s %d 次", d.Name, d.AdvisoryErrors))
+		}
+	}
+	if len(parts) == 0 {
+		return
+	}
+	ew.printf("judge_error（门禁未开，不改 trial 状态，按 UNKNOWN 转人工队列）：%s。\n\n", strings.Join(parts, "，"))
 }
 
 // suiteRedteam 是红队套件名：夜间全量中单列 pass^5（P1 L8）。

@@ -168,3 +168,55 @@ func TestTrialStatus(t *testing.T) {
 		})
 	}
 }
+
+// advisoryGrader 是门禁未开的 judge：出错只记 AdvisoryError，不改 trial 状态。
+type advisoryGrader struct{ stubGrader }
+
+func (advisoryGrader) Advisory() bool { return true }
+
+// L2 评审裁决：judge 维度门禁关时，judge 出错（evidence 校验 / 解析失败）不算 grader_error，trial 状态只由代码打分器决定。
+func TestRunner_JudgeErrorGateOff(t *testing.T) {
+	judgeErr := errors.New("judge: evidence is not a sentence")
+	tests := []struct {
+		name       string
+		code       *stubGrader
+		wantStatus string
+	}{
+		{name: "code pass stays PASS", code: &stubGrader{name: "outcome_match", pass: true}, wantStatus: StatusPass},
+		{name: "code fail stays FAIL", code: &stubGrader{name: "outcome_match"}, wantStatus: StatusFail},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			j := &advisoryGrader{stubGrader{name: "fact_consistency", pass: true, err: judgeErr}}
+			r, err := NewRunner(StaticEnv(&app.App{Agent: cardAgent{got: &agent.Question{}}}), nil, WithGraders(nil, tt.code, j))
+			if err != nil {
+				t.Fatal(err)
+			}
+			exp, err := r.Run(context.Background(), []*sample.Sample{mkSample("a", "regression")}, Options{N: 1})
+			if err != nil {
+				t.Fatal(err)
+			}
+			tr := exp.Trials[0]
+			if got := tr.Status(); got != tt.wantStatus {
+				t.Fatalf("status = %s, want %s; scores = %+v", got, tt.wantStatus, tr.Scores)
+			}
+			sc, ok := tr.ScoreOf("fact_consistency")
+			if !ok || sc.Error != "" || !strings.Contains(sc.AdvisoryError, "evidence is not a sentence") {
+				t.Fatalf("judge score = %+v, want AdvisoryError and no Error", sc)
+			}
+		})
+	}
+	// 门禁开（非 advisory）时照旧 grader_error。
+	j := &stubGrader{name: "fact_consistency", pass: true, err: judgeErr}
+	r, err := NewRunner(StaticEnv(&app.App{Agent: cardAgent{got: &agent.Question{}}}), nil, WithGraders(nil, j))
+	if err != nil {
+		t.Fatal(err)
+	}
+	exp, err := r.Run(context.Background(), []*sample.Sample{mkSample("a", "regression")}, Options{N: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := exp.Trials[0].Status(); got != StatusGraderError {
+		t.Fatalf("gated judge error: status = %s, want %s", got, StatusGraderError)
+	}
+}

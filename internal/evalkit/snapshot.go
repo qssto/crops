@@ -50,6 +50,9 @@ type Snapshot struct {
 	Cost      float64 `json:"cost" yaml:"cost"`
 	// WallTime 是 started_at 到 finished_at 的墙钟时长（time.Duration 文本，秒级）。
 	WallTime string `json:"wall_time" yaml:"wall_time"`
+	// VoidInfraErrorRate 是本次 run 判作废实际使用的 infra_error 占比阈值（门禁参数，不是因子）：resume 一律沿用此值，
+	// 不读当时配置；0 表示快照没记录（L7-a 评审修复前的实验），resume 失败关闭。
+	VoidInfraErrorRate float64 `json:"void_infra_error_rate,omitempty" yaml:"void_infra_error_rate,omitempty"`
 }
 
 // IsZero 报告快照是否未填写（P1 及以前的实验 snapshot 为 NULL）。

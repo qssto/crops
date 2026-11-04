@@ -38,6 +38,8 @@ type Config struct {
 	// Metrics / Alerts 是 P1 L7-B /metrics 暴露与告警扫描配置（observe.go）。
 	Metrics Metrics `mapstructure:"metrics"`
 	Alerts  Alerts  `mapstructure:"alerts"`
+	// Eval 是评测调度与作废门禁配置（P2 L7-a，eval.go）；缺省 qpm=5、llm_calls_per_trial=3、void_infra_error_rate=0.05。
+	Eval Eval `mapstructure:"eval"`
 }
 
 // DeviceReceipt 是回执 webhook 的 HMAC 密钥；只从环境变量 / deploy/.env 读，未配置时回执路由不挂载。
@@ -124,6 +126,7 @@ func Load(file, envFile string) (*Config, error) {
 	setApprovalDefaults(v)
 	setAuditDefaults(v)
 	setObserveDefaults(v)
+	setEvalDefaults(v)
 	if err := v.ReadInConfig(); err != nil {
 		return nil, fmt.Errorf("config: read %s: %w", file, err)
 	}
@@ -148,6 +151,9 @@ func Load(file, envFile string) (*Config, error) {
 		return nil, fmt.Errorf("config: %s: %w", file, err)
 	}
 	if err := errors.Join(c.Audit.Validate(), c.Metrics.Validate(), c.Alerts.Validate()); err != nil {
+		return nil, fmt.Errorf("config: %s: %w", file, err)
+	}
+	if err := c.Eval.Validate(); err != nil {
 		return nil, fmt.Errorf("config: %s: %w", file, err)
 	}
 	return &c, nil

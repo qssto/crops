@@ -41,6 +41,9 @@ type Sample struct {
 	Path string `yaml:"-"`
 	// Raw 是样本文件原文（LoadDir 填写，pii_clean 文件扫描用，见 piiscan.go）；Parse 直接构造时为空。
 	Raw []byte `yaml:"-"`
+	// Holdout 表示样本文件在 holdout 目录内（Load 按真实路径打标，L2 评审 P1-2），不来自 YAML；
+	// 报告脱敏、人工队列与校准按它判定，不看 suite 字段（suite 与之不一致由 RuleHoldout 拦下）。
+	Holdout bool `yaml:"-"`
 }
 
 // Context 是提问情境。farm / field 是合成编码，L1 起评测播种时写入 field_profile.ext_field_code。

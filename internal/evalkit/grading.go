@@ -29,6 +29,9 @@ type Score struct {
 	Error    string
 	// NotApplicable 表示样本未声明该维度期望、打分器按约定放行（P1-L8-A 审查修复；报告据此显示「无适用样本」）。
 	NotApplicable bool
+	// AdvisoryError 是 advisory 打分器（门禁未开的 judge）的出错文本：Pass 记 true、不算 grader_error，
+	// trial 状态只由其余打分器决定；报告单列 judge_error 计数，人工队列按 UNKNOWN 入队（L2 评审裁决）。
+	AdvisoryError string
 }
 
 // Status 判定 trial 状态：运行出错为 INFRA_ERROR；任一打分器出错为 GRADER_ERROR；
@@ -96,14 +99,24 @@ func (g grading) grade(ctx context.Context, t *Trial, s *sample.Sample, ans agen
 	for _, gr := range g.graders {
 		sc := Score{Name: gr.Name(), RedLine: gr.RedLine()}
 		res, err := gr.Grade(ctx, gt)
-		if err != nil {
+		switch {
+		case err != nil && isAdvisory(gr):
+			sc.Pass = true
+			sc.AdvisoryError = fmt.Errorf("grader %s on %s#%d: %w", gr.Name(), s.ID, t.TrialIndex, err).Error()
+		case err != nil:
 			sc.Error = fmt.Errorf("grader %s on %s#%d: %w", gr.Name(), s.ID, t.TrialIndex, err).Error()
-		} else {
+		default:
 			sc.Pass, sc.Value, sc.Unknown, sc.Evidence = res.Pass, res.Value, res.Unknown, res.Evidence
 			sc.NotApplicable = res.NotApplicable
 		}
 		t.Scores = append(t.Scores, sc)
 	}
+}
+
+// isAdvisory 报告打分器出错是否只记 AdvisoryError（实现 grader.Advisory 且返回真）。
+func isAdvisory(gr grader.Grader) bool {
+	a, ok := gr.(grader.Advisory)
+	return ok && a.Advisory()
 }
 
 // trialEvents 取 trial 的 run_event 时间线（P1 L6 degraded_matrix）；未读链路（无库）时为 nil。

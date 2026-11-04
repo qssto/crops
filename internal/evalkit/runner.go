@@ -30,15 +30,17 @@ type Trial struct {
 	// SampleVersion 是样本 version（P2 L0：写 trial.sample_version，compare 按 (sample_id, sample_version) 配对）。
 	SampleVersion int
 	Suite         string
-	Tags          []string
-	TrialIndex    int
-	Expected      model.Outcome
-	Outcome       model.Outcome
-	RefuseReason  string
-	RunID         uint64
-	Card          *model.AdviceCard
-	Latency       time.Duration
-	Error         string
+	// Holdout 是样本文件在 holdout 目录内（加载时按路径打标，sample.Sample.Holdout）；判定用 IsHoldout。
+	Holdout      bool
+	Tags         []string
+	TrialIndex   int
+	Expected     model.Outcome
+	Outcome      model.Outcome
+	RefuseReason string
+	RunID        uint64
+	Card         *model.AdviceCard
+	Latency      time.Duration
+	Error        string
 	// Scores 按打分器顺序列出各维度结果；运行出错（Error 非空）时为空。
 	Scores []Score
 	// ToolCalls 是工具名 → 调用次数；UnexpectedCalls 是未在 fixtures.mcp 声明的调用（按顺序的工具名）；
@@ -222,6 +224,20 @@ type Experiment struct {
 	Quarantined []QuarantinedSample
 	// Snapshot 是配置快照（L8，cmd/eval 填写；单测与 Runner 不填为零值，报告不输出快照节）。
 	Snapshot Snapshot
+	// BudgetExceeded 表示累计 token 超过 Options.TokenBudget、提前停止派发（P2 L7-a）。
+	BudgetExceeded bool
+	// Gate 是门禁终态（L7-a：VOID / BUDGET_EXCEEDED 及原因、作废阈值），cmd/eval 落库判定后填写；报告首行据此声明。
+	Gate GateStatus
+}
+
+// GateStatus 是实验门禁终态（store.Settle 的结果）。Status 为空表示未判定（单测）。
+type GateStatus struct {
+	Status     string
+	VoidReason string
+	// Hits 是命中的全部作废规则；MaxInfraErrorRate 是本次判定用的 infra_error 占比阈值（写进报告）。
+	Hits              []string
+	MaxInfraErrorRate float64
+	TokenBudget       int
 }
 
 // QuarantinedSample 是一个被隔离（跳过）的样本及其理由。
@@ -229,6 +245,8 @@ type QuarantinedSample struct {
 	ID     string
 	Suite  string
 	Reason string
+	// Holdout 同 Trial.Holdout：公开报告只给 ID（L2 评审 P2-7）。
+	Holdout bool
 }
 
 // splitQuarantined 把样本分成可运行与隔离两组，保持原顺序。
@@ -236,7 +254,7 @@ func splitQuarantined(samples []*sample.Sample) (run []*sample.Sample, quarantin
 	run = make([]*sample.Sample, 0, len(samples))
 	for _, s := range samples {
 		if reason, ok := s.QuarantineReason(); ok {
-			quarantined = append(quarantined, QuarantinedSample{ID: s.ID, Suite: s.Suite, Reason: reason})
+			quarantined = append(quarantined, QuarantinedSample{ID: s.ID, Suite: s.Suite, Reason: reason, Holdout: isHoldoutSample(s)})
 			continue
 		}
 		run = append(run, s)
@@ -250,6 +268,10 @@ type Options struct {
 	Suites       []string
 	Tags         []string
 	N            int
+	// Concurrency 是同时在跑的 trial 上限（0 / 1 = 顺序执行，与 L7-a 前一致）；须不超过 env 池槽位数。
+	Concurrency int
+	// TokenBudget 是累计 token 上限（0 = 不限）；超出后停止派发新 trial，Experiment.BudgetExceeded 置 true。
+	TokenBudget int
 }
 
 // EnvFunc 为一个 (sample, trial) 提供经 app.Build 装配的 App 与归还函数。
@@ -277,6 +299,7 @@ type Runner struct {
 	fields   FieldLister
 	devices  DeviceLister
 	receipts *ReceiptSteps
+	tokens   TokenCounter
 }
 
 // FieldLister 列出农场全部地块 id（cross_farm_isolation 判 field_id 归属）。
@@ -338,12 +361,15 @@ func NewRunner(env EnvFunc, now func() time.Time, opts ...RunnerOption) (*Runner
 	if now == nil {
 		now = clock.System{}.Now
 	}
-	r := &Runner{env: env, now: now, question: defaultQuestion, grading: grading{graders: defaultGraders()}}
+	r := &Runner{env: env, now: now, question: defaultQuestion, grading: grading{graders: defaultGraders()}, tokens: TrialTokens}
 	for _, opt := range opts {
 		opt(r)
 	}
 	if r.question == nil {
 		return nil, errors.New("evalkit: question func is nil")
+	}
+	if r.tokens == nil {
+		return nil, errors.New("evalkit: token counter is nil")
 	}
 	if len(r.grading.graders) == 0 {
 		return nil, errors.New("evalkit: no grader")
@@ -351,11 +377,28 @@ func NewRunner(env EnvFunc, now func() time.Time, opts ...RunnerOption) (*Runner
 	return r, nil
 }
 
-// Run 对 samples 中每个样本顺序跑 opts.N 次。单个 trial 的 agent 错误记入 Trial.Error，
-// 不中断评测；ctx 取消时停止并返回已完成部分与错误。声明 quarantine 的样本不运行，记入 Experiment.Quarantined。
+// Run 对 samples 中每个样本跑 opts.N 次（opts.Concurrency 路并发，trial 顺序与顺序执行一致）。单个 trial 的 agent 错误
+// 记入 Trial.Error，不中断评测；ctx 取消时停止并返回已完成部分与错误；累计 token 超 opts.TokenBudget 时停止派发。
+// 声明 quarantine 的样本不运行，记入 Experiment.Quarantined。
 func (r *Runner) Run(ctx context.Context, samples []*sample.Sample, opts Options) (*Experiment, error) {
+	return r.run(ctx, samples, opts, nil)
+}
+
+// RunTrials 只跑 only 中的 (sample_id, trial_index)（resume 补跑未完成与 infra_error 的 trial），其余同 Run。
+func (r *Runner) RunTrials(ctx context.Context, samples []*sample.Sample, opts Options, only []TrialKey) (*Experiment, error) {
+	set := make(map[TrialKey]bool, len(only))
+	for _, k := range only {
+		set[k] = true
+	}
+	return r.run(ctx, samples, opts, set)
+}
+
+func (r *Runner) run(ctx context.Context, samples []*sample.Sample, opts Options, only map[TrialKey]bool) (*Experiment, error) {
 	if opts.N < 1 {
 		return nil, fmt.Errorf("evalkit: n must be >= 1, got %d", opts.N)
+	}
+	if opts.TokenBudget < 0 {
+		return nil, fmt.Errorf("evalkit: token budget must be >= 0, got %d", opts.TokenBudget)
 	}
 	samples, quarantined := splitQuarantined(samples)
 	exp := &Experiment{
@@ -365,30 +408,27 @@ func (r *Runner) Run(ctx context.Context, samples []*sample.Sample, opts Options
 		N:           opts.N,
 		StartedAt:   r.now(),
 		Samples:     len(samples),
-		Trials:      make([]Trial, 0, len(samples)*opts.N),
 		Quarantined: quarantined,
 	}
 	defer func() { exp.FinishedAt = r.now() }()
-
-	for _, s := range samples {
-		kb, kbErr := r.grading.openKB(ctx, s)
-		for i := 0; i < opts.N; i++ {
-			if err := ctx.Err(); err != nil {
-				return exp, fmt.Errorf("evalkit: stopped before %s#%d: %w", s.ID, i, err)
-			}
-			if kbErr != nil {
-				exp.Trials = append(exp.Trials, failedTrial(s, i, kbErr))
-				continue
-			}
-			exp.Trials = append(exp.Trials, r.runTrial(ctx, s, i, kb))
-		}
-	}
-	return exp, nil
+	trials, exceeded, err := r.dispatch(ctx, jobsOf(samples, opts.N, only), opts)
+	exp.Trials, exp.BudgetExceeded = trials, exceeded
+	return exp, err
 }
 
 func newTrial(s *sample.Sample, index int) Trial {
-	return Trial{SampleID: s.ID, SampleVersion: s.Version, Suite: s.Suite, Tags: s.Tags, TrialIndex: index, Expected: s.Expect.Outcome}
+	return Trial{SampleID: s.ID, SampleVersion: s.Version, Suite: s.Suite, Holdout: isHoldoutSample(s), Tags: s.Tags, TrialIndex: index, Expected: s.Expect.Outcome}
 }
+
+// isHoldoutSample：路径标为准；suite: holdout 也算（两者不一致由 sample.RuleHoldout 拦下，这里失败关闭）。
+func isHoldoutSample(s *sample.Sample) bool { return s.Holdout || s.Suite == sample.HoldoutDir }
+
+// IsHoldout 报告 trial 是否来自 holdout（L2 评审 P1-2）：加载时的路径标为准，suite 为 holdout 也算（失败关闭）。
+// 报告脱敏、transcript 前缀、人工队列与校准都按它判定。
+func (t Trial) IsHoldout() bool { return t.Holdout || t.Suite == sample.HoldoutDir }
+
+// IsHoldout 同 Trial.IsHoldout。
+func (q QuarantinedSample) IsHoldout() bool { return q.Holdout || q.Suite == sample.HoldoutDir }
 
 // failedTrial 是未能运行的 trial（INFRA_ERROR）。
 func failedTrial(s *sample.Sample, index int, err error) Trial {

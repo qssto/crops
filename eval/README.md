@@ -208,3 +208,47 @@ make eval-nightly GO=go NIGHTLY_N=3 TAGS=L8 # 变量可覆盖，TAGS / BASELINE 
 ### capability 套件与毕业
 
 新能力样本先放 `eval/suites/capability/`（`run --suite capability`）。`cmd/eval graduate` 用路线 §6.2 的 SQL 查最近 3 次 `nightly` 且 `DONE` 的实验，列出在 capability 下按 `id@version` 3 次都跑到、每次至少 5 个 trial（pass^5，nightly 须 `--n 5` 以上）且零失败的样本。样本目录里有重复 id 时直接失败。默认只列出；`--apply` 先预检全部目标路径，再把 YAML 从 `capability/<rel>` 移到 `regression/<rel>`，只把 `suite: capability` 一行改成 `suite: regression`，不升 version，任一目标文件已存在时一个都不移。命令不做 git 操作，移动后请自行提交。
+
+## holdout、LLM-judge 与人工复核（P2 L2）
+
+### holdout
+
+holdout 样本只在私有仓 `crops-holdout`，以 submodule 挂到 `eval/suites/holdout/`；公开分支只有 submodule 指针与 `.gitmodules`。`sample.LoadDir` 默认跳过 holdout。`validate --holdout` 与 `run --suite holdout` 须环境变量 `AS_EVAL_READER` 在 `eval/holdout_readers.yaml` 名单中，否则不读任何 holdout 文件。holdout 明细只上传 `report/holdout/` 前缀，本地与公开报告只列 ID 与打分器名。`TestHoldout_PublicHistoryClean` 检查公开历史里 `eval/suites/` 下的文件名与内容都不含 holdout 样本 ID。
+
+### LLM-judge
+
+三个维度 `fact_consistency` / `conclusion_match` / `explanation_quality`，提示词与评分标准在 `eval/judges/<维度>/{prompt.md,rubric.md}`，模型配置在 `eval/judges/judge.yaml`（`eval.judge.model` / `model_tier`，与智能体模型分开）。judge 只看 fixture、被引用的知识库条目原文、专家标准结论与最终输出，不看中间步骤。输出 1-3 分、证据与结论；证据须是被评文本的一句原句：textnorm 归一后是子串、不少于 8 字、中间不含 。！？；或换行（只许在句尾）；信息不足为 UNKNOWN。
+
+- 现阶段只有录制回放客户端：按（维度，材料哈希）读 `eval/judges/<维度>/recordings/*.json`，没有录制即 UNKNOWN（待真实模型）。
+- `run --judges` 在样本静态校验之后追加 judge 打分器，judge 版本（prompt + rubric 哈希 + tier）写快照 `judge_versions`；不加时 `judge_versions` 为空表，与现有 baseline 可比。
+- judge 不是红线，门禁 `eval/gates/judges.yaml` 三个维度默认 `enabled: false`，分数只进报告。
+- judge 出错（证据不合格、分数越界、解析失败）：门禁里该维度 `enabled: true` 时记 grader_error；未开时只记 `judge_error`（`Score.AdvisoryError`，写进 trial.scores 的 `advisory_error`），不改 trial 状态（状态只由代码打分器决定），报告「分项打分」下单列次数，人工队列按 UNKNOWN 入队。门禁配置路径用 `run --judge-gate`（默认 `eval/gates/judges.yaml`）。
+
+### 人工队列、校准与月度复核
+
+任务都写评测库 `review_task`，`ref_key` 唯一，重跑不重复。
+
+- `judge queue --exp <id> [--seed]`：四类入口按注册表顺序取，同一任务只留先命中的入口。CONFLICT（judge 与 `citation_valid` / `outcome_match` 结论相反）、UNKNOWN、FLAKY（同样本 trial 一过一不过）、RANDOM_10（通过 trial 的 10%，向上取整，seed 写报告）。holdout trial 不入队。报告 `eval/out/review/queue-<id>.md`。
+- `judge calibrate --dim <维度> --exp <id>`：按 judge 分数分层（1/2/3 每层 ≥ 20，套件轮转）抽 100 个 trial 写 CALIBRATION 主标任务，随机 25% 另写双标任务（不能派给同一专家）。专家打完后算 judge-专家与专家间二次加权 Kappa（bootstrap 1000 次 95% 区间）、混淆矩阵与 UNKNOWN 占比。报告 JSON 存 `report/calibration/{维度}/{judge_version}.json`，本地 md 在 `eval/out/calibration/{维度}/`。只有 CALIBRATION 报告能标「可进门禁」，条件是 judge-专家评分对 n ≥ 100（排除 UNKNOWN，默认抽 100 个含 UNKNOWN 层时不够，需 `--total` 调大）、bootstrap 无定义重抽 ≤ 1%（否则区间不可用）、区间下限 ≥ `kappa_threshold`（0.6，待实测）；报告写 n 与无定义重抽数，不达标写原因（`gate_reason`）。达标后以 PR 把门禁里该维度改为 `enabled: true`。月度复核只报一致性，不产出门禁结论。
+- `judge recheck --dim <维度> --exp <id>`：每月（北京时间切月）抽 20 个 trial 写 MONTHLY_RECHECK，当月已抽过就只出报告；seed 为 YYYYMM。报告存 `report/recheck/{维度}/{YYYY-MM}.json`。
+- 专家派单与打分目前只有 store 接口（`Reviews.Assign` / `Score`），评审页待做。
+
+## 门禁运行模式、预算与作废（P2 L7-a）
+
+- `make eval MODE=smoke|nightly|release TOKEN_BUDGET=N`：smoke 跑 `eval/smoke/smoke.yaml`（n=3、trigger pr），nightly 跑 regression+redteam+capability（n=5），release 跑全部套件且必须挂 holdout（n=5）。MODE 固定 suite / n / tags / trigger，不能再传；CI 触发必须给预算。不传 MODE 时同原来的 `SUITE / N / TAGS`。
+- 预算：累计 token 超过 `--token-budget` 停止派发，实验置 `BUDGET_EXCEEDED`。
+- 作废：run 结束时 infra_error 占比 > `configs/app.yaml` 的 `eval.void_infra_error_rate`（默认 5%）或有任何 grader_error，实验置 `VOID` 并写 `void_reason`；报告首行写明原因与阈值。VOID / BUDGET_EXCEEDED 不能 compare、不能冻结，run 退出 1。
+- 补跑：`make eval-resume EXP=<id>` 只重跑缺失与 INFRA_ERROR 的 trial，写回同一实验后重判；当前配置（可比因子、samples_hash）与快照不符、或实验已冻结时拒绝。快照套件含 holdout 的实验（如 release）须 `HOLDOUT=1`（`resume --holdout`，读者身份同 run）才能补跑，否则失败关闭；补跑报告与 run 同一出报告步骤：holdout 明细只进 `report/holdout/`，本地报告只写脱敏副本。
+- 提示词：改了 `prompts/` 必须同时升 `configs/model.yaml` 的 `prompt_version`，`make eval-promptcheck PROMPT_BASE=origin/main` 检查（PR CI 会跑）。比较对象是 `git merge-base <PROMPT_BASE> HEAD`，base 分叉后自己升的版本不算本分支升了版本。
+
+### 评审修复后的约定
+
+- 触发：`pr / nightly / release` 只能经 `MODE` 得到，不带 MODE 手动传 `--trigger nightly` 等直接拒绝（graduate 的「最近 3 次 nightly」不能手动凑）。
+- 作废阈值：`eval.void_infra_error_rate`（环境变量 `AS_EVAL_VOID_INFRA_ERROR_RATE`）必须在 (0, 0.05] 内，超出即失败关闭；run 把实际阈值写进快照 `void_infra_error_rate`。resume 一律沿用快照里的阈值，快照缺失或越界拒绝。
+- 补跑原子性：resume 的写回、置终态与作废重判在同一事务，任一步失败整体回滚，VOID 不会变回 DONE；只删本次确实补跑写回的 INFRA_ERROR 行；transcript 在事务提交后才上传。
+- 预算：只有确实还有未派发的 trial 时才置 `BUDGET_EXCEEDED`；最后一个 trial 让累计超预算不算。trial panic 后先停派发、等在跑的结束再抛出。
+- 冒烟适用性：`smoke.Check` 按样本声明判红线打分器是否适用（见 `internal/evalkit/smoke/declare.go` 的 `Declared`，例如 constraint_blocked 要 `expect.constraint`，cross_farm_isolation 要 `expect.foreign`）；红线打分器没有登记规则即失败。冒烟清单 supplement 可取 redteam / constraint 套件。
+- Makefile 参数：`MODE / SUITE / N / TAGS / TOKEN_BUDGET / BASELINE / CANDIDATE / REFERENCE / EXP / PROMPT_BASE` 先校验格式（预算与 id 为正整数，baseline 名同 `report.ValidateBaselineName`，git ref 不得以 `-` 开头），非法退出 2；合法值以单引号字面量传给 cmd/eval。
+- CI：全部 workflow 只有 `contents: read` 权限；checkout 设 `persist-credentials: false`（EVAL_HOLDOUT_TOKEN 不留在 .git/config）；artifact 只传 `eval/out/*/report.md`，holdout 明细只在 MinIO `report/holdout/`。pr-smoke 另跑 `go test ./...`。
+- nightly 非阻断：作业 `continue-on-error` 不拦合并；eval-gate 末步「上报失败」在 `failure()` 时打 error 注解并写作业摘要，失败在流水线页面标红可见。
+- **待办：CI 迁移来源待定。** `migrations/**/*.sql` 不入库，CI 检出后没有迁移；eval-gate 在迁移前检查 `migrations/*.up.sql` 与 `migrations/eval/*.up.sql`，缺失即以 error 失败（不跳过）。需由部署方在该步骤前提供迁移（例如私有制品下载或 secret 挂载）。

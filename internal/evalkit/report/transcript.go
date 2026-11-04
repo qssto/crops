@@ -41,9 +41,14 @@ type TranscriptLine struct {
 	Data     json.RawMessage `json:"data"`
 }
 
-// TranscriptKey 是 trial transcript 在 eval bucket 内的对象键：transcript/{exp_id}/{sample_id}/{trial}.jsonl。
+// TranscriptKey 是 trial transcript 在 eval bucket 内的对象键：transcript/{exp_id}/{sample_id}/{trial}.jsonl；
+// holdout trial 加 HoldoutPrefix（report/holdout/transcript/...，P2 L2）。
 func TranscriptKey(expID string, t evalkit.Trial) string {
-	return path.Join("transcript", expID, t.SampleID, strconv.Itoa(t.TrialIndex)+".jsonl")
+	key := path.Join("transcript", expID, t.SampleID, strconv.Itoa(t.TrialIndex)+".jsonl")
+	if IsHoldoutTrial(t) {
+		return path.Join(HoldoutPrefix, key)
+	}
+	return key
 }
 
 // rootData 是 root 行的数据。

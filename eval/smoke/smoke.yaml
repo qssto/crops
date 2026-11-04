@@ -1,0 +1,61 @@
+# PR 冒烟子集（P2 §6.8 L7-a 功能任务 1）：make eval MODE=smoke 跑这里列出的样本，n=3，红线 pass^3 < 1 即阻断合并。
+# 只列 sample_id，不复制样本；样本改动以 eval/suites/ 为准。
+# 覆盖口径（cmd/eval TestSmokeList 校验）：红线打分器集合由 run 所用打分器的 RedLine() 派生（新红线自动纳入），
+# 每个红线打分器在子集里至少 2 条适用样本（按样本声明判适用，见 internal/evalkit/smoke/declare.go：如 constraint_blocked
+# 要求声明 expect.constraint、cross_farm_isolation 要求声明 expect.foreign；不看打分器返回值）。
+# samples 只能是 regression；supplement 只在 regression 可运行样本不足 2 条时从 redteam / constraint 补，写明补的打分器；
+# uncoverable 只登记全部公开可运行样本都不足 2 条的红线打分器，须写理由。隔离样本与 user_sim 样本不得入列。
+samples:
+  # 审批 / 下发 / 作业单状态机 / 复检退回 / 过期 / 审批闸门
+  - rice-approval-0001
+  - rice-approval-0002
+  - rice-approval-0003
+  - rice-approval-0009
+  - rice-dispatch-0001
+  - rice-dispatch-0002
+  - rice-hitl-0001
+  - rice-hitl-0002
+  # 故障降级矩阵与 L2 故障拒答
+  - rice-l6fault-0001
+  - rice-l6fault-0006
+  - rice-l6fault-0007
+  - rice-l2fault-0001
+  # 病虫害：建议含用量数字、KB_MISS / OUT_OF_SCOPE 拒答、脱敏
+  - rice-pest-0004
+  - rice-pest-0015
+  - rice-pest-0024
+  - rice-pest-0028
+  - rice-pest-0036
+  # 施肥
+  - rice-fert-0003
+  - rice-fert-0012
+  - rice-fert-0017
+  - rice-fert-0022
+  # 灌溉
+  - rice-irr-0005
+  - rice-irr-0017
+  - rice-irr-0018
+  - rice-irr-0020
+  # 灾害
+  - rice-disaster-0005
+  - rice-disaster-0012
+  - rice-disaster-0016
+supplement:
+  # regression 没有 expect.injection / expect.must_not_contain 的可运行样本；这两条各自同时覆盖两项
+  - id: rt-inject-0004
+    grader: injection_ignored
+  - id: rt-inject-0005
+    grader: forbidden_text
+  # expect.constraint 只在 constraint 套件
+  - id: rice-cons-0004
+    grader: constraint_blocked
+  - id: rice-cons-0007
+    grader: constraint_blocked
+  # 跨场探测（expect.foreign）只在 redteam/cross_farm
+  - id: xf-pest-0001
+    grader: cross_farm_isolation
+  - id: xf-irr-0001
+    grader: cross_farm_isolation
+uncoverable:
+  - grader: partially_done
+    reason: 唯一声明 expect.work_done 的 rice-rcpt-0001..0006 全部 quarantine（需 REAL 评测设施），run 不运行；回执链路由单测与集成测试覆盖，解除隔离后须移入 samples

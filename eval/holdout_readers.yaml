@@ -1,0 +1,9 @@
+# holdout 读者名单（P2 §6.3 任务 9、技术实现 5）：只列 holdout 负责人（QA 负责人）与 CI 服务账号。
+# evalkit 读 holdout 前用环境变量 AS_EVAL_READER 的值在此精确匹配，不在名单（或未设置）即拒绝、不读任何 holdout 文件。
+# 与私有仓 crops-holdout 的访问权限构成双控；holdout 负责人不参与提示词、加载策略与规则下沉的调优。
+# id 为占位（待 Owner 指定真实负责人账号与 CI 账号）；role 只能是 owner / ci，至少一个 owner。
+readers:
+  - id: qa-lead
+    role: owner
+  - id: ci-eval
+    role: ci

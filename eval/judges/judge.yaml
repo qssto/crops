@@ -1,0 +1,8 @@
+# judge 模型配置（P2 L2，路线 §6.3 功能任务 4）：与智能体 configs/model.yaml 分开。
+# model 现只有 replay（录制回放 eval/judges/<维度>/recordings/*.json，不访问百炼；无录制返回 UNKNOWN）。待真实模型：
+# 接入时须选与智能体不同家族的模型，D1 批准范围内做不到时校准报告单列同源偏好检测。
+# model_tier 进 judge_version（提示词 + 评分标准内容哈希 + 档位），任一变更须重新校准。
+eval:
+  judge:
+    model: replay
+    model_tier: replay-v0

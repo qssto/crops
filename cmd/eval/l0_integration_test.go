@@ -91,9 +91,20 @@ func sampleArgs() []string {
 func runExp(t *testing.T, suite string, n int, tags, trigger string) uint64 {
 	t.Helper()
 	var stdout, stderr bytes.Buffer
+	args := append(runArgs(t), "--suite", suite, "--n", strconv.Itoa(n), "--tags", tags, "--trigger", trigger)
+	// P2 L7-a 评审修复：CI 触发（pr / nightly / release）只能经 --mode 得到，不带 --mode 时 run 拒绝。
+	if code := run(args, &stdout, &stderr); code != exitOK {
+		t.Fatalf("run code = %d stderr=%s", code, stderr.String())
+	}
+	return expIDOf(t, stdout.String())
+}
+
+// runArgs 是 run 子命令连隔离库与仓库配置的公共参数（不含 suite / n / tags / trigger）。
+func runArgs(t *testing.T) []string {
+	t.Helper()
 	args := append([]string{"run"}, sampleArgs()...)
 	args = append(args, storeArgs()...)
-	args = append(args, "--out", t.TempDir(),
+	return append(args, "--out", t.TempDir(),
 		"--migrations", filepath.Join(repoRoot, "migrations"), "--seed", filepath.Join(repoRoot, "configs/seed/fields.yaml"),
 		"--model", filepath.Join(repoRoot, "configs/model.yaml"), "--prompts", filepath.Join(repoRoot, "prompts"),
 		"--risk", filepath.Join(repoRoot, "policy/risk_matrix.yaml"), "--permissions", filepath.Join(repoRoot, "policy/permission_matrix.yaml"),
@@ -101,14 +112,15 @@ func runExp(t *testing.T, suite string, n int, tags, trigger string) uint64 {
 		"--regulation", filepath.Join(repoRoot, "policy/regulation_map.yaml"),
 		"--fault-matrix", filepath.Join(repoRoot, "policy/fault_matrix.yaml"), "--texts", filepath.Join(repoRoot, "configs/texts/zh-CN.yaml"),
 		"--notify-texts", filepath.Join(repoRoot, "configs/texts/notify.zh-CN.yaml"),
-		"--tools", filepath.Join(repoRoot, "configs/tools.yaml"),
-		"--suite", suite, "--n", strconv.Itoa(n), "--tags", tags, "--trigger", trigger)
-	if code := run(args, &stdout, &stderr); code != exitOK {
-		t.Fatalf("run code = %d stderr=%s", code, stderr.String())
-	}
-	m := regexp.MustCompile(`exp_id=(\d+) `).FindStringSubmatch(stdout.String())
+		"--tools", filepath.Join(repoRoot, "configs/tools.yaml"))
+}
+
+// expIDOf 从 run / resume 的 stdout 取 exp_id。
+func expIDOf(t *testing.T, stdout string) uint64 {
+	t.Helper()
+	m := regexp.MustCompile(`exp_id=(\d+) `).FindStringSubmatch(stdout)
 	if m == nil {
-		t.Fatalf("stdout = %s", stdout.String())
+		t.Fatalf("stdout = %s", stdout)
 	}
 	id, err := strconv.ParseUint(m[1], 10, 64)
 	if err != nil {
@@ -212,14 +224,14 @@ func TestL0_RunFreezeCompare_Integration(t *testing.T) {
 	ctx := context.Background()
 	db, cfg := evalDB(t)
 	exps := store.New(db)
-	cand := runExp(t, "regression", l0Trials, l0Tags, store.TriggerNightly)
+	cand := runExp(t, "regression", l0Trials, l0Tags, store.TriggerManual)
 
 	// run：快照无空字段、trigger_kind、trial.sample_version、MinIO manifest。
 	rec, err := exps.Get(ctx, cand)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if rec.Snapshot == nil || len(rec.Snapshot.Missing()) != 0 || rec.TriggerKind != store.TriggerNightly || rec.Frozen {
+	if rec.Snapshot == nil || len(rec.Snapshot.Missing()) != 0 || rec.TriggerKind != store.TriggerManual || rec.Frozen {
 		t.Fatalf("candidate record = %+v snapshot = %+v", rec, rec.Snapshot)
 	}
 	if n := countRows(t, db, "SELECT COUNT(*) FROM trial WHERE experiment_id = ? AND sample_version = 0", cand); n != 0 {

@@ -941,3 +941,69 @@
 - 转交 L2：挂载 holdout 后 `sample.LoadDir` 会解析 holdout 内容（validate / run / graduate / kbdump / graph 测试都会读到，pii_clean 消息会带出命中值）；`coverage/count.go` 对 holdout/ 下 suite 字段不符的文件重复计数。
 - 未修（记待办）：quarantined 样本计入覆盖目标（README 已说明）；pii_clean 按 YAML 原文行扫描，折叠标量跨行或 `\u` 转义写法会漏，后续改为同时扫解码后的字段；`targets.yaml` 允许三档目标全 0 的格子；trap 的纠正结论检查未要求 `outcome=ADVICE`。
 - 验证：`go build / vet / test`（graph、evalkit/...、cmd/eval、archtest）通过；`AS_TEST_NS=p2l1rv` 跑 cmd/eval graduate 集成测试 3 条通过。
+
+## P2-L2 · holdout 隔离、LLM-judge、人工队列与校准（2026-11-04）
+
+- holdout：`sample.LoadDir` 默认跳过 `eval/suites/holdout/`；`eval/holdout_readers.yaml`（id 为占位，待 Owner 指定）+ `AS_EVAL_READER` 授权，`validate --holdout` / `run --suite holdout` 不在名单即失败关闭、不读文件；覆盖报表在授权下计入 holdout（公开 535 + holdout 78 = 613，补写清单 0）；holdout 明细只进 `report/holdout/`。`TestHoldout_PublicHistoryClean` 查全部 ref 的 `eval/suites/` 文件名与内容不含 holdout ID，holdout 目录只能是 160000 指针，附应失败用例。submodule 未在 worktree 挂上（sandbox 拒绝 file 传输），由调度方在主仓执行。
+- judge（`internal/evalkit/grader/judge`）：三维度，提示词 / 评分标准在 `eval/judges/<维度>/`，模型配置 `eval/judges/judge.yaml` 只接受 `replay`。材料只含 fixture、被引条目原文、专家标准结论、最终输出（单测断言无中间步骤）。证据须为被评文本原句，否则 grader_error；无录制即 UNKNOWN。版本 = sha256(prompt‖rubric)[:16]-tier。
+- `run --judges`（默认关）在参考解校验之后追加 judge，版本写快照 `judge_versions`；不开时仍为空表，与 baseline_p1 可比。judge 非红线，门禁 `eval/gates/judges.yaml` 三维度 `enabled: false`、`kappa_threshold: 0.6`（待实测）。
+- review_task：`store/review_task.go`（批量 `ON DUPLICATE KEY UPDATE id = id`、md5 ref_key、派单双标不得同专家、打分）、`store/review_stats.go`（路线三条统计 SQL，task_type 参数化）。
+- `internal/evalkit/review`：入队注册表（CONFLICT > UNKNOWN > FLAKY > RANDOM_10，holdout 不入队）；二次加权 Kappa + bootstrap 区间；按 judge 分数分层抽样（每层 ≥ 20、套件轮转）+ 25% 双标；北京时间切月的月度复核。
+- `cmd/eval judge queue|calibrate|recheck`：报告 JSON 存 `report/calibration/{维度}/{judge_version}.json` / `report/recheck/{维度}/{YYYY-MM}.json`，本地 md 在 `eval/out/`。
+- 偏离：门禁文件按简报放 `eval/gates/judges.yaml`（路线写 `eval/judges/gate.yaml`）；抽样按 judge 分数分层作专家分数代理，报告再按专家分数核对每层 ≥ 20。
+- 集成测试（p2l2 已过）：`TestJudgeCalibrate_Integration`（`--total 150`：主标 150 + 双标 38 = 188 任务、重跑 0 新增、合成专家分后 n ≥ 100 且 κ=1 可进门禁、MinIO 键）、`TestJudgeRecheck_Integration`（注入时钟、月边界、每月一次）、`TestJudgeQueue_Integration`。
+- 待办：真实 judge 模型与专家（待真实模型、待专家）；评审页（需新增操作并给 kb_expert 授权、server 连评测库）；reduce 把 UNKNOWN 的 Value 0 计入均值；同一实验跨月复核 ref_key 相同会被去重；读者名单 id 为占位。
+
+### 评审修复（L2 评审，2026-11-04）
+
+- P1-1 `3d00b46`：holdout 按真实目录判定。`sample.Load` 用 `os.SameFile` 比对 `<repo>/eval/suites/holdout`（跟随符号链接，大小写不敏感文件系统也命中），目录名不区分大小写兜底；无凭证时 `--suites-dir` 在 holdout 内、样本文件链进 holdout 都返回 `ErrHoldoutDenied`。测试 `TestLoad_HoldoutBypasses`、`TestHoldout_SuitesDirInsideHoldoutDenied`。
+- P1-2 `b947691`：holdout 身份按路径。新规则 `holdout_path`（holdout 目录下必须 `suite: holdout`，反之亦然）；Trial / 隔离样本带加载时的 Holdout 标，脱敏、transcript 前缀、人工队列、校准候选、覆盖统计都用 `IsHoldout()`；入库 suite 列记 holdout。测试 `TestCheckHoldout`、`TestIsHoldoutTrial_ByPathTag`、`TestTrialInsert_HoldoutTagWinsSuite`。
+- P1-3 `e87be27`：可进门禁只看 CALIBRATION，且 n ≥ 100、bootstrap 无定义重抽 ≤ 1%、区间下限 ≥ 阈值；报告写 n、无定义数、gate_reason；月度复核不出门禁结论。测试 `TestBootstrapKappa_UndefinedRatio`、`TestBuildReport_GateReadyConditions`。
+- P1-4 `d8d6b57`：派单在事务内按 id 顺序 `FOR UPDATE` 锁主标与双标两行，双向查同一专家；ExpertMatrix 加 `a.assignee_id <> b.assignee_id`。测试 `TestReviewAssign_SameRaterBothWays_Integration`。
+- P2-5 `726370a`：公开历史检查加 `--diff-merges=separate`（merge 引入的内容）与 `--text`（二进制）；浅克隆、HEAD 无 160000 指针时 Skip 并写明原因，不报 PASS（本 worktree 未挂 submodule，当前即 Skip）。测试 `TestHoldoutLeak_Detects`（evil merge、二进制）、`TestHoldoutLeak_MountAndShallow`。
+- P2-6 `36d6556`：evidence 归一后 ≥ 8 字（`MinEvidenceRunes`），去掉句尾标点后中间不得有 。！？；!?; 或换行。测试 `TestToScore_EvidenceShape`。
+- P2-7 `e8f784d`：公开报告的 holdout 隔离样本只留 ID，理由换占位。测试 `TestRedactHoldout_Quarantined`。
+- P2-8 `dcbd5a3`：统计查询收 `StatsScope`，月度复核只统计本月创建的 MONTHLY_RECHECK 任务。测试 `TestJudgeRecheck_Integration`（两个月各 n ≤ 20）。
+- 裁决 `503f990`：门禁未开的 judge 出错只记 `Score.AdvisoryError`（trial.scores 的 `advisory_error`），不改 trial 状态；报告单列 judge_error 次数，人工队列按 UNKNOWN 入队；门禁开的维度照旧 grader_error。门禁路径 `run --judge-gate`。测试 `TestRunner_JudgeErrorGateOff`、`TestJudgeFlags_AttachAdvisoryByGate` 等。
+- 读者名单固定为 `<repo>/eval/holdout_readers.yaml`（`filepath.Join(--repo, defaultHoldoutReaders)`），没有单独覆盖名单路径的 flag；`<repo>` 取 `--repo`（默认 `.`），与 holdout 目录判定同一根。
+- 待办：`AS_EVAL_READER` 身份自报，待接 CI OIDC / 签名身份；评审页不在本批。
+- 验证：`go build / vet / vet -tags integration / test ./...` 通过；`AS_TEST_NS=p2l22` 跑 `TestJudge*`、`TestReviewAssign*` 集成测试通过。
+
+## P2-L7a · 红线门禁：冒烟子集、MODE、预算、作废、resume、并发、CI（2026-11-04）
+
+- 冒烟清单 `eval/smoke/smoke.yaml`：28 条 regression + 2 条 redteam 补样（injection_ignored / forbidden_text），`smoke.Check` 由 `RedLine()` 派生红线集合，每个红线打分器 ≥ 2 条适用样本；partially_done 登记为 uncoverable。
+- `make eval MODE=smoke|nightly|release`（`run --mode`，`cmd/eval/mode.go`）：smoke = 清单 n=3 trigger pr；nightly = regression+redteam+capability n=5（单测 n ≥ `store.GraduateTrials`）；release = 全部套件 n=5，无 holdout 失败关闭。`--mode` 与 `--suite/--n/--tags/--trigger` 互斥；不传 MODE 行为不变；`eval-nightly` 改调 MODE=nightly（`NIGHTLY_SUITE/NIGHTLY_N` 已删）。
+- `--token-budget N`：写 `token_budget`（不传为 NULL）；累计 token 超出停止派发、置 BUDGET_EXCEEDED；pr/nightly/release 不给预算直接失败。
+- 作废：`store.VoidRules` 注册表（infra_error 占比 > `eval.void_infra_error_rate`=5%、grader_error > 0），`FinishSettled` 同事务写 trial 并按 SQL 统计判 VOID + void_reason；报告首行声明作废原因与阈值（正常实验也多一行「作废判定：未命中」）。VOID / BUDGET_EXCEEDED 或 CI 触发下红线 pass^3 < 1 时 run 退出 1（报告照写，不发布 baseline）；compare / freeze 只认 DONE，自动拒绝。
+- `eval resume --exp`（`make eval-resume EXP=`）：清单取 MinIO manifest，可比因子与 samples_hash 须一致，冻结 / RUNNING 拒绝；只补缺失与 INFRA_ERROR 的 (sample_id, trial_index)，剩余预算作补跑预算，写回后重判。
+- 并发：`floor(eval.qpm×0.7/eval.llm_calls_per_trial)` 至少 1（默认 5/3 → 1，与原顺序实现一致）；`--pool 0` 时池大小 = 并发度；trial 结束按前缀删 `as:eval-t{n}:`；`-race` 单测。
+- `eval promptcheck --base`（`make eval-promptcheck`）：prompts/ 改了而 prompt_version 未变即失败。
+- CI：`.github/workflows/{pr-smoke,nightly,release}.yml` 共用 `eval-gate.yml`；密钥取 GitHub secrets（EVAL_*），inputs 经环境变量进 shell；含 promptcheck、`TestL0_FailClosed_Integration`（--fail-on-unreleasable 退出 1 自检）与 release 可选 compare。无 actionlint，`workflows_test.go` 用 yaml.v3 校验结构。
+- 本地验收（待真实 PR）：临时让 citation_valid 在 trial#1 不过，`make eval MODE=smoke TOKEN_BUDGET=1000000` 退出 2（make），stderr「red-line pass^3 < 1 on 20 samples」；还原后同命令退出 0。
+- 集成测试（`AS_TEST_NS=p2l7a` 已过）：`TestL7a_VoidBudget_Integration`、`TestL7a_Resume_Integration`。
+- 待办：仓库 secrets（EVAL_MYSQL_ROOT_PASSWORD 等 5 项 + EVAL_HOLDOUT_TOKEN）与 vars（EVAL_*_TOKEN_BUDGET）、holdout submodule 挂载（L2）；桩模型 token 为 0，预算数值待真实模型校准；QPM 待真实 provider 配额。
+
+### 评审修复（2026-11-04）
+
+- P0 resume 不再能把 VOID 洗回 DONE：`store.Resume` 在同一事务里删本次补跑键上的 INFRA_ERROR 行、写回 trial、置 DONE 并 `settleTx` 判作废，任一步失败整体回滚（`TestL7a_Resume_Integration` 注入非法阈值，实验仍为 VOID、行不变）。
+- 作废阈值：`eval.void_infra_error_rate` 须在 (0, 0.05]，越界失败关闭；run 写进快照 `void_infra_error_rate`，resume 一律沿用快照值，缺失或越界拒绝（`TestCheckVoidRate`、`TestCheckResumeSnapshot`）。
+- 冒烟适用性按样本声明判（`smoke.Declared`），红线打分器无规则即失败；supplement 允许 redteam / constraint，清单补 rice-cons-0004/0007、xf-pest-0001、xf-irr-0001（`TestSmokeList_DropConstraintFails`、`TestCheck_UndeclaredRedLineFails`）。
+- 调度：trial panic 后先停派发再抛出；只有确有未派发 trial 时才置 BUDGET_EXCEEDED（`TestRunner_PanicStopsDispatch`、`TestRunner_TokenBudget`）。
+- transcript 在 resume 事务提交后上传，只传终态 trial（`TestCommitResume`）；只删本次确实补跑写回的 INFRA_ERROR 行（`TestRerunDelete`）。
+- pr / nightly / release 触发只能经 `--mode`（`TestCmdRun_CITriggerNeedsMode`）；L0 集成测试候选实验改 manual。
+- promptcheck 与 `git merge-base <base> HEAD` 比较（`TestPromptCheck` 分叉用例）。
+- Makefile 进命令行的变量先校验格式再以单引号字面量传参、不导出（`TestMakefile_ValidatesArgs`，含 shell / make 注入用例）。
+- workflow：全部 `permissions: contents: read`；pr-smoke 路径补 cmd / policy / contracts / configs / eval，另跑 `go test ./...`；checkout `persist-credentials: false`；artifact 只传 `eval/out/*/report.md`（holdout 明细只在 MinIO `report/holdout/`）；末步 `failure()` 时 error 注解 + 作业摘要，nightly 非阻断也可见（`TestWorkflows_*`）。
+- 待办：**CI 迁移来源待定**。`migrations/**/*.sql` 不入库，eval-gate 在迁移前检查 `migrations/*.up.sql` 与 `migrations/eval/*.up.sql`，缺失即以 error 失败（不跳过），需部署方提供（私有制品 / secret 挂载）。
+- 验证：go build / vet / vet -tags integration / test ./... 与 `-race`（cmd/eval、evalkit、config）通过；集成测试 `AS_TEST_NS=p2l7a2`：TestL7a_*、TestL0_*、TestGraduate_*、TestRun_* 通过。
+
+### P2 第 2 批调度方合并（L2 + L7-a，2026-11-04）
+
+- 合并冲突：`cmd/eval/main.go` 的 usage / switch 两边各加 case；cmdRun 先按 `wantsHoldout(--suite)` 或 `--mode release` 授权 holdout，再 `jf.attach` 与 `selectRun`；快照同时带 `judge_versions` 与 `void_infra_error_rate`。`history_test.go` 的 `gitIn` 与 promptcheck 同名，改名 `historyGit`。
+- L2 单测里的 holdout 样本 id 改用不与私有仓重名的 `rice-ho-prot-99xx`（公开历史无 holdout ID）。
+- 合并缺口修复：resume 原先直接写本地报告，holdout trial 证据会进 `eval/out/`。run 与 resume 改用同一 `writeReport`（holdout 明细上传 `report/holdout/`、本地只写 `RedactHoldout` 副本，`TestWriteReport_RedactsHoldout`）；快照套件含 holdout 的实验须 `resume --holdout`（`make eval-resume HOLDOUT=1`）经读者名单授权才补跑，否则失败关闭（`TestRequireHoldoutGrant`）。
+- 已知限制：run 用 `--judges` 时快照 `judge_versions` 非空，resume 不带 judge 参数，可比因子不符会拒绝补跑（失败关闭）。待 judge 进门禁时再给 resume 加同一组 judge 参数。
+- 合并修正：`make eval` 的 SUITE 校验原不允许逗号，`SUITE=regression,redteam` 被拒；改为允许逗号分隔（`TestMakefile_ValidatesArgs` 补正反例）。
+- holdout submodule 已挂载（指针 3464e86，`.gitmodules` url 为本地路径）：`TestHoldout_PublicHistoryClean` 实跑通过；`AS_EVAL_READER=qa-lead validate --holdout` 计 613 条、补写清单 0；非名单读者被拒。
+- 共享评测库经确认执行 `make migrate-eval`（agri_eval 2 → 4：0003_experiment_gate、0004_review_task）；迁移前的实验 107 因缺 `void_reason` 列置 FAILED，记录保留。
+- 验证：go build / vet（含 `-tags integration`）/ `go test ./...` 通过；`-race`（cmd/eval、evalkit、config）通过；`AS_TEST_NS=p2b2m make test-integration` 44 个包通过；service / repository `-p 1 -race` 通过；`make eval SUITE=regression,redteam N=5` → 实验 108（170 样本、850 trial、DONE，未作废，红线 pass^3 = 100%），`eval-compare baseline_p1 → 108 --fail-on-unreleasable` 结论 NO_SIGNIFICANT_DIFF、releasable=true；`make eval MODE=smoke TOKEN_BUDGET=1000000` → 实验 109（34 样本、102 trial、DONE）。

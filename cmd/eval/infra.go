@@ -63,7 +63,15 @@ func (f *infraFlags) register(fs *flag.FlagSet) {
 	fs.StringVar(&f.faultFile, "fault-matrix", app.DefaultFaultMatrixPath, "故障降级矩阵（与生产同一份，P1 L6）")
 	fs.StringVar(&f.textsFile, "texts", app.DefaultTextsPath, "用户可读文案表（与生产同一份，P1 L6）")
 	fs.StringVar(&f.toolsFile, "tools", defaultToolsFile, "MCP 工具配置（缓存时间窗与生产同一份，P1 L6）")
-	fs.IntVar(&f.poolSize, "pool", 1, "trial schema 槽位数（agri_eval_t_1..n）")
+	fs.IntVar(&f.poolSize, "pool", 0, "trial schema 槽位数（agri_eval_t_1..n）= trial 并发度；0 = 按 eval.qpm 计算 floor(qpm×0.7/llm_calls_per_trial)")
+}
+
+// poolSize 是槽位数：--pool > 0 时取它，否则按 eval 配置算并发度（槽位数与并发度一致）。
+func poolSize(flagSize int, cfg config.Eval) int {
+	if flagSize > 0 {
+		return flagSize
+	}
+	return evalkit.Concurrency(cfg.QPM, cfg.LLMCallsPerTrial)
 }
 
 // infra 是一次评测持有的外部资源。
@@ -81,6 +89,8 @@ type infra struct {
 	// objects / evalBucket 供 L7 transcript 上传（cfg.MinIO.BucketEval）。
 	objects    repository.ObjectPutter
 	evalBucket string
+	// getter 读 eval bucket（P2 L7-a：resume 读样本清单 manifest.json）。
+	getter repository.ObjectGetter
 	// model 是实际装配用的模型配置（provider 已强制为桩），L8 写入配置快照。
 	model *config.Model
 	// devices 是设备显式绑定，Runner 据此记录提问农场的设备清单（地块清单读 trial 库）。
@@ -88,6 +98,8 @@ type infra struct {
 	// receiptSecret 是本次评测进程内生成的回执 HMAC 密钥（crypto/rand，不落盘、不打印、不读 deploy/.env），
 	// 同时注入每个 trial 的 Deps.ReceiptSecret 与 Runner 的 ReceiptSteps.Secret。
 	receiptSecret []byte
+	// eval 是评测调度与作废门禁配置（P2 L7-a：并发度、infra_error 作废阈值）。
+	eval config.Eval
 }
 
 // receiptSecretLen 是评测回执密钥的字节数。
@@ -165,7 +177,8 @@ func (f *infraFlags) open(ctx context.Context, logW io.Writer, ls *loadedSamples
 	if err != nil {
 		return nil, err
 	}
-	in := &infra{model: mcfg, approvers: [2]env.Identity{first, second}, approversByRole: users.byRole(), devices: devices}
+	in := &infra{model: mcfg, approvers: [2]env.Identity{first, second}, approversByRole: users.byRole(), devices: devices,
+		eval: cfg.Eval}
 	if in.receiptSecret, err = newReceiptSecret(); err != nil {
 		return nil, err
 	}
@@ -185,12 +198,12 @@ func (f *infraFlags) open(ctx context.Context, logW io.Writer, ls *loadedSamples
 		return nil, err
 	}
 	in.pool, err = env.NewPool(ctx, env.PoolConfig{MySQL: cfg.MySQL, MigrationsDir: f.migrations, Seed: data,
-		Redis: in.rdb, Logger: logger, Size: f.poolSize, Namespace: os.Getenv(env.NamespaceEnv)})
+		Redis: in.rdb, Logger: logger, Size: poolSize(f.poolSize, cfg.Eval), Namespace: os.Getenv(env.NamespaceEnv)})
 	if err != nil {
 		return nil, err
 	}
 	putter := repository.MinIOPutter{Client: mc}
-	in.objects, in.evalBucket = putter, cfg.MinIO.BucketEval
+	in.objects, in.evalBucket, in.getter = putter, cfg.MinIO.BucketEval, repository.MinIOGetter{Client: mc}
 	tenantID, farmID := data.Farm.TenantID, data.Farm.FarmID
 	in.question = seedQuestion(tenantID, farmID, users)
 	in.deps = func(ctx context.Context, s *env.Slot, smp *sample.Sample) (app.Deps, error) {

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"agri-steward/internal/evalkit"
+	"agri-steward/internal/evalkit/sample"
 	"agri-steward/internal/repository"
 )
 
@@ -103,33 +104,45 @@ func (s *Experiments) Start(ctx context.Context, trigger string, snap evalkit.Sn
 
 // Finish 在一个事务内批量写 trial、回填快照的 wall_time（token_used / cost 由调用方填入 exp.Snapshot）并把 experiment 置为 DONE。
 func (s *Experiments) Finish(ctx context.Context, id uint64, exp *evalkit.Experiment) error {
-	exp.Snapshot.WallTime = WallTime(exp.StartedAt, exp.FinishedAt)
-	if missing := exp.Snapshot.Missing(); len(missing) > 0 {
-		return fmt.Errorf("%w: %s", ErrEmptySnapshot, strings.Join(missing, ","))
-	}
-	snap, err := json.Marshal(exp.Snapshot)
+	snap, err := finishSnapshot(exp)
 	if err != nil {
-		return fmt.Errorf("store: snapshot: %w", err)
+		return err
 	}
-	err = s.db.WithContext(ctx).Transaction(func(tx *repository.DB) error {
-		if err := lockUnfrozen(tx, id); err != nil {
-			return err
-		}
-		if len(exp.Trials) > 0 {
-			query, args, err := trialInsert(id, exp)
-			if err != nil {
-				return err
-			}
-			if err := tx.Exec(query, args...).Error; err != nil {
-				return fmt.Errorf("insert trials: %w", err)
-			}
-		}
-		return guardedUpdate(tx, id, "status = ?, finished_at = ?, snapshot = ?", experimentDone, exp.FinishedAt, string(snap))
-	})
+	err = s.db.WithContext(ctx).Transaction(func(tx *repository.DB) error { return finishTx(tx, id, exp, snap) })
 	if err != nil {
 		return fmt.Errorf("store: finish %d: %w", id, err)
 	}
 	return nil
+}
+
+// finishSnapshot 回填 wall_time、校验快照完整并序列化（Finish / FinishSettled 共用，先于开事务）。
+func finishSnapshot(exp *evalkit.Experiment) (string, error) {
+	exp.Snapshot.WallTime = WallTime(exp.StartedAt, exp.FinishedAt)
+	if missing := exp.Snapshot.Missing(); len(missing) > 0 {
+		return "", fmt.Errorf("%w: %s", ErrEmptySnapshot, strings.Join(missing, ","))
+	}
+	b, err := json.Marshal(exp.Snapshot)
+	if err != nil {
+		return "", fmt.Errorf("store: snapshot: %w", err)
+	}
+	return string(b), nil
+}
+
+// finishTx 是 Finish 的事务体：写 trial 并置 DONE（FinishSettled 与作废判定同事务复用）。
+func finishTx(tx *repository.DB, id uint64, exp *evalkit.Experiment, snap string) error {
+	if err := lockUnfrozen(tx, id); err != nil {
+		return err
+	}
+	if len(exp.Trials) > 0 {
+		query, args, err := trialInsert(id, exp)
+		if err != nil {
+			return err
+		}
+		if err := tx.Exec(query, args...).Error; err != nil {
+			return fmt.Errorf("insert trials: %w", err)
+		}
+	}
+	return guardedUpdate(tx, id, "status = ?, finished_at = ?, snapshot = ?", experimentDone, exp.FinishedAt, snap)
 }
 
 // Fail 把仍在 RUNNING 的实验置 FAILED 并记 finished_at（走带冻结守卫的 UPDATE）；已结束或已冻结返回错误。
@@ -209,6 +222,8 @@ type scoreJSON struct {
 	Error    string  `json:"error,omitempty"`
 	// NotApplicable 是样本未声明该维度期望时的放行（P1-L8-A 审查修复）。
 	NotApplicable bool `json:"not_applicable,omitempty"`
+	// AdvisoryError 是门禁未开的 judge 出错（不改 trial 状态，L2 评审裁决）。
+	AdvisoryError string `json:"advisory_error,omitempty"`
 }
 
 // trialInsert 拼批量插入；scores 为维度名 → 结果，passed = status 为 PASS，run_id 为 0 时写 NULL。
@@ -218,8 +233,8 @@ func trialInsert(id uint64, exp *evalkit.Experiment) (string, []any, error) {
 	for _, t := range exp.Trials {
 		scores := make(map[string]scoreJSON, len(t.Scores))
 		for _, sc := range t.Scores {
-			scores[sc.Name] = scoreJSON{Pass: sc.Pass, Value: sc.Value, RedLine: sc.RedLine,
-				Unknown: sc.Unknown, Evidence: sc.Evidence, Error: sc.Error, NotApplicable: sc.NotApplicable}
+			scores[sc.Name] = scoreJSON{Pass: sc.Pass, Value: sc.Value, RedLine: sc.RedLine, Unknown: sc.Unknown,
+				Evidence: sc.Evidence, Error: sc.Error, NotApplicable: sc.NotApplicable, AdvisoryError: sc.AdvisoryError}
 		}
 		b, err := json.Marshal(scores)
 		if err != nil {
@@ -230,8 +245,12 @@ func trialInsert(id uint64, exp *evalkit.Experiment) (string, []any, error) {
 			runID = t.RunID
 		}
 		status := t.Status()
+		suite := t.Suite
+		if t.IsHoldout() {
+			suite = sample.HoldoutDir // 路径标为准（L2 评审 P1-2）：读回按 suite 列判定 holdout
+		}
 		rows = append(rows, "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
-		args = append(args, id, t.SampleID, t.SampleVersion, t.TrialIndex, t.Suite, runID, status, status == StatusPass,
+		args = append(args, id, t.SampleID, t.SampleVersion, t.TrialIndex, suite, runID, status, status == StatusPass,
 			string(b), t.Latency.Milliseconds(), exp.FinishedAt)
 	}
 	return "INSERT INTO trial " + trialCols + " VALUES " + strings.Join(rows, ", "), args, nil
