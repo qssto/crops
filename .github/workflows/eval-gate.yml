@@ -1,6 +1,6 @@
 # P2 L7-a：评测门禁公共流程（pr-smoke / nightly / release 调用）。服务用 deploy/docker-compose.yml 起 MySQL / Redis / MinIO，
 # 密钥只来自 GitHub secrets（作业环境变量，docker compose 插值与 config.Load 都读环境变量，不落 deploy/.env）。
-# migrations/**/*.sql 不入库：迁移须由部署方提供（私有制品 / secret 挂载），缺失时迁移前一步明确失败（CI 迁移来源待定）。
+# migrations/**/*.sql 不入库：迁移来自仓库 secret EVAL_MIGRATIONS_TGZ（deploy/ci-secrets.sh 写入），缺失时迁移前一步明确失败。
 name: eval-gate
 
 on:
@@ -76,10 +76,30 @@ jobs:
       - name: 启动 MySQL / Redis / MinIO
         run: docker compose -f deploy/docker-compose.yml up -d --wait
 
+      # 迁移来源：仓库 secret EVAL_MIGRATIONS_TGZ = base64(tar czf migrations/)，由 deploy/ci-secrets.sh 从本地
+      # migrations/ 打包写入（迁移有改动时重跑该脚本）。只接受 migrations/ 下的普通 .sql 文件，其余条目拒绝解包。
+      - name: 还原迁移（secret EVAL_MIGRATIONS_TGZ）
+        env:
+          EVAL_MIGRATIONS_TGZ: ${{ secrets.EVAL_MIGRATIONS_TGZ }}
+        run: |
+          if [ -z "$EVAL_MIGRATIONS_TGZ" ]; then
+            echo "未设置 EVAL_MIGRATIONS_TGZ，跳过还原（下一步检查迁移是否已由其他方式提供）"
+            exit 0
+          fi
+          tgz="$RUNNER_TEMP/migrations.tgz"
+          printf '%s' "$EVAL_MIGRATIONS_TGZ" | base64 -d > "$tgz"
+          bad=$(tar tvzf "$tgz" | awk '$1 !~ /^[-d]/ {print}
+            { n=$NF; if (n ~ /(^\/|\.\.)/ || n !~ /^migrations(\/|$)/ || ($1 ~ /^-/ && n !~ /\.sql$/)) print }')
+          if [ -n "$bad" ]; then
+            echo "::error title=迁移包含非法条目::$bad"
+            exit 1
+          fi
+          tar xzf "$tgz" --no-same-owner --no-same-permissions
+
       - name: 检查迁移来源
         run: |
           if ! ls migrations/*.up.sql migrations/eval/*.up.sql > /dev/null 2>&1; then
-            echo "::error title=CI 迁移来源待定::migrations/*.up.sql 或 migrations/eval/*.up.sql 不存在（按约定 migrations/**/*.sql 不入库）。须由部署方在本步骤前提供迁移（例如下载私有制品或挂载 secret），评测门禁不跳过迁移。"
+            echo "::error title=缺少迁移::migrations/*.up.sql 或 migrations/eval/*.up.sql 不存在（按约定 migrations/**/*.sql 不入库）。请在本地运行 deploy/ci-secrets.sh 写入 secret EVAL_MIGRATIONS_TGZ；评测门禁不跳过迁移。"
             exit 1
           fi
 

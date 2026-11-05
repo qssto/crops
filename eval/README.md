@@ -251,4 +251,4 @@ holdout 样本只在私有仓 `crops-holdout`，以 submodule 挂到 `eval/suite
 - Makefile 参数：`MODE / SUITE / N / TAGS / TOKEN_BUDGET / BASELINE / CANDIDATE / REFERENCE / EXP / PROMPT_BASE` 先校验格式（预算与 id 为正整数，baseline 名同 `report.ValidateBaselineName`，git ref 不得以 `-` 开头），非法退出 2；合法值以单引号字面量传给 cmd/eval。
 - CI：全部 workflow 只有 `contents: read` 权限；checkout 设 `persist-credentials: false`（EVAL_HOLDOUT_TOKEN 不留在 .git/config）；artifact 只传 `eval/out/*/report.md`，holdout 明细只在 MinIO `report/holdout/`。pr-smoke 另跑 `go test ./...`。
 - nightly 非阻断：作业 `continue-on-error` 不拦合并；eval-gate 末步「上报失败」在 `failure()` 时打 error 注解并写作业摘要，失败在流水线页面标红可见。
-- **待办：CI 迁移来源待定。** `migrations/**/*.sql` 不入库，CI 检出后没有迁移；eval-gate 在迁移前检查 `migrations/*.up.sql` 与 `migrations/eval/*.up.sql`，缺失即以 error 失败（不跳过）。需由部署方在该步骤前提供迁移（例如私有制品下载或 secret 挂载）。
+- **CI 迁移来源：** `migrations/**/*.sql` 不入库。eval-gate 先从仓库 secret `EVAL_MIGRATIONS_TGZ`（base64 的 `tar czf migrations/`）还原迁移，解包前拒绝 `migrations/` 以外、非 `.sql`、绝对路径、`..` 与链接条目；之后仍检查 `migrations/*.up.sql` 与 `migrations/eval/*.up.sql`，缺失即以 error 失败（不跳过）。secret 由 `deploy/ci-secrets.sh` 从本地 `deploy/.env` 与 `migrations/` 写入（需 `gh auth login`；`--dry-run` 只列名字与大小），迁移有改动时重跑。

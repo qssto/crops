@@ -994,7 +994,7 @@
 - promptcheck 与 `git merge-base <base> HEAD` 比较（`TestPromptCheck` 分叉用例）。
 - Makefile 进命令行的变量先校验格式再以单引号字面量传参、不导出（`TestMakefile_ValidatesArgs`，含 shell / make 注入用例）。
 - workflow：全部 `permissions: contents: read`；pr-smoke 路径补 cmd / policy / contracts / configs / eval，另跑 `go test ./...`；checkout `persist-credentials: false`；artifact 只传 `eval/out/*/report.md`（holdout 明细只在 MinIO `report/holdout/`）；末步 `failure()` 时 error 注解 + 作业摘要，nightly 非阻断也可见（`TestWorkflows_*`）。
-- 待办：**CI 迁移来源待定**。`migrations/**/*.sql` 不入库，eval-gate 在迁移前检查 `migrations/*.up.sql` 与 `migrations/eval/*.up.sql`，缺失即以 error 失败（不跳过），需部署方提供（私有制品 / secret 挂载）。
+- 待办：**CI 迁移来源待定**。`migrations/**/*.sql` 不入库，eval-gate 在迁移前检查 `migrations/*.up.sql` 与 `migrations/eval/*.up.sql`，缺失即以 error 失败（不跳过），需部署方提供（私有制品 / secret 挂载）。（2026-11-05 已定：secret `EVAL_MIGRATIONS_TGZ` + `deploy/ci-secrets.sh`，见 eval/README。）
 - 验证：go build / vet / vet -tags integration / test ./... 与 `-race`（cmd/eval、evalkit、config）通过；集成测试 `AS_TEST_NS=p2l7a2`：TestL7a_*、TestL0_*、TestGraduate_*、TestRun_* 通过。
 
 ### P2 第 2 批调度方合并（L2 + L7-a，2026-11-04）
@@ -1109,4 +1109,5 @@
 - 期间 MySQL 数据目录损坏后重建：按迁移建表再 IMPORT TABLESPACE 导入旧 .ibd，共享库数据全量恢复（agri_eval experiment 109 行、trial 13715 行）；隔离测试库全部丢弃，各层在新库重跑验证。
 - 测试：`go build / vet / vet -tags integration / test ./...`、`go test -race ./...` 通过；`AS_TEST_NS=p2b3v` 全量集成 `-p 1 -timeout 40m` 通过；service / repository `-tags integration -race -p 1` 通过。
 - 评测（共享 agri_eval）：`make eval SUITE=regression,redteam N=5` → exp 110（c576ee1）176 样本 / 880 trial 全 PASS，grader_error 0、infra_error 0，红线 pass^k 样本均值 1.0000，flaky 无，隔离 6 个（rice-rcpt-*）未运行；`compare --baseline baseline_p1 --candidate 110 --fail-on-unreleasable` → 配对 170 / 排除 6、`NO_SIGNIFICANT_DIFF`、可放行。`make eval MODE=smoke TOKEN_BUDGET=1000000` → exp 111，36 样本 108 trial 全 PASS。所有 P2 开关缺省关。
-- 偏离路线：L5 v1 加载上限 10（路线 ≤ 5，安全必加 8 条装不下）。业务迁移 0012-0015 未对共享 agri_steward 执行（待用户批准）。
+- 偏离路线：L5 v1 加载上限 10（路线 ≤ 5，安全必加 8 条装不下）。调度方裁决（2026-11-05）：保留 10，Gate 2 验收报告列为已知偏离；接真实模型后按 must_cite 命中率与 token 成本复评。
+- 调度方裁决（2026-11-05）：专家评审页与归因「专家判错」来源走同一条评测库连接——server / worker 增加可选的评测库只读写 `review_task` 的连接（独立配置段，缺省关，独立账号），由 kb_expert 新动作 `review.read` / `review.submit` 授权；第 4 批合并后单独实现（P2-L2b）。业务迁移 0012-0015 未对共享 agri_steward 执行（待用户批准）。
