@@ -1,6 +1,6 @@
 # P2-L7b：NEED_SIGNOFF 签字人名单（cmd/eval gate 用 git log 作者邮箱对 eval/gates/owners.yaml，再查本文件）。
-# 下列账号均为占位（待真实账号）：真实 Owner 确定后以 PR 替换本文件与 eval/gates/owners.yaml。
-/eval/signoffs/ @agri-eval-owner @agri-quality-owner
-/eval/gates/ @agri-eval-owner
+# 账号：@qssto 兼任评测 Owner 与质量 Owner（2026-11-05 由占位替换）；增减 Owner 时同步 eval/gates/owners.yaml。
+/eval/signoffs/ @qssto
+/eval/gates/ @qssto
 # P2 收口：基线冻结 / release 指针变更（eval/baselines/release.yaml）须经评测 Owner 审核。
-/eval/baselines/ @agri-eval-owner
+/eval/baselines/ @qssto

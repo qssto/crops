@@ -1,14 +1,11 @@
 # P2-L7b：CODEOWNERS 账号 → 提交邮箱 / user_id（gate 校验签字文件的 git 作者，通过后 experiment.signed_by 写 user_id）。
-# 全部为占位（待真实账号）：邮箱用 example.invalid，不会匹配任何真实提交，签字校验在替换前恒不通过（失败关闭）。
 notes:
-  - 待真实账号：handle / email / user_id 均为占位，真实 Owner 确定后以 PR 替换（同步 .github/CODEOWNERS）。
-  - gate 读 origin/main 上的本文件（被测分支的改动不生效）。提交邮箱可伪造，待部署方：main 分支保护 + 要求签名提交，之后把 require_signed_commits 置 true。
+  - 2026-11-05 由占位替换为真实账号：@qssto 兼任评测 Owner 与质量 Owner；user_id 沿用 1（业务库用户 id 待核实）。
+  - gate 读 origin/main 上的本文件（被测分支的改动不生效）。提交邮箱可伪造，须靠 main 分支保护（要求签名提交、
+    CODEOWNERS 审核）兜底；本地提交尚未签名，require_signed_commits 保持 false，配置提交签名后再置 true。
 # require_signed_commits 为 true 时签字文件的每个提交须是有效签名（git %G? = G）。
 require_signed_commits: false
 owners:
-  - handle: "@agri-eval-owner"
-    email: eval-owner@example.invalid
+  - handle: "@qssto"
+    email: v_qinshisen@baidu.com
     user_id: 1
-  - handle: "@agri-quality-owner"
-    email: quality-owner@example.invalid
-    user_id: 2

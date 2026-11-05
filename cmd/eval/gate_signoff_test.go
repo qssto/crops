@@ -234,14 +234,11 @@ func TestParseFileCommits(t *testing.T) {
 	}
 }
 
-// 仓库里的 CODEOWNERS / owners.yaml 是占位账号（待真实账号），须能解析且互相对得上。
-func TestRepoOwnersPlaceholders(t *testing.T) {
+// 仓库里的 CODEOWNERS / owners.yaml 须能解析且互相对得上（签字路径的每个 CODEOWNERS owner 都在 owners.yaml 中）。
+func TestRepoOwnersConsistent(t *testing.T) {
 	raw, err := os.ReadFile(filepath.Join(repoRoot, defaultCodeowners))
 	if err != nil {
 		t.Fatal(err)
-	}
-	if !strings.Contains(string(raw), "待真实账号") {
-		t.Fatal("CODEOWNERS must mark placeholder accounts 待真实账号")
 	}
 	rules, err := parseCodeowners(strings.NewReader(string(raw)))
 	if err != nil {
