@@ -64,16 +64,23 @@ type Process struct {
 	Config *config.Config
 	Model  *config.Model
 	db     *gorm.DB
+	evalDB *gorm.DB // P2-L2b：eval_review.enabled 时的评测库连接（独立账号），否则为 nil
 	rdb    redis.UniversalClient
 }
 
-// Close 关闭连接（Redis 先于 MySQL）。
+// Close 关闭连接（Redis 先于 MySQL，评测库最后）。
 func (p *Process) Close() error {
 	var errs []error
 	if err := p.rdb.Close(); err != nil {
 		errs = append(errs, fmt.Errorf("close redis: %w", err))
 	}
-	return errors.Join(append(errs, repository.Close(p.db))...)
+	errs = append(errs, repository.Close(p.db))
+	if p.evalDB != nil {
+		if err := repository.Close(p.evalDB); err != nil {
+			errs = append(errs, fmt.Errorf("close eval review db: %w", err))
+		}
+	}
+	return errors.Join(errs...)
 }
 
 // Open 读配置与密钥 → 选模型 → 连 MySQL / Redis / MinIO → 装配工具与主链路 → app.Build。
@@ -154,6 +161,17 @@ func Open(ctx context.Context, f *Flags) (_ *Process, err error) {
 			}
 		}
 	}()
+	evalDB, err := app.OpenEvalReview(ctx, cfg, clk, logger) // P2-L2b：缺省不启用（nil）
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		if err != nil && evalDB != nil {
+			if cerr := repository.Close(evalDB); cerr != nil {
+				err = errors.Join(err, fmt.Errorf("close eval review db: %w", cerr))
+			}
+		}
+	}()
 	mc, err := app.NewMinIO(cfg)
 	if err != nil {
 		return nil, err
@@ -217,10 +235,12 @@ func Open(ctx context.Context, f *Flags) (_ *Process, err error) {
 			Objects: repository.QualityObjects{Client: mc}, Bucket: cfg.MinIO.BucketEval},
 		Attribution: app.AttributionDeps{Config: cfg.Attribution, // P2 L8：归因周报 / 线上回流（缺省不启用）
 			Objects: repository.QualityObjects{Client: mc}, Bucket: cfg.MinIO.BucketEval},
+		EvalReview: app.EvalReviewDeps{Config: cfg.EvalReview, DB: evalDB, // P2-L2b：专家评审（缺省不启用 → 503）
+			Objects: repository.QualityObjects{Client: mc}, Bucket: cfg.MinIO.BucketEval},
 		Compaction: comp}) // P2 L6
 	if err != nil {
 		return nil, err
 	}
 	logger.Info("advice graph ready", "provider", mcfg.Provider, "tier", mcfg.DefaultTier, "prompt_version", mcfg.PromptVersion)
-	return &Process{App: a, Config: cfg, Model: mcfg, db: db, rdb: rdb}, nil
+	return &Process{App: a, Config: cfg, Model: mcfg, db: db, evalDB: evalDB, rdb: rdb}, nil
 }

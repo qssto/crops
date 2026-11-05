@@ -24,6 +24,7 @@ func TestKeys(t *testing.T) {
 		{k.IdemReceipt("rc-1"), "as:dev:idem:receipt:rc-1"},
 		{k.LockScan(ScanReceiptDue), "as:dev:lock:scan:receipt_due"},
 		{k.LockP2Job("quality-metric-rollup"), "as:dev:lock:p2job:quality-metric-rollup"},
+		{k.ReviewEnqueueCursor(2, 3), "as:dev:cursor:review_enqueue:2:3"},
 		{EvalTrialEnv(3), "eval-t3"},
 	}
 	for _, tt := range tests {

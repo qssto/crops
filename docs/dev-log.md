@@ -1175,3 +1175,60 @@
 - 评测（共享 agri_eval）：`make eval SUITE=regression,redteam N=5` → exp 112，176 样本 / 880 trial，880 PASS、0 INFRA_ERROR / GRADER_ERROR，redteam pass^5 = 1.00；`make eval-compare BASELINE=baseline_p1 CANDIDATE=112 FAIL_ON_UNRELEASABLE=1` → 配对 170，NO_SIGNIFICANT_DIFF，releasable=true；`make eval MODE=smoke TOKEN_BUDGET=1000000` → exp 113 DONE。
 - 业务迁移 0016 与主仓工作区一致，共享 agri_steward 已由用户执行到 v16。
 - 待部署方：main 分支保护 + 要求签名提交（签字作者邮箱可伪造）；CODEOWNERS / owners.yaml 真实账号；CI release 需 holdout 私有仓与 EVAL_HOLDOUT_TOKEN（用户选择 holdout 暂留本地）；`eval/baselines/release.yaml` 待冻结 baseline_p2 后写。
+
+## P2-L2b · 专家评审接口：评测库独立连接、review.read / review.submit、ONLINE_JUDGE 回写（2026-11-05）
+
+- 权限（`2c3e7ad`）：`policy/permission_matrix.yaml` 新增 `review.read` / `review.submit`，只授 kb_expert；加载期校验这两个是 kb_expert 专属操作，授给别的角色即失败。
+- 配置（`185d9d5`）：`eval_review` 段（enabled 缺省 false、host / port / database 缺省 agri_eval、max_open_conns 4、enqueue_interval 1h、enqueue_batch 200）。账号口令只从环境变量 `AS_EVAL_REVIEW_USER` / `AS_EVAL_REVIEW_PASSWORD` 取，yaml 里出现即加载失败，与 `mysql.user` 相同也失败。生产代码不 import internal/evalkit。
+- model（`d116ed2`）：任务类型新增 `ONLINE_JUDGE`，draft_ref 复用为 `ojr:{tenant}:{farm}:{id}`，没有加列。提交体校验：打分类只收 score 1-3；BACKFLOW_EXPECT 收 MERGE + 非空 expect 对象（≤16KiB），或 DROP + reason（≤512 字）。审计动作 `REVIEW_SUBMIT`。evalkit/store 复用同一套取值与 ref_key。
+- repository（`e61adcd`）：`EvalReviewRepo` 负责列表、详情、trial 摘要、Claim、Complete、去重入队。holdout 失败关闭：任务挂了样本时，只有找到对应 trial 且 suite 都不是 holdout 才判为非 holdout，trial 缺失也按 holdout 处理。业务库回写 `UPDATE online_judge_result … WHERE tenant_id = ? AND farm_id = ? AND id = ? AND row_ver = ?`，与农场链审计在同一事务，审计 scope 必须与行 scope 一致。
+- service（`a1ab3de`）：
+  - 只认 (0,0) 上的 kb_expert，路由 RequireOps 之外再防一层；角色检查在连接检查之前，所以连接关闭时非专家仍是 403。
+  - 跨库顺序选可重放状态机：评测库 Claim（OPEN → ASSIGNED 归本专家）→ 副作用（ONLINE_JUDGE 先写业务库；BACKFLOW_EXPECT 写 eval 桶 `review/backflow_expect/{draft_ref}.json`）→ 评测库 Complete（→ DONE）→ 非 ONLINE_JUDGE 写平台链审计。任一步失败，任务停在 ASSIGNED 归本人，原样重试会从断点续上：业务行已是本人同分即跳过回写，对象已是同内容即跳过写入。
+  - 幂等：review_task 没有 row_ver / request_id 列，靠状态 CAS 加同内容重放判定。同人同内容重放回 200 `replayed=true`；不同内容、他人持有、row_ver 冲突回 409 `REVIEW_CONFLICT`。
+  - 平台链审计至少写一次，重放也补一条 `replayed=true`。
+  - expect / reason 经 `pii.Mask` 比对，有变化即 400 `REVIEW_PII`。
+  - worker 任务 `online-judge-review-enqueue`（锁 `lock:p2job:online-judge-review-enqueue`，每农场续期一次）逐农场分页读 NEED_EXPERT 行入队，按 ref_key 去重。
+- controller（`f0f28e1`）：`GET /api/v1/admin/review-tasks`（task_type / status / page / page_size）、`GET /api/v1/admin/review-tasks/:id`、`POST /api/v1/admin/review-tasks/:id/submit`。提交体严格解码：未知字段、尾随内容、超长都回 400。holdout 只回 ID 与状态类字段；盲评不回 judge_score。
+- 连接关闭：路由照挂，鉴权照做，之后回 **503 `EVAL_REVIEW_DISABLED`**。不用 404，免得与「任务不存在」混淆。
+- 装配（`355b065`）：boot 在 enabled 时 RequireSecrets 后开第二个连接，启动失败和进程 Close 时都关闭它。关闭时传了连接、启用时缺 DB / Objects / Bucket，都会导致启动失败，不会静默降级。archtest SystemScope 白名单加了 `internal/app/review_l2b.go`。
+- 契约（`200e571`）：`contracts/review_submit_request.schema.json`（测试保证与 ValidateReviewSubmit 判定一致）和 `review_task_view.schema.json`（holdout 带 material、出现 judge_score 都违约）。amis 页面未做。
+- 无新迁移，复用 review_task / trial / online_judge_result。评测库账号的最小授权建议如下，未执行：review_task 给 SELECT / INSERT / UPDATE，trial 给 SELECT。
+- 偏离：
+  - ONLINE_JUDGE 的回写目标存在 draft_ref 里，没有加列。
+  - BACKFLOW_EXPECT 只做读与提交，结论存到 eval 桶。推进 MERGED / DROPPED 没做，`backflow.ExpertTransition` 仍只留接口。
+  - 归因 `ExpertReviewSource` 未接：专家分回写的是 online_judge_result，归因本来就读这张表。
+- 测试：`go build / vet / vet -tags integration / test ./...` 通过；service / controller / repository / app / model / config / contracts / archtest 加 `-race` 通过。集成测试 `TestEvalReviewRepo_Integration`、`TestReviewJudgeResultAudited_Integration` 已写，本地未跑。待调度方执行：`AS_TEST_NS=p2l2b go test -tags integration -p 1 ./internal/repository/ -run 'Review'`。
+- 待办：
+  - BACKFLOW_EXPECT 推进 MERGED / DROPPED，以及 expect 并入回归集（待专家）。
+  - 专家真实使用与双标一致性（待专家）。
+  - NEED_EXPERT 入队量与 enqueue_interval / batch 调参（待线上数据）。
+  - judge 阈值随真实模型复评（待真实模型）。
+  - 评测库独立账号建号与 GRANT（待调度方）。
+  - amis 评审页（待调度方）。
+
+### P2-L2b 评审修复（只读评审后，2026-11-05）
+
+- P1（`c1d855c`）：评测库写权限可伪造 draft_ref，所以 ONLINE_JUDGE 回写只认 NEED_EXPERT 行。service 核对行状态、dimension、judge_version；带审计的 UPDATE 追加 `AND status = 'NEED_EXPERT'`，旧的 P2-L3 路径不变。evalkit/store 拒绝插入 ONLINE_JUDGE 任务（`ErrOnlineJudgeTask`）。
+- P2-1（`db96c81`）：确定性冲突释放任务。触发条件是目标行不存在、行与任务不符、已被他人评、不再 NEED_EXPERT，或 BACKFLOW 桶里已有他人结论。释放时先写平台链审计 `REVIEW_SKIP`（summary 带 reason 码，不带样本内容和 draft_ref），再 `UPDATE review_task SET status = 'SKIPPED', done_at = ? WHERE id = ? AND status = 'ASSIGNED' AND assignee_id = ?`。释放为 SKIPPED，不回 OPEN：冲突是确定性的，回 OPEN 只会被反复认领。与本人先前提交冲突的不释放，留给本人原样重放收尾。
+- P2-2（`78d5299`）：BACKFLOW_EXPECT 结论改为条件写 `PutObjectIfAbsent`（`If-None-Match: *`，PreconditionFailed 映射为 `ErrObjectExists`）。对象已存在就重读：同内容按重放处理，内容不同回 409 且不 Complete。另加兜底：Complete 之后再重读比对，不一致回 409，不记 REVIEW_SUBMIT。
+- P2-3（`e2082fc`）：入队改为逐农场 Redis 续扫游标 `cursor:review_enqueue:{tenant_id}:{farm_id}`。值是最后读到的 online_judge_result.id，TTL 7 天（`rediskey.ReviewEnqueueCursorTTL`）。
+  - 单轮读满 50 页时写游标；扫到末尾删除游标，下一轮从头扫。
+  - 插入失败不推进游标。
+  - 游标过期只会让该农场从头扫，按 ref_key 去重，不会重复派单。
+  - 启用评审但缺 Redis 时启动失败。
+- P2-4（`0a6824a`）：集成测试新增「UPDATE 命中但封审计失败」用例。做法是删本农场 audit_chain_head，断言返回 `ErrAuditChainHeadMissing`，业务行仍是 NEED_EXPERT 且 row_ver 为 0，不留审计。
+- P3（`c3c5337`）：`eval_review.enqueue_batch` 必须在 [1, 1000] 内（`MaxEvalReviewBatch`），越界启动失败。
+- 测试：`go build / vet / vet -tags integration / test ./...` 通过；受影响包加 `-race` 通过。集成测试本地跑不了：环境里没有 `mysql.password` / `redis.password`，按约束不读 deploy/.env。待调度方执行：`AS_TEST_NS=p2l2c go test -tags integration -p 1 -race ./internal/repository/ -run 'Review|QualityObjects'`。
+- 待办：
+  - 评测库 eval_review 账号的 GRANT 未建，授权也未验证（待调度方）。
+  - ASSIGNED 超时回收未做：专家认领后放弃，任务会一直停在 ASSIGNED，需要定时把超时任务回收为 OPEN（待定超时口径）。
+  - 本地 MinIO 镜像是 `RELEASE.2024-06-13T22-53-53Z`，不确定是否执行 `If-None-Match: *`。由 `TestQualityObjects_PutObjectIfAbsent_Integration` 验证；如果不执行，就只剩 Complete 后重读兜底：后写者覆盖先写者，先写者重读不一致回 409，后写者回 200，桶里留的是后写者的结论。结果一致，但任务已经 DONE，先写者看到的是「已被改写」，体验较差，建议升级 MinIO。
+  - 入队成本：游标删除后，每轮会把该农场全部 NEED_EXPERT 行重读一遍并整批 INSERT（靠 ref_key 去重跳过），开销随积压量线性增长。待线上数据评估后，再考虑记已入队最大 id 或改为增量读。
+
+### P2-L2b 调度方合并验证（2026-11-05）
+
+- 合并：`p2-l2b-merge` = `p2-b4-merge` 041f136 + p2-l2b d0222e9（含评审修复轮）；冲突只在 configs/app.yaml、internal/model/audit.go、auth_permission_test.go、permission_matrix.yaml、dev-log，两边都保留。
+- 测试：`go build / vet / vet -tags integration / test ./...` 通过；集成 `AS_TEST_NS=p2l2c`（-p 1）：repository / service / app / evalkit/store 加 -race 通过，`-run 'Review|QualityObjects'` 9 个用例全部 PASS（含 `TestQualityObjects_PutObjectIfAbsent_Integration`：本地 MinIO 执行 `If-None-Match: *`，上条 MinIO 版本风险在本地不成立）；cmd/eval 全量通过。
+- 评测（共享 agri_eval）：`make eval SUITE=regression,redteam N=5` → exp 114，176 样本 / 880 trial，Gate 0 自动项通过，0 INFRA_ERROR / GRADER_ERROR；`make eval-compare BASELINE=baseline_p1 CANDIDATE=114 FAIL_ON_UNRELEASABLE=1` → 配对 170，NO_SIGNIFICANT_DIFF，releasable=true；`make eval MODE=smoke TOKEN_BUDGET=1000000` → exp 115 DONE。
+- 待部署方：eval_review 独立账号与 GRANT（只读写 agri_eval.review_task 及评审读取所需表）。

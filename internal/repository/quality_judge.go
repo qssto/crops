@@ -6,10 +6,13 @@ import (
 	"fmt"
 	"time"
 
+	"gorm.io/gorm"
+
 	"agri-steward/internal/model"
 )
 
-// ErrJudgeRowConflict 表示专家回写时 row_ver 已变（他人先回写或行不存在）：乐观锁冲突，调用方重读后再提交。
+// ErrJudgeRowConflict 表示专家回写影响 0 行：row_ver 已变（他人先回写）、行不存在，或（P2-L2b 路径）行不是 NEED_EXPERT。
+// 调用方重读后再决定。
 var ErrJudgeRowConflict = errors.New("repository: online_judge_result row_ver conflict")
 
 // AdviceCategories 是单农场一日出卡（outcome=ADVICE）的 category（升序，按 category 定额抽样用）。
@@ -107,15 +110,19 @@ FROM online_judge_result WHERE tenant_id = ? AND farm_id = ? AND stat_date = ? A
 	}
 	out := make([]model.OnlineJudgeResult, 0, len(rows))
 	for _, j := range rows {
-		o := model.OnlineJudgeResult{ID: j.ID, TenantID: scope.TenantID, FarmID: scope.FarmID, RunID: j.RunID,
-			AdviceID: j.AdviceID, StatDate: j.StatDate.Format(time.DateOnly), Category: j.Category, Dimension: j.Dimension,
-			JudgeVersion: j.JudgeVersion, JudgeScore: j.JudgeScore, ExpertScore: j.ExpertScore, Status: j.Status, RowVer: j.RowVer}
-		if j.ExpertID != nil {
-			o.ExpertID = *j.ExpertID
-		}
-		out = append(out, o)
+		out = append(out, j.result(scope))
 	}
 	return out, nil
+}
+
+func (j judgeRow) result(scope model.Scope) model.OnlineJudgeResult {
+	o := model.OnlineJudgeResult{ID: j.ID, TenantID: scope.TenantID, FarmID: scope.FarmID, RunID: j.RunID,
+		AdviceID: j.AdviceID, StatDate: j.StatDate.Format(time.DateOnly), Category: j.Category, Dimension: j.Dimension,
+		JudgeVersion: j.JudgeVersion, JudgeScore: j.JudgeScore, ExpertScore: j.ExpertScore, Status: j.Status, RowVer: j.RowVer}
+	if j.ExpertID != nil {
+		o.ExpertID = *j.ExpertID
+	}
+	return o
 }
 
 // ReviewJudgeResult 是专家回写（SQL 照抄 §6.4 ②，乐观锁）：row_ver 不符或行不存在返回 ErrJudgeRowConflict。
@@ -124,8 +131,48 @@ func (r QualityRepo) ReviewJudgeResult(ctx context.Context, scope model.Scope, i
 	if err := requireScope(scope); err != nil {
 		return err
 	}
-	res := r.DB.WithContext(ctx).Exec(`UPDATE online_judge_result SET expert_score = ?, expert_id = ?, status = 'REVIEWED', row_ver = row_ver + 1, updated_at = ?
-WHERE tenant_id = ? AND farm_id = ? AND id = ? AND row_ver = ?`, score, expertID, at.UTC(), scope.TenantID, scope.FarmID, id, rowVer)
+	return r.reviewJudgeOn(r.DB.WithContext(ctx), reviewJudgeStmt(false), scope, id, rowVer, score, expertID, at)
+}
+
+// ReviewJudgeResultAudited 是 P2-L2b 专家评审的业务库回写：同一事务内按 row_ver 回写 expert_score / status=REVIEWED，
+// 并写 REVIEW_SUBMIT 审计（rec 须落在同一农场链上）。UPDATE 条件带 tenant_id / farm_id 且只认 status=NEED_EXPERT 的行：
+// 别的农场的行、SCORED / 已 REVIEWED 的行都影响 0 行，与 row_ver 不符同样返回 ErrJudgeRowConflict，审计随事务回滚。
+func (r QualityRepo) ReviewJudgeResultAudited(ctx context.Context, scope model.Scope, id uint64, rowVer, score int,
+	expertID uint64, rec model.AuditRecord, at time.Time) error {
+	if err := requireScope(scope); err != nil {
+		return err
+	}
+	if rec.TenantID != scope.TenantID || rec.FarmID != scope.FarmID { // 审计须记在被回写行的农场链上（不许 0 值放行）
+		return fmt.Errorf("%w: audit (%d,%d) vs scope (%d,%d)", ErrScopeMismatch, rec.TenantID, rec.FarmID,
+			scope.TenantID, scope.FarmID)
+	}
+	return inTx(ctx, r.DB, func(tx *gorm.DB) error {
+		if err := r.reviewJudgeOn(tx, reviewJudgeStmt(true), scope, id, rowVer, score, expertID, at); err != nil {
+			return err
+		}
+		return queueAudit(ctx, tx, rec)
+	})
+}
+
+// reviewJudgeSQL 是两条回写路径共用的专家回写 UPDATE（§6.4 ②）。
+const reviewJudgeSQL = `UPDATE online_judge_result SET expert_score = ?, expert_id = ?, status = 'REVIEWED', row_ver = row_ver + 1, updated_at = ?
+WHERE tenant_id = ? AND farm_id = ? AND id = ? AND row_ver = ?`
+
+// reviewNeedExpertCond 是 P2-L2b 评审回写追加的状态条件：draft_ref 只是定位，只回写待专家的行。
+const reviewNeedExpertCond = ` AND status = 'NEED_EXPERT'`
+
+// reviewJudgeStmt 返回回写语句；needExpert 为 true 时追加 reviewNeedExpertCond（P2-L3 原路径保持 §6.4 ② 原样）。
+func reviewJudgeStmt(needExpert bool) string {
+	if needExpert {
+		return reviewJudgeSQL + reviewNeedExpertCond
+	}
+	return reviewJudgeSQL
+}
+
+// reviewJudgeOn 在 db（可为事务）上执行专家回写 stmt（reviewJudgeStmt）；调用方已校验 scope。
+func (QualityRepo) reviewJudgeOn(db *gorm.DB, stmt string, scope model.Scope, id uint64, rowVer, score int, expertID uint64,
+	at time.Time) error {
+	res := db.Exec(stmt, score, expertID, at.UTC(), scope.TenantID, scope.FarmID, id, rowVer)
 	if res.Error != nil {
 		return fmt.Errorf("repository: review online_judge_result %d: %w", id, res.Error)
 	}
@@ -133,6 +180,40 @@ WHERE tenant_id = ? AND farm_id = ? AND id = ? AND row_ver = ?`, score, expertID
 		return fmt.Errorf("%w: id %d row_ver %d", ErrJudgeRowConflict, id, rowVer)
 	}
 	return nil
+}
+
+// JudgeResult 读单农场一条 judge 结果（专家评审回写前取 row_ver / 状态）；不存在返回 model.ErrNotFound。
+func (r QualityRepo) JudgeResult(ctx context.Context, scope model.Scope, id uint64) (model.OnlineJudgeResult, error) {
+	if err := requireScope(scope); err != nil {
+		return model.OnlineJudgeResult{}, err
+	}
+	var rows []judgeRow
+	if err := r.DB.WithContext(ctx).Raw(`SELECT id, run_id, advice_id, stat_date, category, dimension, judge_version, judge_score, expert_score, expert_id, status, row_ver
+FROM online_judge_result WHERE tenant_id = ? AND farm_id = ? AND id = ?`, scope.TenantID, scope.FarmID, id).Scan(&rows).Error; err != nil {
+		return model.OnlineJudgeResult{}, fmt.Errorf("repository: read online_judge_result %d: %w", id, err)
+	}
+	if len(rows) == 0 {
+		return model.OnlineJudgeResult{}, fmt.Errorf("repository: online_judge_result %d: %w", id, model.ErrNotFound)
+	}
+	return rows[0].result(scope), nil
+}
+
+// NeedExpertResults 是单农场 status=NEED_EXPERT 的 judge 结果（id > afterID 升序，至多 limit 行；评审入队分页用）。
+func (r QualityRepo) NeedExpertResults(ctx context.Context, scope model.Scope, afterID uint64, limit int) ([]model.OnlineJudgeResult, error) {
+	if err := requireScope(scope); err != nil {
+		return nil, err
+	}
+	var rows []judgeRow
+	if err := r.DB.WithContext(ctx).Raw(`SELECT id, run_id, advice_id, stat_date, category, dimension, judge_version, judge_score, expert_score, expert_id, status, row_ver
+FROM online_judge_result WHERE tenant_id = ? AND farm_id = ? AND status = 'NEED_EXPERT' AND id > ? ORDER BY id LIMIT ?`,
+		scope.TenantID, scope.FarmID, afterID, limit).Scan(&rows).Error; err != nil {
+		return nil, fmt.Errorf("repository: need-expert online_judge_result farm %d: %w", scope.FarmID, err)
+	}
+	out := make([]model.OnlineJudgeResult, 0, len(rows))
+	for _, j := range rows {
+		out = append(out, j.result(scope))
+	}
+	return out, nil
 }
 
 // JudgeTally 是一日某维度、某 judge 版本的结果计数：Scored 为有分（专家已回写取专家分，否则 judge 分）的行，

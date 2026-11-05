@@ -130,3 +130,14 @@ attribution:
     kb_miss_min_hits: 3
     max_runs: 50
     service_user_id: 9900   # 与 config.DefaultBackflowServiceUser 一致；部署按实际服务账号覆盖
+# P2-L2b 专家评审连评测库（独立账号）：enabled 缺省 false，关闭时 /api/v1/admin/review-tasks 返回 503 EVAL_REVIEW_DISABLED、
+# worker 不起 online-judge-review-enqueue。账号与口令只从 AS_EVAL_REVIEW_USER / AS_EVAL_REVIEW_PASSWORD（或 deploy/.env 的
+# EVAL_REVIEW_USER / EVAL_REVIEW_PASSWORD）取，写进本文件即启动失败；账号不得与 mysql.user 相同。
+eval_review:
+  enabled: false
+  host: 127.0.0.1
+  port: 3306
+  database: agri_eval
+  max_open_conns: 4
+  enqueue_interval: 1h
+  enqueue_batch: 200

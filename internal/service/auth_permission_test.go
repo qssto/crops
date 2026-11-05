@@ -34,7 +34,8 @@ func TestPermissionMatrix_RepoFile_AllRolesAllOps(t *testing.T) {
 		// attribution.write（归因处置）只给 platform_admin
 		model.RolePlatformAdmin: {OpAdviceRead, OpOrderCancel, OpAuditExport, OpRawRead, OpFlagWrite, OpOrderReconcile,
 			OpAttributionWrite},
-		model.RoleKBExpert: nil,
+		// P2-L2b：专家评审读 / 提交只给 kb_expert（最小权限）
+		model.RoleKBExpert: {OpReviewRead, OpReviewSubmit},
 		model.RoleLegal:    nil,
 	}
 	if len(allowed) != len(Roles) {
@@ -100,6 +101,11 @@ func TestParsePermissionMatrix_Invalid(t *testing.T) {
 		{name: "flag.write on kb_expert", body: "version: 1\nroles:\n  kb_expert: [flag.write]\n"},
 		{name: "flag.write on legal", body: "version: 1\nroles:\n  legal: [flag.write]\n"},
 		{name: "not yaml", body: "version: [\n"},
+		// P2-L2b：review.* 只能授给 kb_expert，平台管理员与农场角色都不行
+		{name: "review.read on platform_admin", body: "version: 1\nroles:\n  platform_admin: [review.read]\n"},
+		{name: "review.submit on platform_admin", body: "version: 1\nroles:\n  platform_admin: [review.submit]\n"},
+		{name: "review.submit on agronomist", body: "version: 1\nroles:\n  agronomist: [review.submit]\n"},
+		{name: "review.read on legal", body: "version: 1\nroles:\n  legal: [review.read]\n"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -110,6 +116,9 @@ func TestParsePermissionMatrix_Invalid(t *testing.T) {
 	}
 	if _, err := ParsePermissionMatrix([]byte("version: 1\nroles:\n  platform_admin: [flag.write]\n")); err != nil {
 		t.Fatalf("flag.write on platform_admin: %v", err)
+	}
+	if _, err := ParsePermissionMatrix([]byte("version: 1\nroles:\n  kb_expert: [review.read, review.submit]\n")); err != nil {
+		t.Fatalf("review.* on kb_expert: %v", err)
 	}
 	if _, err := LoadPermissionMatrix("no-such-file.yaml"); err == nil {
 		t.Fatal("missing file must fail")

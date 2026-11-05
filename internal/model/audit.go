@@ -30,6 +30,12 @@ const (
 	AuditKillSwitchDrill AuditAction = "KILL_SWITCH_DRILL"
 	// P2 L8：回流状态推进（target run:{run_id}，summary {status, attempt?}；不含 draft_ref）。周报回流计数按其 created_at。
 	AuditBackflow AuditAction = "BACKFLOW"
+	// P2-L2b：专家评审提交（target review:{id}，summary 含 task_type / request_id / score 或 decision，不含样本内容）；
+	// ONLINE_JUDGE 记在被回写行的农场链上，其余记平台链 (0,0)。
+	AuditReviewSubmit AuditAction = "REVIEW_SUBMIT"
+	// P2-L2b：评审任务因确定性冲突释放为 SKIPPED（平台链 (0,0)，target review:{id}，summary 含 task_type / request_id /
+	// reason 码，不含样本内容与 draft_ref）。
+	AuditReviewSkip AuditAction = "REVIEW_SKIP"
 )
 
 // audit_log.result 取值。

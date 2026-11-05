@@ -34,6 +34,9 @@ func (c *Config) RequireSecrets(keys ...string) error {
 		"minio.access_key": c.MinIO.AccessKey,
 		"minio.secret_key": c.MinIO.SecretKey,
 		"auth.jwt_secret":  c.Auth.JWTSecret,
+		// P2-L2b：评测库独立账号（eval_review.enabled 时由启动方要求）
+		"eval_review.user":     c.EvalReview.User,
+		"eval_review.password": c.EvalReview.Password,
 	}
 	var missing []error
 	for _, k := range keys {

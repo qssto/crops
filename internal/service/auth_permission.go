@@ -31,12 +31,23 @@ const (
 	OpRejectionExport         Operation = "rejection.export"          // 驳回原因导出（GET /rejections，P1-L5）
 	OpAdviceFeedback          Operation = "advice.feedback"           // 采纳 / 差评（POST /advices/:advice_id/feedback，P2-L8）
 	OpAttributionWrite        Operation = "attribution.write"         // 归因问题处置更新（PATCH /admin/attribution-issues/:id，P2-L8）
+	OpReviewRead              Operation = "review.read"               // 专家评审任务列表 / 详情（GET /admin/review-tasks，P2-L2b，只限 kb_expert）
+	OpReviewSubmit            Operation = "review.submit"             // 专家评审提交（POST /admin/review-tasks/:id/submit，P2-L2b，只限 kb_expert）
 )
 
 // Operations 是全部已登记操作（矩阵校验与测试枚举用）。
 var Operations = []Operation{OpAsk, OpAdviceRead, OpApprovalSubmit, OpApprovalDecidePesticide, OpApprovalDecideOther,
 	OpOrderCancel, OpAuditExport, OpRawRead, OpFlagWrite, OpOrderReconcile, OpRejectionExport,
-	OpAdviceFeedback, OpAttributionWrite} // P2-L8
+	OpAdviceFeedback, OpAttributionWrite, // P2-L8
+	OpReviewRead, OpReviewSubmit} // P2-L2b
+
+// exclusiveOps 是只能授给单一角色的操作（加载期校验）：flag.write 只给 platform_admin（§6.2 功能任务 6）；
+// review.* 只给 kb_expert（P2-L2b 最小权限，平台管理员也不持有）。
+var exclusiveOps = map[Operation]model.Role{
+	OpFlagWrite:    model.RolePlatformAdmin,
+	OpReviewRead:   model.RoleKBExpert,
+	OpReviewSubmit: model.RoleKBExpert,
+}
 
 // Roles 是全部已登记角色（矩阵校验与测试枚举用）。
 var Roles = []model.Role{model.RoleFarmer, model.RoleFarmManager, model.RoleAgronomist, model.RoleOperator,
@@ -81,7 +92,8 @@ func LoadPermissionMatrix(path string) (*PermissionMatrix, error) {
 }
 
 // ParsePermissionMatrix 解析并校验：未知字段 / 重复角色键（yaml 解码即报错）、未知角色、未知操作、角色内重复操作、
-// flag.write 授给 platform_admin 以外的角色（含 kb_expert / legal），均视为不合法。未列出的角色视为无任何权限。
+// 专属操作授给了别的角色（flag.write 限 platform_admin，review.* 限 kb_expert，见 exclusiveOps），均视为不合法。
+// 未列出的角色视为无任何权限。
 func ParsePermissionMatrix(b []byte) (*PermissionMatrix, error) {
 	var f permissionFile
 	dec := yaml.NewDecoder(bytes.NewReader(b))
@@ -104,8 +116,8 @@ func ParsePermissionMatrix(b []byte) (*PermissionMatrix, error) {
 				return nil, fmt.Errorf("%w: role %s: unknown operation %q", ErrBadPermissionMatrix, role, op)
 			case set[op]:
 				return nil, fmt.Errorf("%w: role %s: duplicate operation %q", ErrBadPermissionMatrix, role, op)
-			case op == OpFlagWrite && role != model.RolePlatformAdmin: // GLOBAL / TENANT 开关只允许平台管理员修改（§6.2 功能任务 6）
-				return nil, fmt.Errorf("%w: role %s: %s is platform_admin-only", ErrBadPermissionMatrix, role, op)
+			case exclusiveOps[op] != "" && exclusiveOps[op] != role:
+				return nil, fmt.Errorf("%w: role %s: %s is %s-only", ErrBadPermissionMatrix, role, op, exclusiveOps[op])
 			}
 			set[op] = true
 		}

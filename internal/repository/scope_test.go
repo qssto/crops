@@ -25,6 +25,13 @@ func scopeRequiredCalls() map[string]func(model.Scope) error {
 	noFarmTicket := TicketRow{TenantID: 1, ID: 9}
 	noFarmRun := RunKey{TenantID: 1, ID: 1}
 	return map[string]func(model.Scope) error{
+		// P2-L2b：入队逐农场续扫游标（Redis）
+		"ReviewEnqueueCursor.EnqueueCursor": func(s model.Scope) error {
+			_, err := ReviewEnqueueCursor{}.EnqueueCursor(ctx, s)
+			return err
+		},
+		"ReviewEnqueueCursor.SetEnqueueCursor":   func(s model.Scope) error { return ReviewEnqueueCursor{}.SetEnqueueCursor(ctx, s, 1) },
+		"ReviewEnqueueCursor.ResetEnqueueCursor": func(s model.Scope) error { return ReviewEnqueueCursor{}.ResetEnqueueCursor(ctx, s) },
 		// P2 L8：采纳 / 差评
 		"FeedbackRepo.AdviceRun": func(s model.Scope) error { _, err := FeedbackRepo{}.AdviceRun(ctx, s, 1); return err },
 		"FeedbackRepo.InsertFeedback": func(s model.Scope) error {
@@ -465,6 +472,15 @@ func scopeRequiredCalls() map[string]func(model.Scope) error {
 		"QualityRepo.ReviewJudgeResult": func(s model.Scope) error {
 			return QualityRepo{}.ReviewJudgeResult(ctx, s, 1, 0, 3, 9, now)
 		},
+		// P2-L2b：专家评审回写业务库（审计行须与 scope 同农场）、入队分页。
+		"QualityRepo.ReviewJudgeResultAudited": func(s model.Scope) error {
+			return QualityRepo{}.ReviewJudgeResultAudited(ctx, s, 1, 0, 3, 9, model.AuditRecord{TenantID: s.TenantID, FarmID: s.FarmID}, now)
+		},
+		"QualityRepo.JudgeResult": func(s model.Scope) error { _, err := QualityRepo{}.JudgeResult(ctx, s, 1); return err },
+		"QualityRepo.NeedExpertResults": func(s model.Scope) error {
+			_, err := QualityRepo{}.NeedExpertResults(ctx, s, 0, 10)
+			return err
+		},
 	}
 }
 
@@ -571,6 +587,25 @@ func TestSystemScopeRequired(t *testing.T) {
 		"AttributionRepo.UpsertIssues": func() error { return AttributionRepo{}.UpsertIssues(ctx, zero, nil, now) },
 		"AttributionRepo.PatchIssue": func() error {
 			_, err := AttributionRepo{}.PatchIssue(ctx, zero, 1, model.AttributionPatch{}, now)
+			return err
+		},
+		// P2-L2b：评测库 review_task / trial（无 tenant / farm 维度，平台评审凭证）。
+		"EvalReviewRepo.ListReviewTasks": func() error {
+			_, _, err := EvalReviewRepo{}.ListReviewTasks(ctx, zero, model.ReviewTaskFilter{Limit: 1})
+			return err
+		},
+		"EvalReviewRepo.GetReviewTask": func() error { _, err := EvalReviewRepo{}.GetReviewTask(ctx, zero, 1); return err },
+		"EvalReviewRepo.TrialSummary": func() error {
+			_, _, err := EvalReviewRepo{}.TrialSummary(ctx, zero, model.ReviewTask{})
+			return err
+		},
+		"EvalReviewRepo.ClaimReviewTask": func() error { _, err := EvalReviewRepo{}.ClaimReviewTask(ctx, zero, 1, 9); return err },
+		"EvalReviewRepo.CompleteReviewTask": func() error {
+			return EvalReviewRepo{}.CompleteReviewTask(ctx, zero, 1, 9, nil, now)
+		},
+		"EvalReviewRepo.SkipReviewTask": func() error { return EvalReviewRepo{}.SkipReviewTask(ctx, zero, 1, 9, now) },
+		"EvalReviewRepo.InsertReviewTasks": func() error {
+			_, err := EvalReviewRepo{}.InsertReviewTasks(ctx, zero, nil, now)
 			return err
 		},
 	}

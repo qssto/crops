@@ -1,0 +1,58 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agri-steward.local/contracts/v1/review_task_view.schema.json",
+  "x-contract-version": 1,
+  "title": "ReviewTaskView",
+  "description": "专家评审接口回的任务（GET /api/v1/admin/review-tasks 的 items[]、GET /api/v1/admin/review-tasks/{id}、提交响应的 task，P2-L2b）。盲评：不含 judge_score；expert_score 只回本人的。holdout=true 时不得带 material（只回 ID 与状态类字段）；material 只含 ID / 版本 / 状态，不含任何样本文本。",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["id", "task_type", "status", "rater_no", "holdout", "mine", "created_at"],
+  "properties": {
+    "id": {"type": "integer", "minimum": 1},
+    "task_type": {"enum": ["CALIBRATION", "HUMAN_QUEUE", "MONTHLY_RECHECK", "BACKFLOW_EXPECT", "ONLINE_JUDGE"]},
+    "status": {"enum": ["OPEN", "ASSIGNED", "DONE", "SKIPPED"]},
+    "rater_no": {"enum": [1, 2]},
+    "dimension": {"type": "string", "maxLength": 32},
+    "holdout": {"type": "boolean"},
+    "mine": {"type": "boolean"},
+    "expert_score": {"type": "integer", "minimum": 1, "maximum": 3},
+    "created_at": {"type": "string", "format": "date-time"},
+    "done_at": {"type": "string", "format": "date-time"},
+    "material": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "queue_reason": {"type": "string", "maxLength": 32},
+        "experiment_id": {"type": "integer", "minimum": 1},
+        "sample_id": {"type": "string", "maxLength": 64},
+        "trial_index": {"type": "integer", "minimum": 0},
+        "judge_version": {"type": "string", "maxLength": 32},
+        "draft_ref": {"type": "string", "maxLength": 128},
+        "online_judge": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["tenant_id", "farm_id", "result_id"],
+          "properties": {
+            "tenant_id": {"type": "integer", "minimum": 1},
+            "farm_id": {"type": "integer", "minimum": 1},
+            "result_id": {"type": "integer", "minimum": 1}
+          }
+        },
+        "trial": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["suite", "sample_version", "status"],
+          "properties": {
+            "suite": {"type": "string"},
+            "sample_version": {"type": "integer", "minimum": 0},
+            "status": {"type": "string"}
+          }
+        }
+      }
+    }
+  },
+  "allOf": [
+    {"if": {"properties": {"holdout": {"const": true}}, "required": ["holdout"]}, "then": {"not": {"required": ["material"]}}},
+    {"if": {"properties": {"mine": {"const": false}}, "required": ["mine"]}, "then": {"not": {"required": ["expert_score"]}}}
+  ]
+}

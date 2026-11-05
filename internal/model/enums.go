@@ -128,7 +128,7 @@ const (
 	RoleAdmin         Role = "admin"
 	RoleAuditor       Role = "auditor"
 	RolePlatformAdmin Role = "platform_admin"
-	RoleKBExpert      Role = "kb_expert" // 预留，权限由 Phase 3/4 定义
+	RoleKBExpert      Role = "kb_expert" // 平台角色：专家评审（P2-L2b review.read / review.submit）
 	RoleLegal         Role = "legal"     // 预留，权限由 Phase 3/4 定义
 )
 

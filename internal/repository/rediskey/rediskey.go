@@ -104,3 +104,13 @@ const RlTokenTTL = 2 * time.Minute
 
 // RlJudge 是 rl:judge:{tier}（P2 L3）：线上抽样 judge 的 QPM 上限（令牌桶）；judge 同时从生产 rl:model:{tier} 取令牌。
 func (k Keys) RlJudge(tier string) string { return k.prefix + "rl:judge:" + tier }
+
+// ReviewEnqueueCursorTTL 是 cursor:review_enqueue 键的 TTL（P2-L2b：7 天，远长于入队周期；过期只让该农场下一轮从头扫，
+// 评测库按 ref_key 去重，不会重复派单）。
+const ReviewEnqueueCursorTTL = 7 * 24 * time.Hour
+
+// ReviewEnqueueCursor 是 cursor:review_enqueue:{tenant_id}:{farm_id}（P2-L2b，TTL ReviewEnqueueCursorTTL）：
+// 线上 judge 专家队列入队单轮读满页数上限时记下最后一个 online_judge_result.id，下一轮从这里续扫；扫到末尾即删除。
+func (k Keys) ReviewEnqueueCursor(tenantID, farmID uint64) string {
+	return k.prefix + "cursor:review_enqueue:" + strconv.FormatUint(tenantID, 10) + ":" + strconv.FormatUint(farmID, 10)
+}

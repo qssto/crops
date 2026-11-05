@@ -94,6 +94,8 @@ type Deps struct {
 	RuleOffload config.RuleOffload
 	// Attribution 是 P2 L8 归因周报与线上回流依赖（attribution_l8.go；零值不起任务）。
 	Attribution AttributionDeps
+	// EvalReview 是 P2-L2b 专家评审的评测库连接（review_l2b.go；零值：评审接口 503、worker 不入队）。
+	EvalReview EvalReviewDeps
 }
 
 // metaer 是能报告自身版本信息的主链路（graph.Agent）。
@@ -182,6 +184,9 @@ type App struct {
 	L8 *L8
 	// attribution 即 Deps.Attribution（P2 L8 worker 任务，attribution_l8.go）。
 	attribution AttributionDeps
+	// Review 是 P2-L2b 专家评审（评测库关闭时为 DisabledReviewService）；evalReview 即 Deps.EvalReview。
+	Review     *service.ReviewService
+	evalReview EvalReviewDeps
 }
 
 // 缺依赖时返回的错误。
@@ -269,6 +274,7 @@ func Build(deps Deps) (*App, error) {
 		quality:      deps.Quality,
 		ruleOffload:  deps.RuleOffload, // P2 L4
 		attribution:  deps.Attribution, // P2 L8
+		evalReview:   deps.EvalReview,  // P2-L2b
 	}
 	a.constraints = deps.Constraints
 	a.Faults = deps.Faults
@@ -324,6 +330,9 @@ func Build(deps Deps) (*App, error) {
 	if err := a.buildL8(); err != nil { // P2 L8
 		return nil, err
 	}
+	if err := a.buildReview(); err != nil { // P2-L2b
+		return nil, err
+	}
 	return a, nil
 }
 
@@ -364,6 +373,9 @@ func (a *App) Handler(auth *service.AuthService) http.Handler {
 	r := controller.NewRouter(g, a.Ask, mounts...)
 	controller.MountAdmin(r, g, a.Flags)   // P1-L0：/api/v1/admin/flags（flag.write）
 	for _, m := range a.l8AdminMounts(g) { // P2 L8：/api/v1/admin/attribution-issues/:id（attribution.write）
+		m(r)
+	}
+	for _, m := range a.reviewAdminMounts(g) { // P2-L2b：/api/v1/admin/review-tasks（review.read / review.submit）
 		m(r)
 	}
 	// P1-L4：设备回执 webhook（签名校验，不经用户鉴权）

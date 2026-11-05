@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agri-steward.local/contracts/v1/review_submit_request.schema.json",
+  "x-contract-version": 1,
+  "title": "ReviewSubmitRequest",
+  "description": "专家提交一条评审（POST /api/v1/admin/review-tasks/{id}/submit，P2-L2b，只限平台 kb_expert）。打分类任务（CALIBRATION / HUMAN_QUEUE / MONTHLY_RECHECK / ONLINE_JUDGE）只带 score（1-3）；BACKFLOW_EXPECT 带 decision：MERGE 须带非空 expect 对象（≤16KiB，服务端另校验字节数），DROP 须带 reason 且不带 expect。expect / reason 含个人信息即 400 REVIEW_PII。同一专家同内容重放返回 replayed=true；其余状态冲突 409 REVIEW_CONFLICT。",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "score": {"type": "integer", "minimum": 1, "maximum": 3},
+    "decision": {"enum": ["MERGE", "DROP"]},
+    "expect": {"type": "object", "minProperties": 1},
+    "reason": {"type": "string", "maxLength": 512}
+  },
+  "oneOf": [
+    {
+      "title": "score",
+      "required": ["score"],
+      "not": {"anyOf": [{"required": ["decision"]}, {"required": ["expect"]}, {"required": ["reason"]}]}
+    },
+    {
+      "title": "merge",
+      "required": ["decision", "expect"],
+      "properties": {"decision": {"const": "MERGE"}},
+      "not": {"required": ["score"]}
+    },
+    {
+      "title": "drop",
+      "required": ["decision", "reason"],
+      "properties": {"decision": {"const": "DROP"}, "reason": {"pattern": "\\S"}},
+      "not": {"anyOf": [{"required": ["score"]}, {"required": ["expect"]}]}
+    }
+  ]
+}

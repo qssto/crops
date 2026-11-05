@@ -2,12 +2,13 @@
 # 约束（加载时校验，违反即启动失败）：
 #   - 角色限 farmer / farm_manager / agronomist / operator / admin / auditor / platform_admin / kb_expert / legal；
 #     操作限 service.Operations；同一角色内操作不得重复，角色键不得重复。
-#   - flag.write 只能授给 platform_admin（kb_expert / legal 同为平台角色也不行）。
-#   - 未声明的「角色 × 操作」一律拒绝；kb_expert / legal 预留，本阶段无权限。
+#   - flag.write 只能授给 platform_admin（kb_expert / legal 同为平台角色也不行）；review.read / review.submit 只能授给 kb_expert。
+#   - 未声明的「角色 × 操作」一律拒绝；legal 预留，本阶段无权限。
 # 审批还需同时满足 risk_matrix.yaml 的 required_role（用药类 SPRAY 只有 agronomist）；DecisionService 按作业类型取 decide.pesticide（SPRAY）或 decide.other 判定。
 # rejection.export（P1-L5 驳回原因导出）授给 farm_manager / agronomist / auditor。
 # audit.export（P1-L7 审计导出）只授给 auditor / platform_admin（L7 起 admin 不再持有）。
 # advice.feedback（P2-L8 采纳 / 差评）授给持 advice.read 的在场业务角色（auditor / platform_admin 只读，不授，最小授权）；attribution.write（P2-L8 归因问题处置，平台路由）只授给 platform_admin。
+# review.read / review.submit（P2-L2b 专家评审，平台路由 /admin/review-tasks）只授给 kb_expert。
 # 取值为草拟，待 Owner 确认。
 version: 1
 roles:
@@ -18,5 +19,5 @@ roles:
   admin: [ask, advice.read, order.cancel, advice.feedback]
   auditor: [advice.read, audit.export, raw.read, rejection.export]
   platform_admin: [advice.read, order.cancel, audit.export, raw.read, flag.write, order.reconcile, attribution.write]
-  kb_expert: []
+  kb_expert: [review.read, review.submit]
   legal: []

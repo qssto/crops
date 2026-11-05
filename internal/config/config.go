@@ -49,6 +49,8 @@ type Config struct {
 	RuleOffload RuleOffload `mapstructure:"rule_offload"`
 	// Attribution 是归因周报与线上回流配置（P2 L8，attribution.go）；缺省两项任务均不启用。
 	Attribution Attribution `mapstructure:"attribution"`
+	// EvalReview 是专家评审接口连评测库的配置（P2-L2b，eval_review.go）；缺省不启用，账号口令只从环境变量取。
+	EvalReview EvalReview `mapstructure:"eval_review"`
 }
 
 // DeviceReceipt 是回执 webhook 的 HMAC 密钥；只从环境变量 / deploy/.env 读，未配置时回执路由不挂载。
@@ -118,6 +120,8 @@ var secrets = []struct {
 	{"minio.secret_key", []string{"AS_MINIO_SECRET_KEY", "MINIO_PASSWORD"}},
 	{"auth.jwt_secret", []string{"AS_AUTH_JWT_SECRET", "AUTH_JWT_SECRET"}},
 	{"device_receipt.secret", []string{"AS_DEVICE_RECEIPT_SECRET", "DEVICE_RECEIPT_SECRET"}}, // P1-L4-B，可选
+	{"eval_review.user", []string{"AS_EVAL_REVIEW_USER", "EVAL_REVIEW_USER"}},                // P2-L2b，启用时必填
+	{"eval_review.password", []string{"AS_EVAL_REVIEW_PASSWORD", "EVAL_REVIEW_PASSWORD"}},    // P2-L2b，启用时必填
 }
 
 // ErrSecretInFile 表示 yaml 中写了密钥。
@@ -140,6 +144,7 @@ func Load(file, envFile string) (*Config, error) {
 	setCompactionDefaults(v)
 	setRuleOffloadDefaults(v) // P2 L4
 	setAttributionDefaults(v) // P2 L8
+	setEvalReviewDefaults(v)  // P2-L2b
 	if err := v.ReadInConfig(); err != nil {
 		return nil, fmt.Errorf("config: read %s: %w", file, err)
 	}
@@ -176,6 +181,9 @@ func Load(file, envFile string) (*Config, error) {
 		return nil, fmt.Errorf("config: %s: %w", file, err)
 	}
 	if err := c.Attribution.Validate(); err != nil { // P2 L8
+		return nil, fmt.Errorf("config: %s: %w", file, err)
+	}
+	if err := c.EvalReview.Validate(c.MySQL.User); err != nil { // P2-L2b
 		return nil, fmt.Errorf("config: %s: %w", file, err)
 	}
 	return &c, nil

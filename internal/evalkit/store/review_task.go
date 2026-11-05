@@ -2,23 +2,23 @@ package store
 
 import (
 	"context"
-	"crypto/md5"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"strconv"
 	"strings"
 	"time"
 
+	"agri-steward/internal/model"
 	"agri-steward/internal/repository"
 )
 
 // review_task.task_type 取值（P2 §6.3 SQL）。
+// 取值与 ref_key 口径定义在 model（review_l2b.go），业务侧专家评审接口共用（P2-L2b）。
 const (
-	TaskCalibration    = "CALIBRATION"
-	TaskHumanQueue     = "HUMAN_QUEUE"
-	TaskMonthlyRecheck = "MONTHLY_RECHECK"
-	TaskBackflowExpect = "BACKFLOW_EXPECT"
+	TaskCalibration    = model.ReviewCalibration
+	TaskHumanQueue     = model.ReviewHumanQueue
+	TaskMonthlyRecheck = model.ReviewMonthlyRecheck
+	TaskBackflowExpect = model.ReviewBackflowExpect
 )
 
 // review_task.queue_reason 取值（HUMAN_QUEUE 四类入口）。
@@ -31,19 +31,19 @@ const (
 
 // review_task.status 取值。
 const (
-	ReviewOpen     = "OPEN"
-	ReviewAssigned = "ASSIGNED"
-	ReviewDone     = "DONE"
-	ReviewSkipped  = "SKIPPED"
+	ReviewOpen     = model.ReviewOpen
+	ReviewAssigned = model.ReviewAssigned
+	ReviewDone     = model.ReviewDone
+	ReviewSkipped  = model.ReviewSkipped
 )
 
 // 专家分数范围（1-3 有序量表，与 judge 一致）。
 const (
-	minExpertScore = 1
-	maxExpertScore = 3
+	minExpertScore = model.ExpertScoreMin
+	maxExpertScore = model.ExpertScoreMax
 	// RaterPrimary / RaterSecond 是主标与双标。
-	RaterPrimary = 1
-	RaterSecond  = 2
+	RaterPrimary = model.RaterPrimary
+	RaterSecond  = model.RaterSecond
 	// reviewInsertBatch 是一条 INSERT 的最大行数。
 	reviewInsertBatch = 500
 )
@@ -57,6 +57,8 @@ var (
 	ErrBadExpertScore = errors.New("store: expert score must be 1-3")
 	// ErrSameRater 表示主标与双标派给了同一位专家（双标须独立，两个方向都拦）。
 	ErrSameRater = errors.New("store: second rater must differ from the primary rater")
+	// ErrOnlineJudgeTask 表示评测侧试图写 ONLINE_JUDGE 任务（只能由业务侧入队任务从 NEED_EXPERT 行生成）。
+	ErrOnlineJudgeTask = errors.New("store: ONLINE_JUDGE review tasks are enqueued by the business side only")
 )
 
 // ReviewTask 是一行 review_task。可空列用指针 / 空串（空串写 NULL）。
@@ -83,16 +85,7 @@ type ReviewTask struct {
 // Key 是去重键 ref_key = md5(task_type|experiment_id|sample_id|trial_index|dimension|draft_ref|rater_no)（NULL 记空串，
 // rater_no 零值按 1）。
 func (t ReviewTask) Key() string {
-	exp, idx := "", ""
-	if t.ExperimentID != nil {
-		exp = strconv.FormatUint(*t.ExperimentID, 10)
-	}
-	if t.TrialIndex != nil {
-		idx = strconv.Itoa(*t.TrialIndex)
-	}
-	raw := strings.Join([]string{t.TaskType, exp, t.SampleID, idx, t.Dimension, t.DraftRef, strconv.Itoa(t.rater())}, "|")
-	sum := md5.Sum([]byte(raw))
-	return hex.EncodeToString(sum[:])
+	return model.ReviewRefKey(t.TaskType, t.ExperimentID, t.SampleID, t.TrialIndex, t.Dimension, t.DraftRef, t.rater())
 }
 
 func (t ReviewTask) rater() int {
@@ -111,7 +104,14 @@ type Reviews struct {
 func NewReviews(db *repository.DB) *Reviews { return &Reviews{db: db} }
 
 // Insert 批量插入 OPEN 任务，ON DUPLICATE KEY UPDATE id = id：重跑不重复派单。返回新插入的行数（已存在的行影响数为 0）。
+// ONLINE_JUDGE 任务一律拒绝（ErrOnlineJudgeTask）：它的 draft_ref 指向业务库行，只能由业务侧入队任务
+// online-judge-review-enqueue 从 NEED_EXPERT 行生成（P2-L2b）。
 func (r *Reviews) Insert(ctx context.Context, tasks []ReviewTask, at time.Time) (int, error) {
+	for i, t := range tasks {
+		if err := insertable(t); err != nil {
+			return 0, fmt.Errorf("store: review task %d: %w", i, err)
+		}
+	}
 	inserted := 0
 	err := r.db.WithContext(ctx).Transaction(func(tx *repository.DB) error {
 		for start := 0; start < len(tasks); start += reviewInsertBatch {
@@ -121,9 +121,6 @@ func (r *Reviews) Insert(ctx context.Context, tasks []ReviewTask, at time.Time) 
   dimension, judge_version, judge_score, rater_no, status, ref_key, created_at) VALUES `)
 			args := make([]any, 0, len(batch)*13)
 			for i, t := range batch {
-				if t.TaskType == "" {
-					return fmt.Errorf("review task %d: empty task_type", start+i)
-				}
 				if i > 0 {
 					sb.WriteString(", ")
 				}
@@ -152,6 +149,17 @@ func nullStr(s string) any {
 		return nil
 	}
 	return s
+}
+
+// insertable 校验评测侧可写的任务类型：不能为空，也不能是 ONLINE_JUDGE。
+func insertable(t ReviewTask) error {
+	switch t.TaskType {
+	case "":
+		return errors.New("empty task_type")
+	case model.ReviewOnlineJudge:
+		return ErrOnlineJudgeTask
+	}
+	return nil
 }
 
 // Assign 把 OPEN / ASSIGNED 任务派给 assignee（改派允许）。同一 trial 同一维度的主标与双标不得是同一专家，
