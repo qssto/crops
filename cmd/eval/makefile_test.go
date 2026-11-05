@@ -35,6 +35,10 @@ func TestMakefile_ValidatesArgs(t *testing.T) {
 		{[]string{"eval-compare", "BASELINE=baseline_p1", "CANDIDATE=42", "FAIL_ON_UNRELEASABLE=1"}, "run ./cmd/eval compare --baseline baseline_p1 --candidate 42 --fail-on-unreleasable"},
 		{[]string{"eval-compare", "BASELINE=12", "CANDIDATE=3", "MODE=phase", "REFERENCE=4"}, "run ./cmd/eval compare --baseline 12 --candidate 3 --mode phase --reference 4"},
 		{[]string{"eval-promptcheck", "PROMPT_BASE=origin/main"}, "run ./cmd/eval promptcheck --base origin/main"},
+		// 评审 P2：不给 GATE_BASELINE（或给空）不再默认 baseline_p1，由 gate 读 eval/baselines/release.yaml 指针。
+		{[]string{"eval-gate", "EXP=9"}, "run ./cmd/eval gate --exp 9"},
+		{[]string{"eval-gate", "EXP=9", "GATE_BASELINE="}, "run ./cmd/eval gate --exp 9"},
+		{[]string{"eval-gate", "EXP=9", "GATE_BASELINE=baseline_p2.v1"}, "run ./cmd/eval gate --exp 9 --baseline baseline_p2.v1"},
 	}
 	for _, g := range good {
 		out, err := makeEval(t, g.args...)
@@ -68,11 +72,18 @@ func TestMakefile_ValidatesArgs(t *testing.T) {
 		{"eval-compare", "CANDIDATE=`touch " + marker + "`"},
 		{"eval-promptcheck", "PROMPT_BASE=--output=" + marker},
 		{"eval-promptcheck", "PROMPT_BASE=main;touch " + marker},
+		{"eval-gate", "EXP="},
+		{"eval-gate", "EXP=1;touch " + marker},
+		{"eval-gate", "GATE_BASELINE=../x"},
+		{"eval-gate", "GATE_BASELINE=a'$(touch " + marker + ")'"},
 	}
 	for _, b := range bad {
 		args := []string{b.target, b.arg}
-		if b.target == "eval-compare" {
+		switch {
+		case b.target == "eval-compare":
 			args = append(args, "BASELINE=baseline_p1")
+		case b.target == "eval-gate" && !strings.HasPrefix(b.arg, "EXP="):
+			args = append(args, "EXP=9")
 		}
 		out, err := makeEval(t, args...)
 		var ee *exec.ExitError

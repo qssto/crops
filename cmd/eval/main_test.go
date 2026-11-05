@@ -98,10 +98,11 @@ signed_at: 2026-10-28
 		// P1 L8 redteam 五类 39 条与演练沉淀 rice-dispatch-0004..0005、P2 L1-T capability 冒烟 rice-cap-0001..0002、
 		// P2 L1 四类 capability 样本 317 条、P2 L6 多轮长会话 rice-cap-0003..0004）；其中 rice-rcpt-0001..0006 共 6 个隔离
 		// （需 REAL 评测设施）。P2 L4：redteam/tank_mix 3 条（rt-mix-0001..0003）与审查修复补的绕过写法 3 条（rt-mix-0004..0006）
-		// → 543 个，run 跑 537 个。
-		{name: "validate repo samples", wantCode: exitOK, wantStdout: "validate OK: 543 samples",
+		// → 543 个，run 跑 537 个。P2 L7-b：capability 模拟用户样本 rice-cap-sim-0001..0003（隔离：待人工阅读 / 待真实模型）
+		// → 546 个、9 个隔离，run 仍跑 537 个。
+		{name: "validate repo samples", wantCode: exitOK, wantStdout: "validate OK: 546 samples",
 			args: []string{"validate", "--suites-dir", suites, "--taxonomy", tax, "--repo", repoRoot}},
-		{name: "validate counts quarantined", wantCode: exitOK, wantStdout: "6 quarantined (run skips them)\n",
+		{name: "validate counts quarantined", wantCode: exitOK, wantStdout: "9 quarantined (run skips them)\n",
 			args: []string{"validate", "--suites-dir", suites, "--taxonomy", tax, "--repo", repoRoot}},
 		{name: "validate rejects missing author", wantCode: exitFailed, wantStderr: "failed sample ids: tmp-no-author",
 			args: []string{"validate", "--suites-dir", filepath.Dir(badDir), "--taxonomy", tax, "--repo", repoRoot}},

@@ -1,0 +1,21 @@
+# P2-L7b 成本 / 延迟劣化阈值草稿（路线 §6.8 功能任务 7）：candidate > baseline × (1 + max_increase_ratio) 即劣化 → NEED_SIGNOFF。
+# 草稿：待真实模型（桩模型 token 为 0、延迟不反映真实模型），signed_by 留空待 Owner 以 PR 签字。
+# P95 延迟在桩模型下只出报告（report_only_on_stub）：桩模型延迟只反映本机调度抖动，判定会误拦；
+# 代价是桩模型下延迟劣化不拦，接真实模型后 report_only_on_stub 不再生效（快照 model ≠ stub）。
+signed_by: ""
+notes:
+  - 草稿：数值为初始建议（待真实模型实测后重定），signed_by 留空待 Owner 签字。
+  - 单会话 token = 快照 token_used / trial 数；压缩触发率 = 触发 COMPACTION_APPLIED 的 trial / trial 数。
+metrics:
+  - name: tokens_per_session
+    max_increase_ratio: 0.1
+    report_only_on_stub: false
+    note: 待真实模型：桩模型 token 恒为 0，劣化判定不触发
+  - name: latency_p95
+    max_increase_ratio: 0.2
+    report_only_on_stub: true
+    note: 桩模型下只出报告（本机抖动）；待真实模型
+  - name: compaction_rate
+    max_increase_ratio: 0.1
+    report_only_on_stub: false
+    note: baseline 为 0 时 candidate 任一触发即劣化

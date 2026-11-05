@@ -1,5 +1,6 @@
 # P2 L7-a：发布评测（全部套件含 holdout、n=5、trigger release），手动触发；未挂 holdout 失败关闭。
 # 给 baseline 时对本次实验跑 compare --fail-on-unreleasable（不可放行退出 1）。
+# P2 L7-b：随后对 gate_baseline（空 = eval/baselines/release.yaml 指针所指基线）跑 eval gate，非 PASS 或未签字的 NEED_SIGNOFF 发布失败。
 name: release
 
 on:
@@ -13,6 +14,10 @@ on:
         description: 对比的已冻结基线名或 exp id（空 = 不对比）
         required: false
         default: ""
+      gate_baseline:
+        description: P2 L7-b 质量门禁的已冻结基线名或 exp id；空 = 读 eval/baselines/release.yaml 指针（缺失即失败）。非 PASS / 未签字 NEED_SIGNOFF 时发布失败
+        required: false
+        default: ""
 
 permissions:
   contents: read
@@ -24,4 +29,5 @@ jobs:
       mode: release
       token_budget: ${{ inputs.token_budget }}
       baseline: ${{ inputs.baseline }}
+      gate_baseline: ${{ inputs.gate_baseline }}
     secrets: inherit

@@ -36,6 +36,8 @@ type Sample struct {
 	// SyntheticPII 是 question 中故意写入、但 expect.pii 的 kind 表达不了的合成敏感值（如银行卡号，P2 L1-T）：
 	// 只供 pii_clean 文件扫描放行（见 piiscan.go），不参与打分；须原样出现在 question 中。
 	SyntheticPII []string `yaml:"synthetic_pii,omitempty"`
+	// UserSim 是多轮模拟用户声明（P2 L7-b，见 usersim.go）：声明时 question 是第一句，之后由模拟用户通道续问。
+	UserSim *UserSim `yaml:"user_sim,omitempty"`
 
 	// Path 是样本文件路径，加载时填写，不来自 YAML。
 	Path string `yaml:"-"`

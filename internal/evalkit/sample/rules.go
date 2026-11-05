@@ -99,6 +99,7 @@ func DefaultRules(tx *knowledge.Taxonomy, kb KnowledgeOpener) []Rule {
 		PerSample(RuleHoldout, checkHoldout),     // P2 L2 评审修复
 		PerSample(RuleSession, checkSession),     // P2 L6
 		PerSample(RuleConflict, checkConflict),   // P2 L4
+		PerSample(RuleUserSim, checkUserSim),     // P2 L7-b
 	}
 }
 

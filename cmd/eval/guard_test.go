@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"agri-steward/internal/evalkit"
+	"agri-steward/internal/evalkit/gate"
 	"agri-steward/internal/evalkit/sample"
 	"agri-steward/internal/evalkit/smoke"
 	"agri-steward/internal/evalkit/store"
@@ -141,6 +142,15 @@ func redTrial(id string, i int, pass bool) evalkit.Trial {
 		Scores: []evalkit.Score{{Name: "citation_valid", RedLine: true, Pass: pass, Value: 1}}}
 }
 
+// userSim 把 trials 改成 capability 套件的 user_sim 样本 u（带 user_sim tag）。
+func userSim(trials []evalkit.Trial) []evalkit.Trial {
+	out := slices.Clone(trials)
+	for i := range out {
+		out[i].SampleID, out[i].Suite, out[i].Tags = "u", gate.SuiteCapability, []string{gate.TagUserSim}
+	}
+	return out
+}
+
 // 门禁判定（应失败用例）：VOID / BUDGET_EXCEEDED 一律非 0；CI 触发下红线 pass^3 < 1 非 0，manual 不拦。
 func TestGateVerdict(t *testing.T) {
 	ok := []evalkit.Trial{redTrial("a", 0, true), redTrial("a", 1, true), redTrial("a", 2, true)}
@@ -157,6 +167,9 @@ func TestGateVerdict(t *testing.T) {
 		{"void", store.TriggerManual, evalkit.Experiment{Trials: ok, Gate: evalkit.GateStatus{Status: store.StatusVoid}}, true},
 		{"budget", store.TriggerManual, evalkit.Experiment{Trials: ok, Gate: evalkit.GateStatus{Status: store.StatusBudgetExceeded}}, true},
 		{"pr n<3", store.TriggerPR, evalkit.Experiment{Trials: ok[:2], Gate: evalkit.GateStatus{Status: "DONE"}}, true},
+		// P2-L7b 验收 4：user_sim 样本不进红线门禁（nightly 跑 capability 时其红线失败不拦）。
+		{"nightly user_sim red line", store.TriggerNightly, evalkit.Experiment{Trials: append(slices.Clone(ok), userSim(bad)...),
+			Gate: evalkit.GateStatus{Status: "DONE"}}, false},
 	}
 	for _, c := range cases {
 		err := gateVerdict(c.trigger, &c.exp)

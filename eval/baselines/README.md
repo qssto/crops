@@ -57,3 +57,20 @@ make eval-freeze GO=go NAME=baseline_p1 EXP=102 BACKFILL=eval/baselines/baseline
 - 冻结已提交但指针没写成（如写文件失败）时，用同一命令重跑：实验已冻结且库中快照与这次补录算出的一致，只补写指针，stdout 打印 `pointer-only`；快照不一致返回 `ErrFrozenMismatch`，不写指针。
 - compare 的 `--baseline` 无论给名字还是 id，都要求该实验在库中 `frozen = 1`；指针文件只是名字到 id 的映射。
 - 对比：`make eval-compare GO=go BASELINE=baseline_p1 CANDIDATE=<id>`（单因子，写候选的 factor_diff / baseline_id / compare_mode）；`MODE=phase` 为阶段级，只出报告；`FAIL_ON_UNRELEASABLE=1` 时不可放行退出码 1。报告在 `eval/out/compare/{baseline}-{candidate}.md`。
+
+## release.yaml（release 门禁基线指针，待调度方写）
+
+`make eval MODE=release` 之后的 `make eval-gate`（release workflow 的 gate 步骤）对比哪个基线，只有两个来源：
+
+1. 显式 `GATE_BASELINE=<名|exp id>`（workflow 输入 `gate_baseline`）；
+2. 不给（或给空）时读本目录 `release.yaml`：
+
+```yaml
+baseline: baseline_p2   # 已冻结基线名，对应本目录 baseline_p2.yaml
+```
+
+- 指针由调度方在 `baseline freeze --name baseline_p2 …` 之后手写并提交；评测代码不写、不 glob 本目录，只按名字读 `{名}.yaml`。
+- 严格解码：只认 `baseline` 一个字段；值须是合法 baseline 名（不收纯数字 exp id，不收 `release` 自身）。文件缺失、为空或格式错时 gate 连库前报错退出，不退回任何默认基线（以前默认 `baseline_p1`，套件只有 regression / redteam，与 release 全套件不可比）。
+- `release` 是保留名：`baseline freeze --name release`、`run --baseline release` 都被拒绝，避免覆盖指针。
+- 指向的基线仍要求库中 `frozen = 1`；基线与候选快照的 `suites` 不同时 gate 报「基线套件 X 与候选 Y 不一致」并退出非 0，不写 `gate_verdict`。
+- 换基线（如 `.r2`）时改这一行并提交，不改其他基线文件。

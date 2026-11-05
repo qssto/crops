@@ -97,6 +97,32 @@ func TestBuildTranscript_NoDetail(t *testing.T) {
 	}
 }
 
+// P2 L7-b：user_sim trial 的多轮对话写进 root 行（入库前人工阅读 trial 对话用）；非 user_sim trial 不带该字段。
+func TestBuildTranscript_Conversation(t *testing.T) {
+	tr := transcriptTrial()
+	tr.Conversation = []evalkit.ConvTurn{{User: "能打药吗", Agent: "需要风速", RunID: 8}, {User: "风速 2 米", Agent: "可以", RunID: 9}}
+	b, err := BuildTranscript("exp-1", tr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var root struct {
+		Conversation []evalkit.ConvTurn `json:"conversation"`
+	}
+	if err := json.Unmarshal(decodeLines(t, b)[0].Data, &root); err != nil {
+		t.Fatal(err)
+	}
+	if len(root.Conversation) != 2 || root.Conversation[1] != tr.Conversation[1] {
+		t.Fatalf("conversation = %+v", root.Conversation)
+	}
+	plain, err := BuildTranscript("exp-1", transcriptTrial())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(decodeLines(t, plain)[0].Data, []byte(`"conversation"`)) {
+		t.Fatalf("plain trial root has conversation: %s", decodeLines(t, plain)[0].Data)
+	}
+}
+
 type fakePutter struct {
 	keys   []string
 	bucket string

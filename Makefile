@@ -133,3 +133,19 @@ eval-judge-calibrate:
 
 eval-judge-recheck:
 	$(GO) run ./cmd/eval judge recheck --dim $(DIM) --exp $(EXP)
+
+# P2 L7-b：质量门禁（实验 EXP 对已冻结基线 GATE_BASELINE；不给或给空时 gate 读 eval/baselines/release.yaml 指针，
+# 指针缺失即失败，不隐式用旧基线）：结论写 experiment.gate_verdict、
+# 报告写 eval/out/gate/{baseline}-{EXP}.md；非 PASS、或 NEED_SIGNOFF 未经 CODEOWNERS 签字（eval/signoffs/{EXP}.md）退出非 0
+GATE_BASELINE ?=
+ARG_VARS += GATE_BASELINE
+unexport GATE_BASELINE
+.PHONY: eval-gate
+eval-gate:
+	@$(call chk_bad,GATE_BASELINE,$(ARG_NAME_BAD)); $(call chk_bad,EXP,''|$(ARG_INT_BAD))
+	$(GO) run ./cmd/eval gate --exp $(call shq,EXP)$(if $(value GATE_BASELINE), --baseline $(call shq,GATE_BASELINE))
+
+# P2 L8：回流草稿入评测库（严格解码 + 再跑 pii_clean，review_task(BACKFLOW_EXPECT) 按 draft_ref 幂等；目录固定，不收变量）
+.PHONY: eval-backflow-import
+eval-backflow-import:
+	$(GO) run ./cmd/eval backflow import --dir eval/backflow/drafts

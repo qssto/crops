@@ -34,6 +34,11 @@ on:
         required: false
         type: boolean
         default: false
+      gate_baseline:
+        description: P2 L7-b：release 对本次实验跑 eval gate 的基线名或 exp id（空 = 读 eval/baselines/release.yaml 指针，指针缺失即失败关闭）
+        required: false
+        type: string
+        default: ""
 
 permissions:
   contents: read
@@ -55,6 +60,7 @@ jobs:
       EVAL_PROMPT_BASE: ${{ inputs.prompt_base }}
       EVAL_BASELINE: ${{ inputs.baseline }}
       EVAL_NON_BLOCKING: ${{ inputs.non_blocking }}
+      EVAL_GATE_BASELINE: ${{ inputs.gate_baseline }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -125,6 +131,23 @@ jobs:
           EVAL_CANDIDATE: ${{ steps.run.outputs.exp_id }}
         run: make eval-compare GO=go BASELINE="$EVAL_BASELINE" CANDIDATE="$EVAL_CANDIDATE" FAIL_ON_UNRELEASABLE=1
 
+      # P2 L7-b：release 质量门禁。结论写 experiment.gate_verdict；非 PASS、或 NEED_SIGNOFF 未经 CODEOWNERS 签字
+      # （eval/signoffs/{exp_id}.md 须已进 origin/main，CODEOWNERS / owners.yaml 取 origin/main 版本，须 fetch-depth: 0）
+      # 时退出非 0。PR smoke 不跑。只在 main 上跑（reusable workflow 的 github.ref 是调用方的 ref）；其他 ref 下一步明确失败、不跳过。
+      - name: 质量门禁 eval gate
+        if: inputs.mode == 'release' && github.ref == 'refs/heads/main'
+        env:
+          EVAL_CANDIDATE: ${{ steps.run.outputs.exp_id }}
+        run: make eval-gate GO=go GATE_BASELINE="$EVAL_GATE_BASELINE" EXP="$EVAL_CANDIDATE"
+
+      - name: 质量门禁须在 main 上运行
+        if: inputs.mode == 'release' && github.ref != 'refs/heads/main'
+        env:
+          EVAL_REF: ${{ github.ref }}
+        run: |
+          echo "::error title=release 门禁不在 main::release 质量门禁只在 refs/heads/main 上运行（当前 $EVAL_REF），签字信任根是 origin/main，其他 ref 发布失败。"
+          exit 1
+
       # 只传公开报告 report.md（holdout 只列 ID）；holdout 明细只在 MinIO report/holdout/，不进 artifact。
       - name: 上传报告
         if: always()
@@ -132,6 +155,15 @@ jobs:
         with:
           name: eval-${{ inputs.mode }}-${{ github.run_id }}
           path: eval/out/*/report.md
+          if-no-files-found: ignore
+
+      # 门禁配对报告（holdout 样本只列 ID）。
+      - name: 上传门禁报告
+        if: always() && inputs.mode == 'release'
+        uses: actions/upload-artifact@v4
+        with:
+          name: eval-gate-${{ github.run_id }}
+          path: eval/out/gate/*.md
           if-no-files-found: ignore
 
       # continue-on-error（nightly）下作业不阻断，失败仍以 error 注解与作业摘要标红上报。

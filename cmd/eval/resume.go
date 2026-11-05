@@ -42,6 +42,8 @@ func cmdResume(ctx context.Context, args []string, stdout, stderr io.Writer) (er
 	withHoldout := fs.Bool("holdout", false, "实验含 holdout 套件（如 release）时须带：校验读者身份并读入 holdout（须 "+envEvalReader+" 在 "+defaultHoldoutReaders+" 名单中）")
 	var inf infraFlags
 	inf.register(fs)
+	var uf usersimFlags
+	uf.register(fs)
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -55,6 +57,9 @@ func cmdResume(ctx context.Context, args []string, stdout, stderr io.Writer) (er
 	}
 	ls, err := sf.loadValidSamples()
 	if err != nil {
+		return err
+	}
+	if err := uf.attach(ls, sf.repo); err != nil {
 		return err
 	}
 	in, err := inf.open(ctx, stderr, ls)
@@ -147,6 +152,7 @@ func resumeExperiment(ctx context.Context, in *infra, ls *loadedSamples, id uint
 	// 快照沿用实验原值（含 git_sha 与作废阈值），只累加补跑消耗的 token；wall_time 由 store.Resume 按原 started_at 重算。
 	fresh.Snapshot = recorded
 	fresh.Snapshot.TokenUsed += reduce.Reduce(fresh.Trials).Metrics.Tokens
+	fresh.Snapshot = addRunResults(fresh.Snapshot, fresh.Trials)
 	st, err := commitResume(ctx, exps, in.objects, in.evalBucket, id, fresh)
 	if err != nil {
 		return nil, "", err
@@ -260,6 +266,9 @@ func checkResumeSnapshot(recorded, current evalkit.Snapshot, manifestHash string
 	}
 	if recorded.SamplesHash != current.SamplesHash || recorded.SamplesHash != manifestHash {
 		diffs = append(diffs, fmt.Sprintf("samples_hash %q -> %q (manifest %q)", recorded.SamplesHash, current.SamplesHash, manifestHash))
+	}
+	if !recorded.UserSim.Equal(current.UserSim) {
+		diffs = append(diffs, fmt.Sprintf("user_sim %+v -> %+v", recorded.UserSim, current.UserSim))
 	}
 	if len(diffs) > 0 {
 		return fmt.Errorf("%w: %s", errResumeSnapshot, strings.Join(diffs, "; "))

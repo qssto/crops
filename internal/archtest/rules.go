@@ -165,7 +165,8 @@ var systemScopeCallers = []string{"internal/service/scan.go", "internal/service/
 	"internal/service/receipt.go",     // P1-L4-B：回执 webhook 反查与回执超时扫描
 	"internal/service/killswitch.go",  // P1-L8-B：关停报告跨农场读 dispatch_attempt（idx_mode_sent，auditctl 只读）
 	"internal/service/quality/job.go", // P2-L3：quality-metric-rollup 逐农场汇总与平台汇总行（quality_metric_daily）
-	"internal/app/rule_offload.go"}    // P2-L4：rule_shadow_diff 保留期清理（跨农场列出有过期行的农场，再逐农场逐项删）
+	"internal/app/rule_offload.go",    // P2-L4：rule_shadow_diff 保留期清理（跨农场列出有过期行的农场，再逐农场逐项删）
+	"internal/app/attribution_l8.go"}  // P2-L8：归因平台行 attribution_issue（周报聚合 upsert、处置 PATCH）与线上回流跨农场选 run
 
 // adapterCaller 是唯一可调用设备 Adapter 的业务文件（WorkOrderService.Dispatch）。
 const adapterCaller = "internal/service/workorder_dispatch.go"

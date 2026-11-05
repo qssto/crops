@@ -215,6 +215,8 @@ func Open(ctx context.Context, f *Flags) (_ *Process, err error) {
 			Anchors: repository.MinIOAnchorStore{Client: mc, Bucket: cfg.Audit.AnchorBucket}},
 		Quality: app.QualityDeps{Config: cfg.Quality, Model: mcfg, KB: kb, Repo: f.Repo, // P2-L3：可信度日报（缺省不启用）
 			Objects: repository.QualityObjects{Client: mc}, Bucket: cfg.MinIO.BucketEval},
+		Attribution: app.AttributionDeps{Config: cfg.Attribution, // P2 L8：归因周报 / 线上回流（缺省不启用）
+			Objects: repository.QualityObjects{Client: mc}, Bucket: cfg.MinIO.BucketEval},
 		Compaction: comp}) // P2 L6
 	if err != nil {
 		return nil, err

@@ -133,7 +133,7 @@ func allMounts() []Mount {
 	return []Mount{ApprovalRoutes(&fakeDecider{}), RunRoutes(&fakeRunDetailer{}, &fakeMetrics{}),
 		EventRoutes(&fakeStreamer{}), AuditRoutes(&fakeRawReader{}), OrderOpsRoutes(&fakeOrderOps{}),
 		ApprovalDetailRoutes(&fakeDetailer{}), RejectionRoutes(&fakeExporter{}), AuditExportRoutes(&fakeAuditExporter{}),
-		AlertRoutes(&fakeAlertLister{})}
+		AlertRoutes(&fakeAlertLister{}), FeedbackRoutes(&fakeFeedback{})}
 }
 
 // routeOps 与实际路由双向核对：每条 farms 路由都登记了所需操作，登记表里没有多余项。

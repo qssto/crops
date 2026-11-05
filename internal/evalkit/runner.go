@@ -16,6 +16,7 @@ import (
 	"agri-steward/internal/evalkit/env"
 	"agri-steward/internal/evalkit/grader"
 	"agri-steward/internal/evalkit/sample"
+	"agri-steward/internal/evalkit/usersim"
 	"agri-steward/internal/model"
 	"agri-steward/internal/repository"
 	"agri-steward/internal/service"
@@ -84,6 +85,12 @@ type Trial struct {
 	Session *grader.SessionObs
 	// P2 L5：Load 是知识加载观测（load.go，打分后由样本标注与 Detail 得出），供离线加载指标与 L8 清单；Detail 为空时为 nil。
 	Load *LoadObs
+	// P2 L7-b：Conversation 是 user_sim 样本的多轮对话（converse.go；非 user_sim 样本为 nil），进 transcript 供人工阅读，
+	// 不写入 agri_eval。打分与其余观测只看最后一轮。
+	Conversation []ConvTurn
+	// PriorTurnTokens 是多轮对话末轮以前各轮 run 的 LLM token 合计（末轮在 Detail 里）；TrialTokens 与
+	// reduce Metrics.Tokens 都加上它，预算与 tokens_per_session 按全部轮次计。
+	PriorTurnTokens int
 }
 
 // ToolRecorder 是评测工具接缝的调用记录（env.FixtureMCP 实现）。
@@ -305,7 +312,11 @@ type Runner struct {
 	devices  DeviceLister
 	receipts *ReceiptSteps
 	tokens   TokenCounter
-	raw      *rawObjects // P2 L6：多轮会话样本读 LLM_IO（WithRawObjects）
+	raw      *rawObjects     // P2 L6：多轮会话样本读 LLM_IO（WithRawObjects）
+	users    usersim.Channel // P2 L7-b：user_sim 样本的用户通道（WithUserChannel）
+	link     linkFunc        // P2 L7-b：续问建 run（默认 createRun）
+	// runTokens 读一轮 run 的 LLM token（多轮对话末轮以前各轮；默认 runDetailTokens）。
+	runTokens func(ctx context.Context, a *app.App, scope model.Scope, runID uint64) (int, error)
 }
 
 // FieldLister 列出农场全部地块 id（cross_farm_isolation 判 field_id 归属）。
@@ -367,7 +378,8 @@ func NewRunner(env EnvFunc, now func() time.Time, opts ...RunnerOption) (*Runner
 	if now == nil {
 		now = clock.System{}.Now
 	}
-	r := &Runner{env: env, now: now, question: defaultQuestion, grading: grading{graders: defaultGraders()}, tokens: TrialTokens}
+	r := &Runner{env: env, now: now, question: defaultQuestion, grading: grading{graders: defaultGraders()}, tokens: TrialTokens,
+		link: createRun, runTokens: runDetailTokens}
 	for _, opt := range opts {
 		opt(r)
 	}
@@ -407,6 +419,9 @@ func (r *Runner) run(ctx context.Context, samples []*sample.Sample, opts Options
 		return nil, fmt.Errorf("evalkit: token budget must be >= 0, got %d", opts.TokenBudget)
 	}
 	samples, quarantined := splitQuarantined(samples)
+	if err := checkUserSimTrials(samples, opts.N); err != nil {
+		return nil, err
+	}
 	exp := &Experiment{
 		ID:          opts.ExperimentID,
 		Suites:      opts.Suites,
@@ -475,6 +490,9 @@ func (r *Runner) ask(ctx context.Context, t *Trial, a *app.App, s *sample.Sample
 	}
 	start := r.now()
 	ans, err := a.Agent.Ask(ctx, q)
+	if err == nil { // P2 L7-b：user_sim 样本续问，之后的审批 / 观测都针对最后一轮
+		q, ans, err = r.converse(ctx, t, a, s, q, ans)
+	}
 	t.Latency = r.now().Sub(start)
 	t.Scope = q.Scope
 	if err == nil && r.approve != nil {

@@ -33,6 +33,10 @@ const (
 // baselineName 限制 baseline 名只用小写字母、数字与 . _ -（直接作为文件名）。
 var baselineName = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,63}$`)
 
+// ReleasePointer 是 release 门禁基线指针的保留名：{baselines-dir}/release.yaml 只有一行 `baseline: <名>`，
+// 由调度方冻结基线后手写；baseline 不得以此命名（发布不覆盖指针，--baseline release 不把指针当基线读）。
+const ReleasePointer = "release"
+
 // ReportKey 是报告在 eval bucket 内的对象键：report/{exp_id}/report.md。
 func ReportKey(expID string) string { return path.Join(reportPrefix, expID, FileName) }
 
@@ -67,10 +71,13 @@ type snapshotDoc struct {
 	Snapshot evalkit.Snapshot `json:"snapshot"`
 }
 
-// ValidateBaselineName 校验 baseline 名（作为文件名，cmd 在连库前先校验）。
+// ValidateBaselineName 校验 baseline 名（作为文件名，cmd 在连库前先校验）；保留名 ReleasePointer 不可用。
 func ValidateBaselineName(name string) error {
 	if !baselineName.MatchString(name) {
 		return fmt.Errorf("report: baseline name %q must match %s", name, baselineName)
+	}
+	if name == ReleasePointer {
+		return fmt.Errorf("report: baseline name %q is reserved for the release gate pointer", name)
 	}
 	return nil
 }

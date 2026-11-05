@@ -28,6 +28,8 @@ const (
 	AuditSensitiveExport         AuditAction = "SENSITIVE.AUDIT_EXPORT"
 	// P1 L8-B：一键关停演练（平台链 (0,0)，target flag:enable_robot_dispatch，summary 含 T0 / 耗时毫秒 / 各计数）。
 	AuditKillSwitchDrill AuditAction = "KILL_SWITCH_DRILL"
+	// P2 L8：回流状态推进（target run:{run_id}，summary {status, attempt?}；不含 draft_ref）。周报回流计数按其 created_at。
+	AuditBackflow AuditAction = "BACKFLOW"
 )
 
 // audit_log.result 取值。

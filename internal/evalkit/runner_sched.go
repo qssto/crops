@@ -7,18 +7,25 @@ import (
 
 	"agri-steward/internal/evalkit/grader"
 	"agri-steward/internal/evalkit/sample"
+	"agri-steward/internal/service"
 )
 
 // TokenCounter 返回一个 trial 消耗的 LLM token（预算累计用）；默认 TrialTokens，单测注入（桩模型 token 为 0）。
 type TokenCounter func(t *Trial) int
 
-// TrialTokens 累加 trial 明细中全部 LLM 调用的 prompt + completion token（与 reduce Metrics.Tokens 同口径）。
+// TrialTokens 累加 trial 全部 LLM 调用的 prompt + completion token：多轮对话末轮以前各轮（PriorTurnTokens）加
+// 末轮明细（Detail）。reduce Metrics.Tokens 同此口径。
 func TrialTokens(t *Trial) int {
-	if t.Detail == nil {
+	return t.PriorTurnTokens + DetailTokens(t.Detail)
+}
+
+// DetailTokens 是一个 run 明细中全部 LLM 调用的 prompt + completion token（nil 为 0）。
+func DetailTokens(d *service.RunDetail) int {
+	if d == nil {
 		return 0
 	}
 	n := 0
-	for _, st := range t.Detail.Steps {
+	for _, st := range d.Steps {
 		for _, l := range st.LLMCalls {
 			n += l.PromptTokens + l.CompletionTokens
 		}

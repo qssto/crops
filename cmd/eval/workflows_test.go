@@ -155,3 +155,59 @@ func checkEvalGateSteps(t *testing.T, steps []step) {
 		t.Errorf("last step must report failure visibly: if=%q run=%q", last.If, last.Run)
 	}
 }
+
+// P2 L7-b：release 跑完对 gate_baseline（默认 baseline_p1）做质量门禁，非 PASS / 未签字的 NEED_SIGNOFF 退出非 0；
+// 门禁只在 release 跑（PR smoke 不变），参数经环境变量进 make，门禁报告（holdout 只列 ID）另传 artifact。
+func TestWorkflows_ReleaseGate(t *testing.T) {
+	w := loadWorkflow(t, "eval-gate.yml")
+	node := w.On["workflow_call"]
+	var call struct {
+		Inputs map[string]struct {
+			Default any `yaml:"default"`
+		} `yaml:"inputs"`
+	}
+	if err := node.Decode(&call); err != nil {
+		t.Fatal(err)
+	}
+	// 评审 P2：gate_baseline 缺省为空（不隐式用 baseline_p1），空时 gate 读 eval/baselines/release.yaml 指针。
+	if g, ok := call.Inputs["gate_baseline"]; !ok || g.Default != "" {
+		t.Errorf("eval-gate input gate_baseline = %+v, want default empty (release pointer)", g)
+	}
+	j := w.Jobs["eval"]
+	if j.Env["EVAL_GATE_BASELINE"] != "${{ inputs.gate_baseline }}" {
+		t.Errorf("env EVAL_GATE_BASELINE = %q", j.Env["EVAL_GATE_BASELINE"])
+	}
+	run := slices.IndexFunc(j.Steps, func(s step) bool { return s.Name != "" && strings.Contains(s.Run, "make eval GO=go") })
+	gi := slices.IndexFunc(j.Steps, func(s step) bool { return strings.Contains(s.Run, "make eval-gate") })
+	if gi < 0 || gi < run {
+		t.Fatalf("no make eval-gate step after make eval (gate %d, run %d)", gi, run)
+	}
+	g := j.Steps[gi]
+	if g.If != "inputs.mode == 'release' && github.ref == 'refs/heads/main'" || g.Env["EVAL_CANDIDATE"] != "${{ steps.run.outputs.exp_id }}" ||
+		!strings.Contains(g.Run, `make eval-gate GO=go GATE_BASELINE="$EVAL_GATE_BASELINE" EXP="$EVAL_CANDIDATE"`) {
+		t.Errorf("gate step = %+v", g)
+	}
+	// 非 main 的 release：门禁步骤不跑时必须有一步明确失败（不能静默跳过）。
+	if !slices.ContainsFunc(j.Steps, func(s step) bool {
+		return s.If == "inputs.mode == 'release' && github.ref != 'refs/heads/main'" &&
+			strings.Contains(s.Run, "::error") && strings.Contains(s.Run, "exit 1")
+	}) {
+		t.Error("release on a non-main ref must fail explicitly")
+	}
+	if !slices.ContainsFunc(j.Steps, func(s step) bool {
+		return strings.HasPrefix(s.Uses, "actions/upload-artifact@") && s.With["path"] == "eval/out/gate/*.md"
+	}) {
+		t.Error("gate report is not uploaded")
+	}
+	rel := loadWorkflow(t, "release.yml").Jobs["release"]
+	if rel.With["gate_baseline"] != "${{ inputs.gate_baseline }}" {
+		t.Errorf("release with.gate_baseline = %v", rel.With["gate_baseline"])
+	}
+	for _, f := range []string{"pr-smoke.yml", "nightly.yml"} {
+		for name, job := range loadWorkflow(t, f).Jobs {
+			if _, ok := job.With["gate_baseline"]; ok {
+				t.Errorf("%s/%s must not set gate_baseline (gate runs only in release)", f, name)
+			}
+		}
+	}
+}

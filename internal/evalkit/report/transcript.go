@@ -68,6 +68,8 @@ type rootData struct {
 	Warnings   []string                 `json:"warnings,omitempty"`
 	Approvals  []service.TicketDetail   `json:"approvals"`
 	Execution  service.Execution        `json:"execution"`
+	// Conversation 是 user_sim trial 的多轮对话（P2 L7-b；root 的 run_id 与明细是最后一轮），非 user_sim trial 不输出。
+	Conversation []evalkit.ConvTurn `json:"conversation,omitempty"`
 }
 
 // stepData 是 agent_step 行的数据（不含子调用，子调用各占一行 atomic_step）。
@@ -99,7 +101,7 @@ func BuildTranscript(expID string, t evalkit.Trial) ([]byte, error) {
 	root := rootData{ExpID: expID, SampleID: t.SampleID, TrialIndex: t.TrialIndex, RunID: t.RunID,
 		TenantID: t.Scope.TenantID, FarmID: t.Scope.FarmID, Expected: string(t.Expected), Outcome: string(t.Outcome),
 		Status: t.Status(), Error: t.Error, Run: d.Run, Question: d.Question, Warnings: d.Warnings,
-		Approvals: d.Approvals, Execution: d.Execution}
+		Approvals: d.Approvals, Execution: d.Execution, Conversation: t.Conversation}
 	if err := emit(LayerRoot, rootID, "", "", root); err != nil {
 		return nil, err
 	}

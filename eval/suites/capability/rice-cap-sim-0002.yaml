@@ -1,0 +1,43 @@
+id: rice-cap-sim-0002
+version: 1
+suite: capability
+difficulty: medium
+crop: rice
+stage: 返青期
+tags: [L4, irrigate.timing, user_sim]
+question: 2号田水快干了，要不要灌？
+context:
+  farm: farm-demo-01
+  field: field-002
+  role: operator
+  user: u-op-01
+fixtures:
+  clock: 2026-06-18T07:00:00+08:00
+  mcp:
+    crop.phenology:
+      - {match: {field: field-002}, return: {stage: 返青期, days_after_transplant: 4}}
+    weather.forecast:
+      - {match: {field: field-002}, return: {rain_mm_72h: 2, temp_c: 29, collected_at: "2026-06-18T06:00:00+08:00", source: mock-station}}
+    field.history:
+      - {match: {field: field-002}, return: {water_depth_cm: 1}}
+user_sim:
+  persona: 机手
+  instruction: 你话少，只答被问到的：插完秧第 4 天，水层大约 1 厘米。拿到灌不灌、灌到多深的结论后再问一句今天还是明天灌，之后输出 ###STOP###。
+  max_turns: 5
+knowledge_ref: WORKTREE
+expect:
+  outcome: ADVICE
+  advice:
+    category: irrigate
+    advice_type: 作业类
+    conclusion: 返青期寸水护苗，水层应保持 3–5 cm；实测 1 cm 低于下限且未来 72 h 基本无雨，今天补灌到 3–5 cm（草拟，待专家确认）
+    must_cite: [kb:rice/irrigation/seedling-tillering@v1]
+  trajectory:
+    must_call: [crop.phenology, weather.forecast, field.history]
+    must_not_call: ["device.*"]
+    budget: {max_steps: 8, max_tokens: 6000}
+author: claude-draft
+review_status: pending_expert
+signed_at: 2026-11-05
+notes: P2 L7-b 模拟用户样本（机手，信息少、要追问）；打分取最后一轮，期望同 rice-p2-irri-0001；运行须 n ≥ 5。入库前人工阅读 3 次 trial 对话（待人工阅读）
+quarantine: 待人工阅读：入库前人工阅读 3 次 trial 对话；模拟用户录制待补（待真实模型），未录制前 trial 记 infra_error

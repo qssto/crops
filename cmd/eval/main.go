@@ -9,6 +9,7 @@
 //	eval aa [--runs 3 | --from-exps a,b,c] [--out eval/gates/thresholds.yaml]
 //	eval resume --exp <id> [--holdout]（P2 L7-a：补跑缺失 / INFRA_ERROR trial，见 resume.go）
 //	eval promptcheck --base origin/main（P2 L7-a：prompts/ 改了 prompt_version 必须变，见 promptcheck.go）
+//	eval gate --exp <id> --baseline <名|exp id>（P2 L7-b：质量门禁结论写 gate_verdict，见 gate_cmd.go）
 //
 // validate 只做样本静态校验、不装配 agent，并输出分层覆盖报表与补写清单（P2 L1-T）；run 先校验再经 app.Build 装配被测 agent 回放并出报告
 // （--baseline 时另把报告与配置快照上传 agri-steward-eval 的 report/{exp_id}/ 并写 baseline yaml）；
@@ -45,6 +46,7 @@ import (
 	"agri-steward/internal/evalkit/report"
 	"agri-steward/internal/evalkit/sample"
 	"agri-steward/internal/evalkit/store"
+	"agri-steward/internal/evalkit/usersim"
 	"agri-steward/internal/repository"
 )
 
@@ -62,7 +64,7 @@ const (
 	contractsDir = "contracts"
 	// toolPolicyFile 是 --repo 下工具策略（no_model_actuate 取其 actuate 集合，与生产同一份）。
 	toolPolicyFile = "policy/tool_policy.yaml"
-	usageString    = "usage: eval <validate|run|kbdump|graduate|baseline|compare|aa|resume|promptcheck|judge> [flags]"
+	usageString    = "usage: eval <validate|run|kbdump|graduate|baseline|compare|aa|resume|promptcheck|judge|gate|backflow> [flags]"
 )
 
 func main() {
@@ -99,6 +101,10 @@ func run(args []string, stdout, stderr io.Writer) int {
 		err = cmdPromptCheck(ctx, args[1:], stdout)
 	case "judge":
 		err = cmdJudge(ctx, args[1:], stdout, stderr)
+	case "gate":
+		err = cmdGate(ctx, args[1:], stdout, stderr)
+	case "backflow":
+		err = cmdBackflow(ctx, args[1:], stdout, stderr)
 	default:
 		fmt.Fprintln(stderr, usageString)
 		return exitUsage
@@ -144,6 +150,10 @@ type loadedSamples struct {
 	refNotes  []string
 	// judgeVersions 是 run --judges 追加的 judge 版本（P2 L2），写快照 judge_versions。
 	judgeVersions map[string]string
+	// users 是 user_sim 样本的模拟用户通道（P2 L7-b，usersimFlags.attach 装配）；nil 时 user_sim trial 记 infra_error。
+	users usersim.Channel
+	// usersimCfg 是模拟用户 model / model_tier（attach 读入），快照 user_sim 记录。
+	usersimCfg usersim.Config
 }
 
 // loadValidSamples 加载并静态校验全部样本（含 L3 must_cite / product_in 知识库规则、L4 参考解过全部打分器）。
@@ -234,6 +244,8 @@ func cmdRun(ctx context.Context, args []string, stdout, stderr io.Writer) (err e
 	inf.register(fs)
 	var jf judgeFlags
 	jf.register(fs)
+	var uf usersimFlags
+	uf.register(fs)
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -273,6 +285,9 @@ func cmdRun(ctx context.Context, args []string, stdout, stderr io.Writer) (err e
 		return err
 	}
 	if err := jf.attach(ls); err != nil {
+		return err
+	}
+	if err := uf.attach(ls, sf.repo); err != nil {
 		return err
 	}
 	selected, opts, err := selectRun(*mode, *smokeList, ls,
@@ -371,7 +386,8 @@ func newRunner(in *infra, ls *loadedSamples, now func() time.Time) (*evalkit.Run
 		evalkit.WithApprover(evalkit.ScriptApproverByRole(in.approvers[0], in.approvers[1], in.approversByRole)), evalkit.WithDevices(in.devices),
 		// P1-L4 合并统一：回执步骤用与 Deps.ReceiptSecret 相同的进程内密钥签名，排空复用 DrainOutbox。
 		evalkit.WithReceiptSteps(evalkit.ReceiptSteps{Secret: in.receiptSecret, Drain: evalkit.DrainStep}),
-		evalkit.WithRawObjects(in.getter, in.rawBucket)) // P2 L6 多轮会话样本
+		evalkit.WithRawObjects(in.getter, in.rawBucket), // P2 L6 多轮会话样本
+		evalkit.WithUserChannel(ls.users))               // P2 L7-b 模拟用户
 }
 
 // experimentLifecycle 是 run 用到的实验状态写入（store.Experiments 实现；单测替换以覆盖失败路径）。
@@ -437,7 +453,8 @@ func markFailed(ctx context.Context, exps experimentLifecycle, id uint64, cause 
 }
 
 // snapshot 采集配置快照（评测设计 §12.1、P2 §6.1）：git、提示词版本、模型档位与 provider、知识内容哈希、样本集哈希、
-// 加载 / 检索策略、judge 版本（未开 --judges 为空表）、运行参数 suites / tags / n 与作废阈值（resume 沿用）。
+// 加载 / 检索策略、judge 版本（未开 --judges 为空表）、运行参数 suites / tags / n 与作废阈值（resume 沿用），
+// 以及所选 user_sim 样本与模拟用户模型（无 user_sim 样本时不记）。
 func snapshot(ctx context.Context, in *infra, ls *loadedSamples, samples []*sample.Sample, opts evalkit.Options) (evalkit.Snapshot, error) {
 	sha, err := gitSHA(ctx)
 	if err != nil {
@@ -455,7 +472,8 @@ func snapshot(ctx context.Context, in *infra, ls *loadedSamples, samples []*samp
 		ModelTier: in.model.DefaultTier, Model: in.model.Provider,
 		KnowledgeRef: kref, SamplesHash: evalkit.SamplesHash(samples),
 		LoaderStrategy: evalkit.LoaderV0, RetrievalStrategy: evalkit.RetrievalProgressive, JudgeVersions: ls.judgeVersionMap(),
-		Suites: opts.Suites, Tags: recordedTags(opts.Tags), N: opts.N, VoidInfraErrorRate: in.eval.VoidInfraErrorRate}, in.flags), nil
+		Suites: opts.Suites, Tags: recordedTags(opts.Tags), N: opts.N, VoidInfraErrorRate: in.eval.VoidInfraErrorRate,
+		UserSim: evalkit.UserSimOf(samples, ls.usersimCfg.Model, ls.usersimCfg.ModelTier)}, in.flags), nil
 }
 
 // recordedTags 是写进快照的样本筛选条件：没有 --tags 时记空表（非 nil），与「快照没记录 tags」（nil，旧实验）区分。
@@ -471,7 +489,7 @@ func recordedTags(tags []string) []string {
 func withResults(snap evalkit.Snapshot, exp *evalkit.Experiment) evalkit.Snapshot {
 	snap.TokenUsed = reduce.Reduce(exp.Trials).Metrics.Tokens
 	snap.Cost = 0
-	return snap
+	return withRunResults(snap, exp.Trials)
 }
 
 func gitSHA(ctx context.Context) (string, error) {

@@ -1,0 +1,44 @@
+id: rice-cap-sim-0001
+version: 1
+suite: capability
+difficulty: medium
+crop: rice
+stage: 秧苗期
+tags: [L4, protect.identify, user_sim]
+question: 2号田秧床里有些苗长得不对劲，是不是生病了？
+context:
+  farm: farm-demo-01
+  field: field-002
+  role: farm_manager
+  user: u-fm-01
+fixtures:
+  clock: 2026-05-28T08:30:00+08:00
+  mcp:
+    crop.phenology:
+      - match: {field: field-002}
+        return: {stage: 秧苗期, sub_stage: 三叶一心}
+    field.history:
+      - match: {field: field-002}
+        return: {operations: []}
+user_sim:
+  persona: 农场主
+  instruction: 你只在 agent 追问症状时才描述：有些苗比旁边高出一截、细长、叶色淡黄绿。不要自己说出病名。问清是不是恶苗病、要不要喷药之后输出 ###STOP###。
+  max_turns: 4
+knowledge_ref: WORKTREE
+expect:
+  outcome: ADVICE
+  advice:
+    category: protect
+    advice_type: 观察类
+    conclusion: 徒长细高、淡黄绿符合恶苗病识别特征，按疑似处理，拔除病株并复查茎节有无不定根；恶苗病以播前药剂浸种为主，秧田不设喷药指标（草拟，待专家确认）
+    must_cite: [kb:rice/pest/bakanae@v1]
+    target: bakanae
+  trajectory:
+    must_call: [crop.phenology]
+    must_not_call: ["device.*"]
+    budget: {max_steps: 10, max_tokens: 8000}
+author: claude-draft
+review_status: pending_expert
+signed_at: 2026-11-05
+notes: P2 L7-b 模拟用户样本（农场主，症状要追问才给）；打分取最后一轮，期望同 rice-p2-prot-0001；运行须 n ≥ 5。入库前人工阅读 3 次 trial 对话（待人工阅读）
+quarantine: 待人工阅读：入库前人工阅读 3 次 trial 对话；模拟用户录制待补（待真实模型），未录制前 trial 记 infra_error

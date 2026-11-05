@@ -125,6 +125,8 @@ func TestPublishBaselineErrors(t *testing.T) {
 	}{
 		{name: "bad name", baseline: "../x", exp: exp, reportPath: reportPath},
 		{name: "upper case name", baseline: "Baseline", exp: exp, reportPath: reportPath},
+		// 评审 P2：release 是门禁基线指针 eval/baselines/release.yaml 的保留名，发布 baseline 不得覆盖它。
+		{name: "reserved release pointer", baseline: ReleasePointer, exp: exp, reportPath: reportPath},
 		{name: "missing snapshot", baseline: "b", exp: noSnap, reportPath: reportPath},
 		{name: "missing report file", baseline: "b", exp: exp, reportPath: filepath.Join(root, "nope.md")},
 		{name: "report upload fails", baseline: "b", exp: exp, reportPath: reportPath, failKey: ReportKey(exp.ID)},

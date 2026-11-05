@@ -8,6 +8,8 @@ import "embed"
 const (
 	AdviceCardFile = "advice_card.schema.json"
 	CitationFile   = "citation.schema.json"
+	// P2 L8：采纳 / 差评请求。
+	AdviceFeedbackRequestFile = "advice_feedback_request.schema.json"
 )
 
 // FS 是本目录全部契约 schema。

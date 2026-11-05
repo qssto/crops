@@ -25,6 +25,41 @@ func scopeRequiredCalls() map[string]func(model.Scope) error {
 	noFarmTicket := TicketRow{TenantID: 1, ID: 9}
 	noFarmRun := RunKey{TenantID: 1, ID: 1}
 	return map[string]func(model.Scope) error{
+		// P2 L8：采纳 / 差评
+		"FeedbackRepo.AdviceRun": func(s model.Scope) error { _, err := FeedbackRepo{}.AdviceRun(ctx, s, 1); return err },
+		"FeedbackRepo.InsertFeedback": func(s model.Scope) error {
+			_, _, err := FeedbackRepo{}.InsertFeedback(ctx, s, model.AdviceFeedback{})
+			return err
+		},
+		// P2 L8：归因周报逐农场取信号与回流计数
+		"AttributionRepo.WeekHits": func(s model.Scope) error {
+			_, err := AttributionRepo{}.WeekHits(ctx, s, time.Time{}, time.Time{})
+			return err
+		},
+		"AttributionRepo.BackflowCounts": func(s model.Scope) error {
+			_, err := AttributionRepo{}.BackflowCounts(ctx, s, time.Time{}, time.Time{})
+			return err
+		},
+		// P2 L8：线上回流选 run、取材料、推进状态
+		"BackflowRepo.MarkSelected": func(s model.Scope) error {
+			_, err := BackflowRepo{}.MarkSelected(ctx, s, []uint64{1}, now)
+			return err
+		},
+		"BackflowRepo.SelectedRuns": func(s model.Scope) error {
+			_, err := BackflowRepo{}.SelectedRuns(ctx, s, 1)
+			return err
+		},
+		"BackflowRepo.Material": func(s model.Scope) error {
+			_, err := BackflowRepo{}.Material(ctx, s, 1)
+			return err
+		},
+		"BackflowRepo.FinishDraft": func(s model.Scope) error {
+			return BackflowRepo{}.FinishDraft(ctx, s, 1, model.BackflowDrafted, "bf-x", now)
+		},
+		"BackflowRepo.FailAttempt": func(s model.Scope) error {
+			_, err := BackflowRepo{}.FailAttempt(ctx, s, 1, model.BackflowMaxAttempts, now)
+			return err
+		},
 		// P1 L8-B：关停报告按灰度农场计 DISPATCH_HELD
 		"KillSwitchRepo.HeldSince": func(s model.Scope) error {
 			_, err := KillSwitchRepo{}.HeldSince(ctx, s.TenantID, s.FarmID, now, nil)
@@ -525,6 +560,17 @@ func TestSystemScopeRequired(t *testing.T) {
 		},
 		"QualityRepo.PlatformJudgeTally": func() error {
 			_, err := QualityRepo{}.PlatformJudgeTally(ctx, zero, "2026-11-03", "fact_consistency", "v", 3)
+			return err
+		},
+		// P2 L8：attribution_issue 平台行（tenant_id=0, farm_id=0）。
+		"AttributionRepo.IssuesBySignature": func() error {
+			_, err := AttributionRepo{}.IssuesBySignature(ctx, zero, []string{"s"})
+			return err
+		},
+		"AttributionRepo.WeekIssues":   func() error { _, err := AttributionRepo{}.WeekIssues(ctx, zero, "2026W45", 10); return err },
+		"AttributionRepo.UpsertIssues": func() error { return AttributionRepo{}.UpsertIssues(ctx, zero, nil, now) },
+		"AttributionRepo.PatchIssue": func() error {
+			_, err := AttributionRepo{}.PatchIssue(ctx, zero, 1, model.AttributionPatch{}, now)
 			return err
 		},
 	}

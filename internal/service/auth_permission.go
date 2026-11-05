@@ -29,11 +29,14 @@ const (
 	OpFlagWrite               Operation = "flag.write"                // 改开关（admin 路由，只限 platform_admin）
 	OpOrderReconcile          Operation = "order.reconcile"           // 人工对账（POST /orders/:order_id/reconcile，P1-L4-B）
 	OpRejectionExport         Operation = "rejection.export"          // 驳回原因导出（GET /rejections，P1-L5）
+	OpAdviceFeedback          Operation = "advice.feedback"           // 采纳 / 差评（POST /advices/:advice_id/feedback，P2-L8）
+	OpAttributionWrite        Operation = "attribution.write"         // 归因问题处置更新（PATCH /admin/attribution-issues/:id，P2-L8）
 )
 
 // Operations 是全部已登记操作（矩阵校验与测试枚举用）。
 var Operations = []Operation{OpAsk, OpAdviceRead, OpApprovalSubmit, OpApprovalDecidePesticide, OpApprovalDecideOther,
-	OpOrderCancel, OpAuditExport, OpRawRead, OpFlagWrite, OpOrderReconcile, OpRejectionExport}
+	OpOrderCancel, OpAuditExport, OpRawRead, OpFlagWrite, OpOrderReconcile, OpRejectionExport,
+	OpAdviceFeedback, OpAttributionWrite} // P2-L8
 
 // Roles 是全部已登记角色（矩阵校验与测试枚举用）。
 var Roles = []model.Role{model.RoleFarmer, model.RoleFarmManager, model.RoleAgronomist, model.RoleOperator,

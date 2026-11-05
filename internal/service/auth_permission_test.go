@@ -22,17 +22,20 @@ func testPerms(t *testing.T) *PermissionMatrix {
 func TestPermissionMatrix_RepoFile_AllRolesAllOps(t *testing.T) {
 	m := testPerms(t)
 	allowed := map[model.Role][]Operation{
-		model.RoleFarmer: {OpAsk, OpAdviceRead},
+		model.RoleFarmer: {OpAsk, OpAdviceRead, OpAdviceFeedback},
 		model.RoleFarmManager: {OpAsk, OpAdviceRead, OpApprovalSubmit, OpApprovalDecideOther, OpOrderCancel, OpRawRead, OpOrderReconcile,
-			OpRejectionExport},
+			OpRejectionExport, OpAdviceFeedback},
 		model.RoleAgronomist: {OpAsk, OpAdviceRead, OpApprovalSubmit, OpApprovalDecidePesticide, OpApprovalDecideOther,
-			OpOrderCancel, OpRawRead, OpRejectionExport},
-		model.RoleOperator:      {OpAsk, OpAdviceRead, OpOrderCancel},
-		model.RoleAdmin:         {OpAsk, OpAdviceRead, OpOrderCancel},
-		model.RoleAuditor:       {OpAdviceRead, OpAuditExport, OpRawRead, OpRejectionExport},
-		model.RolePlatformAdmin: {OpAdviceRead, OpOrderCancel, OpAuditExport, OpRawRead, OpFlagWrite, OpOrderReconcile},
-		model.RoleKBExpert:      nil,
-		model.RoleLegal:         nil,
+			OpOrderCancel, OpRawRead, OpRejectionExport, OpAdviceFeedback},
+		model.RoleOperator: {OpAsk, OpAdviceRead, OpOrderCancel, OpAdviceFeedback},
+		model.RoleAdmin:    {OpAsk, OpAdviceRead, OpOrderCancel, OpAdviceFeedback},
+		model.RoleAuditor:  {OpAdviceRead, OpAuditExport, OpRawRead, OpRejectionExport},
+		// P2-L8：advice.feedback 只给在场业务角色（auditor / platform_admin 只读查看，不代用户反馈）；
+		// attribution.write（归因处置）只给 platform_admin
+		model.RolePlatformAdmin: {OpAdviceRead, OpOrderCancel, OpAuditExport, OpRawRead, OpFlagWrite, OpOrderReconcile,
+			OpAttributionWrite},
+		model.RoleKBExpert: nil,
+		model.RoleLegal:    nil,
 	}
 	if len(allowed) != len(Roles) {
 		t.Fatalf("expected table covers %d roles, registry has %d", len(allowed), len(Roles))

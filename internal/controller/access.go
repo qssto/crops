@@ -71,6 +71,8 @@ var routeOps = map[string][]service.Operation{
 	"GET " + farmsPrefix + "/audit/exports/:export_id": {service.OpAuditExport},
 	// P1-L7-B：告警列表（复用看板读权限）。
 	"GET " + farmsPrefix + "/alerts": {service.OpAdviceRead},
+	// P2-L8：采纳 / 差评。
+	"POST " + farmsPrefix + "/advices/:advice_id/feedback": {service.OpAdviceFeedback},
 }
 
 const farmsPrefix = "/api/v1/farms/:farm_id"

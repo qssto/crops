@@ -92,6 +92,8 @@ type Deps struct {
 	Compaction CompactionDeps
 	// RuleOffload 是规则下沉影子比对配置（P2 L4，configs/app.yaml 的 rule_offload 段；零值取 config.DefaultRuleOffload）。
 	RuleOffload config.RuleOffload
+	// Attribution 是 P2 L8 归因周报与线上回流依赖（attribution_l8.go；零值不起任务）。
+	Attribution AttributionDeps
 }
 
 // metaer 是能报告自身版本信息的主链路（graph.Agent）。
@@ -176,6 +178,10 @@ type App struct {
 	compaction CompactionDeps
 	// ruleOffload 即 Deps.RuleOffload（P2 L4 rule_shadow_diff 保留期清理，rule_offload.go）。
 	ruleOffload config.RuleOffload
+	// L8 是 P2 L8 采纳 / 差评（见 feedback_l8.go）。
+	L8 *L8
+	// attribution 即 Deps.Attribution（P2 L8 worker 任务，attribution_l8.go）。
+	attribution AttributionDeps
 }
 
 // 缺依赖时返回的错误。
@@ -262,6 +268,7 @@ func Build(deps Deps) (*App, error) {
 		alerts:       deps.AlertsConfig,
 		quality:      deps.Quality,
 		ruleOffload:  deps.RuleOffload, // P2 L4
+		attribution:  deps.Attribution, // P2 L8
 	}
 	a.constraints = deps.Constraints
 	a.Faults = deps.Faults
@@ -314,6 +321,9 @@ func Build(deps Deps) (*App, error) {
 	if err := a.buildApprovalL5(deps); err != nil {
 		return nil, err
 	}
+	if err := a.buildL8(); err != nil { // P2 L8
+		return nil, err
+	}
 	return a, nil
 }
 
@@ -346,12 +356,16 @@ func (a *App) Handler(auth *service.AuthService) http.Handler {
 	mounts = append(mounts, a.orderOpsMounts()...)
 	mounts = append(mounts, a.approvalL5Mounts()...)
 	mounts = append(mounts, a.auditL7Mounts()...)
+	mounts = append(mounts, a.l8Mounts()...) // P2 L8
 	if a.AlertList != nil {
 		mounts = append(mounts, controller.AlertRoutes(a.AlertList)) // P1 L7-B
 	}
 	g := a.guard(auth)
 	r := controller.NewRouter(g, a.Ask, mounts...)
-	controller.MountAdmin(r, g, a.Flags) // P1-L0：/api/v1/admin/flags（flag.write）
+	controller.MountAdmin(r, g, a.Flags)   // P1-L0：/api/v1/admin/flags（flag.write）
+	for _, m := range a.l8AdminMounts(g) { // P2 L8：/api/v1/admin/attribution-issues/:id（attribution.write）
+		m(r)
+	}
 	// P1-L4：设备回执 webhook（签名校验，不经用户鉴权）
 	for _, m := range a.orderOpsEngineMounts() {
 		m(r)

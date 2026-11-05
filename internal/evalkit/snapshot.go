@@ -56,6 +56,53 @@ type Snapshot struct {
 	// VoidInfraErrorRate 是本次 run 判作废实际使用的 infra_error 占比阈值（门禁参数，不是因子）：resume 一律沿用此值，
 	// 不读当时配置；0 表示快照没记录（L7-a 评审修复前的实验），resume 失败关闭。
 	VoidInfraErrorRate float64 `json:"void_infra_error_rate,omitempty" yaml:"void_infra_error_rate,omitempty"`
+	// P2 L7-b 运行结果（gate 读回用；trial 表没有对应列，不加迁移）：Compactions 是触发上下文压缩
+	// （COMPACTION_APPLIED）的 trial 数，nil 表示快照没记录（L7-b 之前的实验，≠ 0；本批起的 run 一律记录，含 0）；
+	// UnexpectedCalls 是未在 fixtures.mcp 声明的工具调用（配对报告的 unexpected_call 清单）。nil / 空时不序列化，
+	// 既有实验的快照逐字节不变。
+	Compactions     *int                `json:"compactions,omitempty" yaml:"compactions,omitempty"`
+	UnexpectedCalls []UnexpectedCallRef `json:"unexpected_calls,omitempty" yaml:"unexpected_calls,omitempty"`
+	// UserSim 是本次 run 所选的 user_sim 样本与模拟用户模型（Start 时写入，见 UserSimOf）：gate 优先按这里的 ID
+	// 排除红线（样本目录之后改 tag 不影响已跑实验），resume 要求一致。没有 user_sim 样本时为 nil，不序列化。
+	UserSim *UserSimSnapshot `json:"user_sim,omitempty" yaml:"user_sim,omitempty"`
+}
+
+// UserSimSnapshot 是快照的模拟用户部分：样本 ID 排序，Model / ModelTier 取 eval.usersim 配置。
+type UserSimSnapshot struct {
+	SampleIDs []string `json:"sample_ids" yaml:"sample_ids"`
+	Model     string   `json:"model" yaml:"model"`
+	ModelTier string   `json:"model_tier" yaml:"model_tier"`
+}
+
+// UserSimOf 返回 samples 中带 user_sim tag 的样本 ID（排序）与模拟用户模型；没有 user_sim 样本时返回 nil。
+func UserSimOf(samples []*sample.Sample, model, modelTier string) *UserSimSnapshot {
+	var ids []string
+	for _, s := range samples {
+		if slices.Contains(s.Tags, sample.TagUserSim) {
+			ids = append(ids, s.ID)
+		}
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+	sort.Strings(ids)
+	return &UserSimSnapshot{SampleIDs: ids, Model: model, ModelTier: modelTier}
+}
+
+// Equal 报告两份模拟用户快照是否相同（nil 只等于 nil）。
+func (u *UserSimSnapshot) Equal(o *UserSimSnapshot) bool {
+	if u == nil || o == nil {
+		return u == o
+	}
+	return u.Model == o.Model && u.ModelTier == o.ModelTier && slices.Equal(u.SampleIDs, o.SampleIDs)
+}
+
+// UnexpectedCallRef 是一次 trial 的未声明工具调用（只含 sample_id / trial 序号 / run_id / 工具名，不含样本内容）。
+type UnexpectedCallRef struct {
+	SampleID   string   `json:"sample_id" yaml:"sample_id"`
+	TrialIndex int      `json:"trial_index" yaml:"trial_index"`
+	RunID      uint64   `json:"run_id,omitempty" yaml:"run_id,omitempty"`
+	Tools      []string `json:"tools" yaml:"tools"`
 }
 
 // IsZero 报告快照是否未填写（P1 及以前的实验 snapshot 为 NULL）。

@@ -1111,3 +1111,67 @@
 - 评测（共享 agri_eval）：`make eval SUITE=regression,redteam N=5` → exp 110（c576ee1）176 样本 / 880 trial 全 PASS，grader_error 0、infra_error 0，红线 pass^k 样本均值 1.0000，flaky 无，隔离 6 个（rice-rcpt-*）未运行；`compare --baseline baseline_p1 --candidate 110 --fail-on-unreleasable` → 配对 170 / 排除 6、`NO_SIGNIFICANT_DIFF`、可放行。`make eval MODE=smoke TOKEN_BUDGET=1000000` → exp 111，36 样本 108 trial 全 PASS。所有 P2 开关缺省关。
 - 偏离路线：L5 v1 加载上限 10（路线 ≤ 5，安全必加 8 条装不下）。调度方裁决（2026-11-05）：保留 10，Gate 2 验收报告列为已知偏离；接真实模型后按 must_cite 命中率与 token 成本复评。
 - 调度方裁决（2026-11-05）：专家评审页与归因「专家判错」来源走同一条评测库连接——server / worker 增加可选的评测库只读写 `review_task` 的连接（独立配置段，缺省关，独立账号），由 kb_expert 新动作 `review.read` / `review.submit` 授权；第 4 批合并后单独实现（P2-L2b）。业务迁移 0012-0015 未对共享 agri_steward 执行（待用户批准）。
+
+## P2-L7b · 质量门禁、签字、成本延迟阈值与模拟用户（2026-11-05）
+
+- 门禁判定（`internal/evalkit/gate`，`ddd97eb`）：规则注册表按 BLOCK_REDLINE → BLOCK_QUALITY → NOT_ATTRIBUTABLE → NEED_SIGNOFF → PASS 取第一条命中；全部规则都求值进报告。规则包括红线、全覆盖、数据完整、可信度退化、不可归因、成本延迟、judge 未评（封顶 NEED_SIGNOFF）。每条规则先写应失败测试。
+- 落库（`95a29fb`）：store 新文件写 `gate_verdict / signed_by`，DONE 才判、PHASE 拒绝、结论变化清空签字，取值白名单与 gate 包一致。无迁移。
+- 报告（`5d1b23c`）：`eval/out/gate/{baseline}-{candidate}.md` 首行结论，列翻转样本、flaky、未声明调用、成本延迟表；holdout 只给 ID。
+- 子命令（`a987f00`）：`eval gate --exp --baseline`，拒 VOID / BUDGET_EXCEEDED / PHASE；签字文件 `eval/signoffs/{id}.md` 经 git log 作者对 CODEOWNERS 校验后写 signed_by；非放行退出非 0。CODEOWNERS / `eval/gates/owners.yaml` 为占位（待真实账号），`eval/gates/cost_latency.yaml` 为草稿（待真实模型）。
+- release（`7c12ae4`）：`make eval-gate`（GATE_BASELINE 默认 baseline_p1）与 release 工作流门禁步骤；PR smoke 不变。run 的红线退出判定排除 user_sim 样本（`7944268`）。
+- 模拟用户（§9.2）：样本 `user_sim` 块（`5af763e`）；`internal/evalkit/usersim` 脚本用户 / 模拟用户同一 Channel 接口，录制回放按 (sample_id, turn, 对话哈希)，缺录制报错（`40c731e`）；runner 注入通道，第 2 轮起带 prev_run_id 建 run，###STOP### / max_turns / 开票结束，打分取末轮，未隔离 user_sim 样本要求 n ≥ 5，对话进 transcript（`2800b9e`）；run / resume 装配通道（`179b3c0`）；样本 rice-cap-sim-0001..0003（`62a4df1`）。
+- 样本数：validate 543 → 546，隔离 6 → 9，run 仍跑 537 个。capability 套件文件集变化，其 samples_hash 随之变化；新样本全部隔离，不改 regression / redteam 的 samples_hash。
+- 测试：`go build / vet / vet -tags integration / test ./...` 通过；`go test -race ./cmd/... ./internal/evalkit/...` 通过。
+- 未完成：worktree 无 `deploy/.env`，`AS_TEST_NS=p2l7b` 集成测试（含 `cmd/eval/l7b_integration_test.go`）与 regression n=1 评测未跑，需调度方提供环境后执行。
+- 偏离简报：模拟用户配置放 `eval/usersim/usersim.yaml`（与 judge 的 `eval/judges/judge.yaml` 同口径），未写 `configs/app.yaml`；main.go 除 switch case 外还改了 loadedSamples 字段、run 参数与 newRunner 注入（装配通道必需）。
+- 待办：CODEOWNERS 真实账号（待真实账号）；cost_latency 阈值与模拟用户真实模型、补录制（待真实模型）；user_sim 样本入库前人工阅读 3 次 trial 对话后解除隔离（待人工阅读）；样本期望（待专家）；release 门禁在真实 PR 上演练（待真实 PR）；快照未记录 usersim model_tier。
+
+### P2-L7b 修复轮（审查 + 主仓集成测试）
+
+- 集成测试（`813c88a`）：作废构造改用 GRADER_ERROR，并断言 Settle 结果为 VOID / BUDGET_EXCEEDED。
+- P0 签字信任根（`079bebb`）：`eval gate --trust-ref`（缺省 `origin/main`）。签字文件须在信任 ref 的树里且与工作区一致，HEAD 上改过它的提交须是信任 ref 的祖先；CODEOWNERS / owners.yaml 取信任 ref 版本。作者按 NUL 分隔，空邮箱失败。owners.yaml 新增 `require_signed_commits`（缺省 false，为 true 时 `%G?` 须为 G）。release 门禁步骤只在 `refs/heads/main` 跑，其他 ref 另有一步明确失败。
+- 待部署方：main 分支保护 + 要求签名提交（作者邮箱可伪造；启用后把 `require_signed_commits` 置 true，CI 导入 owner 公钥）。
+- signed_by：`RecordGate` 每次都清空 signed_by，签字校验通过后再写，库里的值与本次退出码一致（原为「结论不变保留已签字」）。
+- judge 封顶（`ea8ba5f`）：judges.yaml 全部维度都纳入，任一维度未评 / 未达标 / 缺项时结论最高 NEED_SIGNOFF。
+- 多轮 token（`1b294e5`）：末轮以前各轮从 run 明细读出，记入 `Trial.PriorTurnTokens`，预算与 tokens_per_session 都用累加值；读失败记 infra_error。
+- user_sim 排除：只排除 capability 套件的 trial（其他套件带 tag 也照常进红线）。快照新增 `user_sim`（样本 ID、模拟用户 model / model_tier；无 user_sim 样本不序列化），gate 优先按快照里的 ID 判定，resume 要求一致。上面「快照未记录 usersim model_tier」的待办已完成。
+- 可判样本为空：排除 user_sim 后候选没有可进红线门禁的 trial 时，红线 / 全覆盖规则返回 `ErrNoGatedSamples`，gate 不给结论（原为判通过）。
+- 基线无数据：快照 `compactions` 改为 `*int`，nil 表示没记录（L7-b 之前的旧快照），不再当 0。新 run 一律写入（含 0）；resume 只在已记录时累加。基线无数据的成本指标不参与判定，报告写「基线无数据」；基线有、候选无数据时仍需签字。
+- release 门禁基线：去掉默认 `baseline_p1`。`make eval-gate` / workflow `gate_baseline` 不给时，gate 读 `eval/baselines/release.yaml`（严格解码，只有 `baseline: <名>`），缺失或格式错即失败；`release` 成保留名，freeze / run 不能用它。基线与候选 `suites` 不同时报「基线套件 X 与候选 Y 不一致」，不写结论。待办：调度方冻结 baseline_p2 后写指针（格式见 eval/baselines/README.md）。没有代码 glob eval/baselines。
+- P3：gate 不再丢 `Compare.Record()` 的 ok，非单因子对比（没有 factor_diff）报错、不写结论。翻转清单 `gate.Flips` 改收 `compare.Input`，经新的 `compare.PairedValues` 复用 compare 的样本级配对（只列 Paired 交集内样本，与指标计算同一口径）。
+
+## P2-L8 · 线上反馈闭环：采纳 / 差评、归因周报、问题处置、线上回流（2026-11-05）
+
+- 驳回 kb_ids（`d02ca99`）：`InsertRejectionTx` 同一事务按作业单所属建议卡的 `advice_citation`（type='kb'）去重、升序写 `rejection_reason.kb_ids`，无引用写 `[]`。
+- 采纳 / 差评（`190cc51`）：`POST /api/v1/farms/{farm_id}/advices/{advice_id}/feedback`，权限 `advice.feedback`（凡有 advice.read 的角色）；run_id 只取建议卡；DISLIKE 必带驳回五类 category，OTHER 必填 comment；comment 落库前 `pii.Mask`；request_id 重放 200 返回首次结果，他场已用 409；他场建议卡 404（偏离：简报未定状态码，按 P1 跨农场口径）并记 RESOURCE_NOT_IN_SCOPE。契约 `contracts/advice_feedback_request.schema.json`。
+- 归因模型与仓储（`cbdd634`）：签名 md5(原因|问题类型|主 kb_id)，证据跨周合并截 50；五类信号（驳回 / 差评 / 护栏拦截 / KB_MISS / 专家判错）按农场 Scope 取数；平台行（tenant/farm = 0/0）upsert，RESOLVED 再命中重开、reopen_count+1；处置 `row_ver` 乐观锁。偏离：`VALIDATION_FAILED` 超 reason varchar(16)，记 `GUARDRAIL`；护栏拦截与 KB_MISS 取 advice_card REFUSED 行；专家判错 = expert_score ≤ 1；question_type = advice_card.category。
+- 周报与处置（`1d1d378`）：`attribution-weekly` 每周一按配置时区取上一 ISO 周，写 `report/weekly/{week}.html`（Top N、上期处置回填、重开、回流计数、kb_load_gaps 节缺失写「无」）；done 标记 `{week}.json` 兼作回填快照；锁 `lock:p2job:attribution-weekly`。`PATCH /api/v1/admin/attribution-issues/:id`（`attribution.write`，仅 platform_admin），row_ver 不符 409 `ISSUE_ROW_VER_CONFLICT`。archtest SystemScope 白名单登记 `internal/app/attribution_l8.go`。
+- 线上回流（`8c70f93`）：`backflow-collect`（`lock:p2job:backflow-collect`）选上一周差评 / 专家判错 / 护栏拦截与同问题类型 ≥ `kb_miss_min_hits` 的 KB_MISS（驳回不进回流），置 SELECTED；服务账号（auditor，`service_user_id`）逐条 `ReadRaw`（一条一条 RAW_READ），预签名 URL 取原文（4MB 上限）；身份 / 手机 / 证件换 `syn-…`，坐标粗化 0.01°，数值 ID 换 `farm-bf-` / `field-bf-` / `u-bf-` 随机码；FirstLeak + 逐行 Detect + 真实 ID 残留检查，过 → `drafts/{draft_ref}.yaml` + DRAFTED，不过 → PII_FAILED 不写文件。映射只写 `agent_run.backflow_draft_ref`。原文过保留期的工具跳过并在 notes 注明；其他读原文错误保留 SELECTED 下轮重试。
+- 草稿入评测库（`cac7c56`）：`go run ./cmd/eval backflow import --dir eval/backflow/drafts`（`make eval-backflow-import`）：文件名须为 draft_ref（bf- + 16 位小写字母）且与 id 一致，`sample.Parse` 严格解码，suite / review_status 未改，逐行再跑 pii_clean；任一份不过整批不入库（原因只报文件名 / 行号 / 类别）；通过者建 `review_task(BACKFLOW_EXPECT, draft_ref)`，按 ref_key 幂等。
+- 配置：`attribution` 段（enabled、timezone、top_n、interval、kb_load_gaps_key）与 `attribution.backflow` 子段（enabled、drafts_dir、kb_miss_min_hits 3、max_runs 50、service_user_id），均缺省关。
+- 测试：单测含 -race（service/backflow、service/attribution、repository、app、controller、cmd/eval）通过。集成测试 `TestBackflowRepo_Integration`、L8 归因 / 反馈仓储集成、`TestBackflowImport_Integration` 已写，worktree 无 `deploy/.env` 未本地执行，待调度方用 `AS_TEST_NS=p2l8` 跑。
+- 待办：kb_miss_min_hits / max_runs 阈值（待线上数据）；草稿 expect 补写、MERGED / DROPPED 推进（待专家，`backflow.ExpertTransition` 只留接口）；专家判错来源的 review_task 写入（待调度方）；`eval/backflow/drafts/*.yaml` 未进 .gitignore（待调度方加规则，防误提交真实草稿）。
+
+### P2-L8 修复轮（调度方集成测试 + 只读评审后，2026-11-05）
+
+- 集成失败（`a3edbd5`）：`TestBackflowRepo_Integration` 的 runB 改指不存在的地块 99999999，测 LEFT JOIN 查不到作物时 Crop 为空。
+- 回流卡死（`41eb40b`）：新增终态 `FAILED`（`backflow_status` varchar(16) 放得下，迁移注释里的取值集合不改，在此登记）。取原文 / 出草稿出错（原文过期除外）记一条 `BACKFLOW` 审计事件 `{"status":"RETRY","attempt":n}`，`FailAttempt` 数该 run 已有的 RETRY 事件，第 `BackflowMaxAttempts`=3 次置 FAILED，不再进 `SelectedRuns`。尝试次数放 audit_log 而不放 Redis：不改迁移、重启不丢、和状态推进同一事务。单条失败不算任务错误，`lastWeek` 照常推进。SELECTED / DRAFTED / PII_FAILED / FAILED 推进时同事务写 `BACKFLOW` 事件（target `run:{id}`，summary 只有状态与次数，不写 draft_ref）。
+- 回流计数口径（`27af089`）：周报回流量改按 `BACKFLOW` 事件的 `created_at` 落在本周窗口内统计，按 run 去重、RETRY 不计（走 idx_action），不再用 `agent_run.updated_at`（会跨周错位，也会被其他写入带偏）。二选一里选了「状态推进写事件」：`backflow_draft_ref` 是随机码，不含时间，没法按它取生成时刻。周报回流行改为「本周选入回流 N 个 run」（SELECTED 事件数），并列出 FAILED。
+- 专家判错去重（`7fbfa93`）：`online_judge_result` 先按 (tenant_id, farm_id, advice_id) 聚合（source_id 取 MIN(id)，命中时刻取最早回写），一张卡多个 dimension × judge_version 只算一次；索引注释同步。
+- 周报复查（`02ae2c2`）：`RunOnce` 拿到锁后再查一次 done 标记，已出直接返回（`Outcome.Done`）。注释改正：Tick 只看上一 ISO 周，整周停机漏掉的更早周不会自动补出。
+- 权限（`f3d99f6`）：auditor / platform_admin 去掉 `advice.feedback`，只留给在场业务角色。§6.9 和简报都没有要求这两个角色有反馈权限（简报原文「角色按现有建议查看权限给」，§6.9 只写「农户采纳 / 差评经 POST …」）。
+- 草稿防误提交（`214f3be`）：`eval/backflow/drafts/.gitignore`（`*`、`!.gitkeep`、`!.gitignore`），根 .gitignore 不动。上节待办「drafts 未进 .gitignore」由此关闭。
+- 反馈重放（`0891d22`）：同一 request_id 已有记录的 user / advice / farm 任一项不一致，一律 409，错误文本相同，不回首次的行，跨农场与同农场不可区分。
+- import 报错（`8348615`）：样本解码失败只报「unknown field / type mismatch / invalid value / syntax error at line N」或 empty，不回显 yaml.v3 原始错误里的字段值。
+- 注释（`763d933`）：服务账号缺省 9900 写成命名常量 `DefaultBackflowServiceUser` 并说明取值（避开种子用户）。`realIDMinDigits` 评估后保持 3：3、4 位的误报（年份、气压读数）只丢一份样本，属失败关闭；调到 5 会漏掉短的真实 ID，是脱敏红线。待线上数据，按 PII_FAILED 里 real_id 的占比再定。
+- 四周集成（`ebb2b5c`）：`internal/service/backflow/l8_weeks_integration_test.go` 的 `TestL8FourWeeks_Integration`，用 Job + 真实 AttributionRepo / BackflowRepo / AuditService + Redis 锁，注入时钟跑 W45–W48（构造数据，待线上数据）。断言跨周同一签名一行、hit_count 为当周命中、RESOLVED 后复发 reopen+1、RAW_READ 审计行数等于 ReadRaw 次数（8 次：OK 5、DENIED 3）、读不出原文的 run 第 3 次后 FAILED 且不占 MaxRuns 名额。
+- 待调度方用 `AS_TEST_NS=p2l8` 跑的集成测试：`TestBackflowRepo_Integration`（扩充事件 / FailAttempt / BackflowCounts）、`TestAttributionWeekHits_Integration`（专家去重）、`TestFeedbackRepo_Integration`（重放 409）、新增 `TestL8FourWeeks_Integration`。
+
+### 第 4 批（P2-L7b / L8）调度方合并验证（2026-11-05）
+
+- 合并：`p2-b4-merge` = `p2-b4-base` ec31fa8 + p2-l7b b880c3d（含审查修复轮）+ p2-l8 dfbbe51（含审查修复轮）；冲突只在 Makefile / cmd/eval/main.go / dev-log，两边都保留（`eval-gate` 取 L7-b 修复后的 release 指针写法）。CODEOWNERS 补 `/eval/baselines/`（账号仍为占位）。
+- 测试：`go build / vet / vet -tags integration / test ./...`、`go test -race`（cmd/eval、internal/evalkit、service、repository、app、controller）通过；集成 `AS_TEST_NS=p2l7b` cmd/eval 全量、`AS_TEST_NS=p2l8` repository + service（-race）+ cmd/eval 回流、`AS_TEST_NS=p2b4v` 全仓（-p 1）通过；repository 包因下条 MySQL 崩溃在 `AS_TEST_NS=p2b4w` 重跑（-race）通过。
+- 环境：全仓集成期间本地 MySQL 8.0.46 再次 InnoDB 断言崩溃（`os0file.cc:2905 dir_fd != -1`，建测试库表时），重启后共享库版本与表 CHECK 正常；测试 NS 库约 128 个，清理脚本待用户执行。
+- 评测（共享 agri_eval）：`make eval SUITE=regression,redteam N=5` → exp 112，176 样本 / 880 trial，880 PASS、0 INFRA_ERROR / GRADER_ERROR，redteam pass^5 = 1.00；`make eval-compare BASELINE=baseline_p1 CANDIDATE=112 FAIL_ON_UNRELEASABLE=1` → 配对 170，NO_SIGNIFICANT_DIFF，releasable=true；`make eval MODE=smoke TOKEN_BUDGET=1000000` → exp 113 DONE。
+- 业务迁移 0016 与主仓工作区一致，共享 agri_steward 已由用户执行到 v16。
+- 待部署方：main 分支保护 + 要求签名提交（签字作者邮箱可伪造）；CODEOWNERS / owners.yaml 真实账号；CI release 需 holdout 私有仓与 EVAL_HOLDOUT_TOKEN（用户选择 holdout 暂留本地）；`eval/baselines/release.yaml` 待冻结 baseline_p2 后写。

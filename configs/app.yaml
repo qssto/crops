@@ -111,3 +111,22 @@ compaction:
 rule_offload:
   shadow_diff_days: 180
   purge_every: 24h
+
+# 归因周报与线上回流（P2-L8，§6.9 技术实现 2 / 3）：enabled 开时 worker 起 attribution-weekly
+# （lock:p2job:attribution-weekly；timezone 下 ISO 周一出上周周报，eval 桶 report/weekly/{week}.html，done 标记 {week}.json），
+# top_n 为周报 Top 问题数；kb_load_gaps_key 是 eval 桶里 L5 kb_load_gaps.json 的对象键（无对象时周报该节写「无」）。
+# backflow.enabled 开时 worker 起 backflow-collect（lock:p2job:backflow-collect）：选样 → 服务账号 ReadRaw（RAW_READ 审计）
+# → 脱敏 → piiclean → drafts_dir 写草稿（只提交 README / .gitkeep）；kb_miss_min_hits 为「高频 KB_MISS」阈值（待线上数据）。
+# AS_ATTRIBUTION_ENABLED / AS_ATTRIBUTION_TOP_N / AS_ATTRIBUTION_BACKFLOW_ENABLED 等覆盖。
+attribution:
+  enabled: false
+  timezone: Asia/Shanghai
+  top_n: 20
+  interval: 1h
+  kb_load_gaps_key: nightly/kb_load_gaps.json
+  backflow:
+    enabled: false
+    drafts_dir: eval/backflow/drafts
+    kb_miss_min_hits: 3
+    max_runs: 50
+    service_user_id: 9900   # 与 config.DefaultBackflowServiceUser 一致；部署按实际服务账号覆盖

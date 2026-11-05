@@ -252,3 +252,28 @@ holdout 样本只在私有仓 `crops-holdout`，以 submodule 挂到 `eval/suite
 - CI：全部 workflow 只有 `contents: read` 权限；checkout 设 `persist-credentials: false`（EVAL_HOLDOUT_TOKEN 不留在 .git/config）；artifact 只传 `eval/out/*/report.md`，holdout 明细只在 MinIO `report/holdout/`。pr-smoke 另跑 `go test ./...`。
 - nightly 非阻断：作业 `continue-on-error` 不拦合并；eval-gate 末步「上报失败」在 `failure()` 时打 error 注解并写作业摘要，失败在流水线页面标红可见。
 - **CI 迁移来源：** `migrations/**/*.sql` 不入库。eval-gate 先从仓库 secret `EVAL_MIGRATIONS_TGZ`（base64 的 `tar czf migrations/`）还原迁移，解包前拒绝 `migrations/` 以外、非 `.sql`、绝对路径、`..` 与链接条目；之后仍检查 `migrations/*.up.sql` 与 `migrations/eval/*.up.sql`，缺失即以 error 失败（不跳过）。secret 由 `deploy/ci-secrets.sh` 从本地 `deploy/.env` 与 `migrations/` 写入（需 `gh auth login`；`--dry-run` 只列名字与大小），迁移有改动时重跑。
+
+## 质量门禁、签字与模拟用户（P2 L7-b）
+
+### 质量门禁
+
+- `make eval-gate EXP=<id> [GATE_BASELINE=baseline_p1]`（即 `eval gate --exp <id> --baseline <名|exp id>`）：在单因子 compare 之上按注册顺序判定 BLOCK_REDLINE → BLOCK_QUALITY → NOT_ATTRIBUTABLE → NEED_SIGNOFF → PASS，写 `experiment.gate_verdict`。全部规则都求值，报告列出每条命中原因，结论取第一条命中的规则。规则在 `internal/evalkit/gate`，新增规则只加注册项。
+- 不给结论（不写 gate_verdict，退出非 0）：实验 VOID / BUDGET_EXCEEDED / 未跑完，或阶段级对比（PHASE）。多因子变化给 NOT_ATTRIBUTABLE。
+- 红线判定不含 user_sim 样本。judge 维度未校准达标时结论最高到 NEED_SIGNOFF。
+- 成本 / 延迟阈值在 `eval/gates/cost_latency.yaml`（单会话 token、P95 延迟、压缩触发率，草稿，待真实模型；桩模型下 P95 只出报告）。
+- 配对报告 `eval/out/gate/{baseline}-{candidate}.md`：首行为结论，其后是翻转样本、flaky 与未声明调用清单、成本延迟表；holdout 只给 ID。
+- release 流水线在 `MODE=release` 之后跑 eval-gate，非 PASS 且未签字即退出非 0；PR smoke 不变。
+
+### 签字
+
+- NEED_SIGNOFF 读 `eval/signoffs/{experiment_id}.md`，规则见 `eval/signoffs/README.md`：已提交、无未提交改动、每个提交作者经 `eval/gates/owners.yaml` 映射后是该路径的 `.github/CODEOWNERS` owner。通过后写 `experiment.signed_by`。签字不能覆盖 BLOCK_* / NOT_ATTRIBUTABLE；结论变化时清空已有签字。
+- CODEOWNERS 与 owners.yaml 现为占位账号（待真实账号），替换前签字恒不通过。
+
+### 模拟用户（user_sim）
+
+- 样本写 `user_sim: {persona, instruction, max_turns}`（persona 为 农场主 / 农艺师 / 机手，max_turns 1–10，含第一句），且必须带 tag `user_sim`，只限 capability 套件。
+- 运行：第一句是 `question`，之后每次 agent 回答（渲染为结论 / 【拒答】原因 / 【待审批】结论）后问模拟用户要下一句；第 2 轮起按生产路径带 `prev_run_id` 建新 run。模拟用户回复含 `###STOP###`、达到 max_turns 或 agent 开出审批票即结束，打分取最后一轮。对话写进 transcript 根行 `conversation`。
+- 未隔离的 user_sim 样本要求 n ≥ 5，否则 run 直接报错。
+- 模型配置独立：`eval/usersim/usersim.yaml` 的 `eval.usersim.model / model_tier`（现只支持 `replay`，待真实模型），`run / resume --usersim-config / --usersim-recordings` 可改路径，默认取 `--repo` 下。
+- 录制回放：`eval/usersim/recordings/{sample_id}.yaml`，按 (sample_id, turn, 对话哈希) 取回复；对话哈希覆盖 persona、instruction 与此前每轮文本，任一变化即视为缺录制。缺录制时该 trial 记 infra_error，不编造回复。
+- 现有样本 `capability/rice-cap-sim-0001..0003` 均隔离：入库前须人工阅读 3 次 trial 对话（待人工阅读），录制待补（待真实模型）。

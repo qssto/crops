@@ -105,7 +105,7 @@ type Metrics struct {
 	CitationCoverage Ratio
 	// RefusalRate：未出错 trial 中 REFUSED 的比例。
 	RefusalRate Ratio
-	// LatencyP95 取未出错 trial；Tokens 累加 Detail 中 LLM 调用的 prompt + completion，TokensRecorded 为是否有 Detail。
+	// LatencyP95 取未出错 trial；Tokens 累加 evalkit.TrialTokens（多轮对话含末轮以前各轮），TokensRecorded 为是否有 Detail。
 	LatencyP95     time.Duration
 	Tokens         int
 	TokensRecorded bool
@@ -298,12 +298,8 @@ func metrics(trials []evalkit.Trial, samples []*Sample) Metrics {
 	for _, t := range trials {
 		if t.Detail != nil {
 			m.TokensRecorded = true
-			for _, st := range t.Detail.Steps {
-				for _, l := range st.LLMCalls {
-					m.Tokens += l.PromptTokens + l.CompletionTokens
-				}
-			}
 		}
+		m.Tokens += evalkit.TrialTokens(&t)
 		if t.Error != "" {
 			continue
 		}

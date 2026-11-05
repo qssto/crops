@@ -120,7 +120,8 @@ func TestBaselineID(t *testing.T) {
 			t.Errorf("resolve %s = %d %v, want %d", ref, got, err, want)
 		}
 	}
-	for _, bad := range []string{"nope", "../x", ""} {
+	// release 是门禁基线指针的保留名，不当基线读。
+	for _, bad := range []string{"nope", "../x", "", "release"} {
 		if _, err := baselineID(dir, bad); err == nil {
 			t.Errorf("resolve %q: want error", bad)
 		}

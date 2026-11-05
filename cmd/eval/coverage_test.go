@@ -19,7 +19,7 @@ func TestValidate_Coverage(t *testing.T) {
 		wantStderr string
 	}{
 		{name: "report only", wantCode: exitOK, wantStdout: []string{
-			"coverage: ", "/ 500 samples", "user_sim: 0", "holdout: ",
+			"coverage: ", "/ 500 samples", "user_sim: 3", "holdout: ",
 			"refuse: ", "KB_MISS", "DATA_MISSING", "OUT_OF_SCOPE", "trap: ", "trap.similar_pest", "补写清单: ",
 			"by category × stage × difficulty:",
 		}},

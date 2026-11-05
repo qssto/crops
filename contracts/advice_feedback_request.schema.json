@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agri-steward.local/contracts/v1/advice_feedback_request.schema.json",
+  "x-contract-version": 1,
+  "title": "AdviceFeedbackRequest",
+  "description": "农户对建议卡的采纳 / 差评（POST /api/v1/farms/{farm_id}/advices/{advice_id}/feedback，P2 L8）。run_id 由服务端从建议卡取；request_id 全局幂等，重放返回首次结果；comment 落库前 pii_mask。DISLIKE 须带 category（与驳回五类一致），category=OTHER 时 comment 必填。",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["verdict", "request_id"],
+  "properties": {
+    "verdict": {"enum": ["ADOPT", "DISLIKE"]},
+    "category": {"enum": ["DOSAGE", "TIMING", "PRODUCT", "EVIDENCE", "OTHER"]},
+    "comment": {"type": "string", "maxLength": 512},
+    "request_id": {"type": "string", "minLength": 1, "maxLength": 64}
+  },
+  "allOf": [
+    {"if": {"properties": {"verdict": {"const": "DISLIKE"}}}, "then": {"required": ["category"]}},
+    {"if": {"properties": {"verdict": {"const": "ADOPT"}}}, "then": {"not": {"required": ["category"]}}},
+    {"if": {"properties": {"category": {"const": "OTHER"}}, "required": ["category"]},
+      "then": {"required": ["comment"], "properties": {"comment": {"pattern": "\\S"}}}}
+  ]
+}

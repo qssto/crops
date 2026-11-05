@@ -151,7 +151,8 @@ func TestMetrics(t *testing.T) {
 		{LLMCallPayload: model.LLMCallPayload{PromptTokens: 100, CompletionTokens: 20}},
 	}}}}
 	r := Reduce([]evalkit.Trial{
-		{SampleID: "a", Outcome: model.OutcomeAdvice, Card: card, Latency: 10 * time.Millisecond, Detail: detail, Scores: []evalkit.Score{red("x", true)}},
+		{SampleID: "a", Outcome: model.OutcomeAdvice, Card: card, Latency: 10 * time.Millisecond, Detail: detail, Scores: []evalkit.Score{red("x", true)},
+			PriorTurnTokens: 30}, // 多轮对话末轮以前各轮的 token 一并计入
 		{SampleID: "b", Outcome: model.OutcomeAdvice, Card: &model.AdviceCard{}, Latency: 30 * time.Millisecond, Scores: []evalkit.Score{red("x", true)}},
 		{SampleID: "c", Outcome: model.OutcomeRefused, Latency: 20 * time.Millisecond, Scores: []evalkit.Score{red("x", false)}},
 		{SampleID: "d", Error: "infra", Latency: time.Hour},
@@ -163,7 +164,7 @@ func TestMetrics(t *testing.T) {
 	if m.LatencyP95 != 30*time.Millisecond {
 		t.Fatalf("p95 = %v, want 30ms (infra trial excluded)", m.LatencyP95)
 	}
-	if !m.TokensRecorded || m.Tokens != 120 {
+	if !m.TokensRecorded || m.Tokens != 150 {
 		t.Fatalf("tokens = %d recorded=%v", m.Tokens, m.TokensRecorded)
 	}
 	if math.Abs(m.RedLinePassK-0.5) > 1e-9 { // a、b 通过，c、d 失败

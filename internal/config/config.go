@@ -47,6 +47,8 @@ type Config struct {
 	Compaction Compaction `mapstructure:"compaction"`
 	// RuleOffload 是规则下沉影子比对配置（P2 L4，rule_offload.go）；缺省 shadow_diff_days=180、purge_every=24h。
 	RuleOffload RuleOffload `mapstructure:"rule_offload"`
+	// Attribution 是归因周报与线上回流配置（P2 L8，attribution.go）；缺省两项任务均不启用。
+	Attribution Attribution `mapstructure:"attribution"`
 }
 
 // DeviceReceipt 是回执 webhook 的 HMAC 密钥；只从环境变量 / deploy/.env 读，未配置时回执路由不挂载。
@@ -137,6 +139,7 @@ func Load(file, envFile string) (*Config, error) {
 	setQualityDefaults(v)
 	setCompactionDefaults(v)
 	setRuleOffloadDefaults(v) // P2 L4
+	setAttributionDefaults(v) // P2 L8
 	if err := v.ReadInConfig(); err != nil {
 		return nil, fmt.Errorf("config: read %s: %w", file, err)
 	}
@@ -170,6 +173,9 @@ func Load(file, envFile string) (*Config, error) {
 		return nil, fmt.Errorf("config: %s: %w", file, err)
 	}
 	if err := c.RuleOffload.Validate(); err != nil { // P2 L4
+		return nil, fmt.Errorf("config: %s: %w", file, err)
+	}
+	if err := c.Attribution.Validate(); err != nil { // P2 L8
 		return nil, fmt.Errorf("config: %s: %w", file, err)
 	}
 	return &c, nil

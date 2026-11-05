@@ -18,6 +18,29 @@ func sampleIndex(m reduce.QualityMetric, trials []evalkit.Trial, paired map[stri
 	return out
 }
 
+// PairedValue 是一个配对样本在某指标上两边的样本级值。
+type PairedValue struct {
+	Key                 string
+	Baseline, Candidate float64
+}
+
+// PairedValues 返回指标 m 在 in.Paired 交集内、两边都适用的样本级值（按样本键排序）：与 metricResult 同一配对口径，
+// 门禁翻转清单复用它（不另起一套配对）。
+func PairedValues(m reduce.QualityMetric, in Input) []PairedValue {
+	paired := make(map[string]bool, len(in.Paired))
+	for _, k := range in.Paired {
+		paired[k] = true
+	}
+	b := sampleIndex(m, in.Baseline.Trials, paired)
+	c := sampleIndex(m, in.Candidate.Trials, paired)
+	keys := commonKeys(b, c)
+	out := make([]PairedValue, len(keys))
+	for i, k := range keys {
+		out[i] = PairedValue{Key: k, Baseline: b[k].Value, Candidate: c[k].Value}
+	}
+	return out
+}
+
 // metricResult 在配对交集上算一个指标：样本级值配对差（candidate − baseline）的 bootstrap 区间与结论。
 func metricResult(m reduce.QualityMetric, in Input, paired map[string]bool, seed uint64) MetricResult {
 	res := MetricResult{Name: m.Name(), Title: m.Title(), LowerIsBetter: m.LowerIsBetter(), Pending: m.Pending(),

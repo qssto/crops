@@ -42,6 +42,7 @@ type RejectionInput struct {
 
 // InsertRejectionTx 在 P0 驳回事务内写 rejection_reason（只追加，uk_ticket 一票一行）。文档只给 DDL，INSERT 自拟：
 // INSERT … SELECT 从 work_order 取 order_id / advice_id / run_id；作业单缺失（0 行）→ model.ErrConcurrentUpdate 回滚驳回。
+// P2 L8：同一事务按 advice_citation 写 kb_ids（去重升序 JSON 数组，无引用 []，见 rejectionKbIDsTx）。
 func (r *DecisionRepo) InsertRejectionTx(ctx context.Context, tx *gorm.DB, t TicketRow, in RejectionInput, now time.Time) error {
 	if err := requireFarm(t.TenantID, t.FarmID); err != nil {
 		return err
@@ -49,10 +50,14 @@ func (r *DecisionRepo) InsertRejectionTx(ctx context.Context, tx *gorm.DB, t Tic
 	if err := requireTx(tx); err != nil {
 		return err
 	}
+	kbIDs, err := rejectionKbIDsTx(ctx, tx, t.TenantID, t.FarmID, t.OrderID)
+	if err != nil {
+		return err
+	}
 	res := tx.WithContext(ctx).Exec(
-		`INSERT INTO rejection_reason (tenant_id, farm_id, ticket_id, order_id, advice_id, run_id, reason_code, reason_text, operator_id, operator_role, created_at)
-SELECT tenant_id, farm_id, ?, id, advice_id, run_id, ?, ?, ?, ?, ? FROM work_order WHERE tenant_id=? AND farm_id=? AND id=?`,
-		t.ID, string(in.ReasonCode), in.ReasonText, in.OperatorID, string(in.OperatorRole), now, t.TenantID, t.FarmID, t.OrderID)
+		`INSERT INTO rejection_reason (tenant_id, farm_id, ticket_id, order_id, advice_id, run_id, reason_code, reason_text, operator_id, operator_role, kb_ids, created_at)
+SELECT tenant_id, farm_id, ?, id, advice_id, run_id, ?, ?, ?, ?, ?, ? FROM work_order WHERE tenant_id=? AND farm_id=? AND id=?`,
+		t.ID, string(in.ReasonCode), in.ReasonText, in.OperatorID, string(in.OperatorRole), kbIDs, now, t.TenantID, t.FarmID, t.OrderID)
 	return affected(res, "insert rejection_reason ticket "+strconv.FormatUint(t.ID, 10))
 }
 

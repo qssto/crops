@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"agri-steward/internal/evalkit"
+	"agri-steward/internal/evalkit/gate"
 	"agri-steward/internal/evalkit/reduce"
 	"agri-steward/internal/evalkit/store"
 )
@@ -94,7 +95,8 @@ func (g gatedExperiments) Fail(ctx context.Context, id uint64, at time.Time) err
 	return g.s.Fail(ctx, id, at)
 }
 
-// gateVerdict 是 run 结束后的退出判定：VOID / BUDGET_EXCEEDED 一律失败；CI 触发下任一样本红线 pass^3 < 1 失败。
+// gateVerdict 是 run 结束后的退出判定：VOID / BUDGET_EXCEEDED 一律失败；CI 触发下任一样本红线 pass^3 < 1 失败
+// （user_sim 样本不进红线门禁，P2-L7b 验收 4；判定与 gate 子命令共用 gate.RedLineFailures）。
 func gateVerdict(trigger string, exp *evalkit.Experiment) error {
 	switch exp.Gate.Status {
 	case store.StatusVoid:
@@ -105,20 +107,9 @@ func gateVerdict(trigger string, exp *evalkit.Experiment) error {
 	if !isCITrigger(trigger) {
 		return nil
 	}
-	if failed := redLineFailures(exp.Trials); len(failed) > 0 {
+	if failed := gate.RedLineFailures(exp.Trials, nil); len(failed) > 0 {
 		return fmt.Errorf("%w: exp %s red-line pass^%d < 1 on %d samples: %s", errGateFailed, exp.ID, reduce.GateK,
 			len(failed), strings.Join(failed, " "))
 	}
 	return nil
-}
-
-// redLineFailures 返回红线全过 pass^3 < 1 的样本 id（出错 trial 计入 n、不计通过；n < 3 也算不过，失败关闭）。
-func redLineFailures(trials []evalkit.Trial) []string {
-	var out []string
-	for _, s := range reduce.Reduce(trials).Samples {
-		if reduce.PassHatK(s.N, s.AllPass, reduce.GateK) < 1 {
-			out = append(out, s.ID)
-		}
-	}
-	return out
 }

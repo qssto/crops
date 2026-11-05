@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"slices"
+	"strings"
 	"testing"
 
 	"agri-steward/internal/evalkit"
@@ -70,6 +71,24 @@ func TestCheckResumeSnapshot(t *testing.T) {
 	}
 	if err := checkResumeSnapshot(base, base, "other"); !errors.Is(err, errResumeSnapshot) {
 		t.Fatalf("manifest hash: err = %v", err)
+	}
+	// 评审 P2：模拟用户 model / model_tier 或 user_sim 样本集变了不续跑（同一实验的对话不能混两种模拟用户）。
+	sim := base
+	sim.UserSim = &evalkit.UserSimSnapshot{SampleIDs: []string{"u"}, Model: "replay", ModelTier: "t"}
+	if err := checkResumeSnapshot(sim, sim, "h"); err != nil {
+		t.Fatalf("same user_sim: %v", err)
+	}
+	for name, us := range map[string]*evalkit.UserSimSnapshot{
+		"model": {SampleIDs: []string{"u"}, Model: "openai", ModelTier: "t"},
+		"tier":  {SampleIDs: []string{"u"}, Model: "replay", ModelTier: "t2"},
+		"ids":   {SampleIDs: []string{"u", "v"}, Model: "replay", ModelTier: "t"},
+		"none":  nil,
+	} {
+		cur := base
+		cur.UserSim = us
+		if err := checkResumeSnapshot(sim, cur, "h"); !errors.Is(err, errResumeSnapshot) || !strings.Contains(err.Error(), "user_sim") {
+			t.Fatalf("user_sim %s: err = %v", name, err)
+		}
 	}
 	// 快照没记录作废阈值（L7-a 评审修复前的实验）或记录值越界：失败关闭。
 	for _, rate := range []float64{0, 0.2} {
