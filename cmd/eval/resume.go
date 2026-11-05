@@ -67,8 +67,14 @@ func cmdResume(ctx context.Context, args []string, stdout, stderr io.Writer) (er
 		return err
 	}
 	// 与 run 同一出报告步骤：holdout 明细进 report/holdout/，本地报告只写脱敏副本。
+	full := exp
 	exp, path, err := writeReport(ctx, in.objects, in.evalBucket, *outRoot, exp, stdout)
 	if err != nil {
+		return err
+	}
+	// P2 L3：补跑的 nightly 同样重写 metrics.json 与下钻页（resume 不带 --judges，judge 指标按未校准）；
+	// latest.json 只前进，补跑旧实验不回指。
+	if err := nightlyQuality(ctx, in.quality, in.evalBucket, trigger, ls, &judgeFlags{}, full, exp, stdout); err != nil {
 		return err
 	}
 	fmt.Fprintf(stdout, "eval resume done: exp_id=%s samples=%d trials=%d report=%s status=%s\n",
@@ -102,6 +108,10 @@ func resumeExperiment(ctx context.Context, in *infra, ls *loadedSamples, id uint
 		return nil, "", err
 	}
 	recorded := *rec.Snapshot
+	// P2 第 3 批：按快照 flags 重设开关（补跑 trial 与原 trial 同一开关状态）；快照无 flags 时不加。
+	if err := in.setFlags(recorded.Flags); err != nil {
+		return nil, "", fmt.Errorf("experiment %d: %w", id, err)
+	}
 	opts := evalkit.Options{ExperimentID: store.FormatID(id), Suites: recorded.Suites, Tags: recorded.Tags, N: recorded.N,
 		Concurrency: in.pool.Size()}
 	cur, err := snapshot(ctx, in, ls, samples, opts)

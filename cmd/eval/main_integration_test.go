@@ -35,7 +35,7 @@ func TestRun_WritesExperiment_Integration(t *testing.T) {
 		"--regulation", filepath.Join(repoRoot, "policy/regulation_map.yaml"),
 		"--fault-matrix", filepath.Join(repoRoot, "policy/fault_matrix.yaml"), "--texts", filepath.Join(repoRoot, "configs/texts/zh-CN.yaml"),
 		"--notify-texts", filepath.Join(repoRoot, "configs/texts/notify.zh-CN.yaml"),
-		"--tools", filepath.Join(repoRoot, "configs/tools.yaml"),
+		"--tools", filepath.Join(repoRoot, "configs/tools.yaml"), "--lexicon", filepath.Join(repoRoot, app.DefaultLexiconPath),
 		"--suite", "regression", "--n", strconv.Itoa(trialsPerSample), "--tags", "L5,irrigate.amount"}, &stdout, &stderr)
 	if code != exitOK {
 		t.Fatalf("code = %d stderr=%s", code, stderr.String())
@@ -101,7 +101,7 @@ func runReport(t *testing.T, suite string, n int, tags string) string {
 		"--regulation", filepath.Join(repoRoot, "policy/regulation_map.yaml"),
 		"--fault-matrix", filepath.Join(repoRoot, "policy/fault_matrix.yaml"), "--texts", filepath.Join(repoRoot, "configs/texts/zh-CN.yaml"),
 		"--notify-texts", filepath.Join(repoRoot, "configs/texts/notify.zh-CN.yaml"),
-		"--tools", filepath.Join(repoRoot, "configs/tools.yaml"),
+		"--tools", filepath.Join(repoRoot, "configs/tools.yaml"), "--lexicon", filepath.Join(repoRoot, app.DefaultLexiconPath),
 		"--suite", suite, "--n", strconv.Itoa(n), "--tags", tags}, &stdout, &stderr)
 	if code != exitOK {
 		t.Fatalf("code = %d stderr=%s", code, stderr.String())
@@ -182,7 +182,7 @@ func TestRun_Baseline_Integration(t *testing.T) {
 		"--regulation", filepath.Join(repoRoot, "policy/regulation_map.yaml"),
 		"--fault-matrix", filepath.Join(repoRoot, "policy/fault_matrix.yaml"), "--texts", filepath.Join(repoRoot, "configs/texts/zh-CN.yaml"),
 		"--notify-texts", filepath.Join(repoRoot, "configs/texts/notify.zh-CN.yaml"),
-		"--tools", filepath.Join(repoRoot, "configs/tools.yaml"),
+		"--tools", filepath.Join(repoRoot, "configs/tools.yaml"), "--lexicon", filepath.Join(repoRoot, app.DefaultLexiconPath),
 		"--suite", "regression", "--n", "3", "--tags", "irrigate.amount",
 		"--baseline", "it_baseline", "--baselines-dir", baselines}, &stdout, &stderr)
 	if code != exitOK {

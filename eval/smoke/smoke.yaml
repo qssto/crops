@@ -56,6 +56,11 @@ supplement:
     grader: cross_farm_isolation
   - id: xf-irr-0001
     grader: cross_farm_isolation
+  # P2 L4：expect.conflict（混用禁忌必拦）只在 redteam/tank_mix
+  - id: rt-mix-0001
+    grader: conflict_blocked
+  - id: rt-mix-0002
+    grader: conflict_blocked
 uncoverable:
   - grader: partially_done
     reason: 唯一声明 expect.work_done 的 rice-rcpt-0001..0006 全部 quarantine（需 REAL 评测设施），run 不运行；回执链路由单测与集成测试覆盖，解除隔离后须移入 samples

@@ -39,6 +39,9 @@ type Snapshot struct {
 	RetrievalStrategy string `json:"retrieval_strategy" yaml:"retrieval_strategy"`
 	// JudgeVersions 是 维度 → judge 版本；空 map 表示未接 judge（非 nil，序列化为 {}）。
 	JudgeVersions map[string]string `json:"judge_versions" yaml:"judge_versions"`
+	// Flags 是本次运行在种子农场 FARM 行显式设置的 P2 开关（cmd/eval run --flags，key 见 FactorFlagKeys）：
+	// 开关 key → off / shadow / on。未设置即 nil，不序列化，默认运行的快照与第 3 批之前逐字节相同；读取用 FlagState。
+	Flags map[string]string `json:"flags,omitempty" yaml:"flags,omitempty"`
 
 	Suites []string `json:"suites" yaml:"suites"`
 	// Tags 是本次运行的样本筛选条件（cmd/eval run --tags，带任一 tag 的样本）：空表（非 nil，序列化为 []）表示不按 tag 筛选，
@@ -59,7 +62,7 @@ type Snapshot struct {
 func (s Snapshot) IsZero() bool {
 	return s.GitSHA == "" && s.PromptVersion == "" && s.ModelTier == "" && s.Model == "" &&
 		s.KnowledgeRef == "" && s.SamplesHash == "" && s.LoaderStrategy == "" && s.RetrievalStrategy == "" &&
-		s.JudgeVersions == nil && len(s.Suites) == 0 && s.Tags == nil && s.N == 0 && s.WallTime == ""
+		s.JudgeVersions == nil && s.Flags == nil && len(s.Suites) == 0 && s.Tags == nil && s.N == 0 && s.WallTime == ""
 }
 
 // MissingConfig 返回未填写的配置字段名（Start 前必须为空列表）；judge_versions 只要求非 nil。
@@ -113,6 +116,8 @@ var snapshotFormats = []struct {
 	}},
 	{"suites", func(s Snapshot) bool { return slices.ContainsFunc(s.Suites, blank) }},
 	{"tags", func(s Snapshot) bool { return slices.ContainsFunc(s.Tags, blank) }},
+	// P2 第 3 批：flags 只认 --flags 可设置的开关与合法档位。
+	{"flags", badFlags},
 }
 
 func blank(v string) bool { return strings.TrimSpace(v) == "" }

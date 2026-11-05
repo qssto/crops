@@ -208,6 +208,9 @@ func (a *Agent) guardInput(s *state) guardrail.Input {
 		Candidates:     s.candidates,
 		ModelText:      append([]string{s.conclusion}, s.modelWhy...),
 		RequireProduct: s.category() == model.CategoryProtect && s.operation() && !s.degraded,
+		Rules:          a.ruleOutputs(s), // P2 L4：下沉项拒收常开
+		Mentions:       s.productMentions(),
+		History:        s.history,
 	}
 	if s.env.snap != nil { // 避免 typed-nil 接口：未载入知识时由护栏按「无快照」拒绝
 		in.KB = s.env.snap
@@ -252,12 +255,13 @@ func (a *Agent) persist(ctx context.Context, s *state) (*state, error) {
 	if err := runner.Alive(ctx); err != nil {
 		return s, fmt.Errorf("persist: %w", err)
 	}
-	id, err := a.cfg.Advice.SaveAdvice(ctx, s.q.Scope, *s.card)
+	id, err := a.saveAdvice(ctx, s) // P2 L4：有影子比对行时与落卡同一事务写 rule_shadow_diff
 	if err != nil {
 		return s, fmt.Errorf("persist: save advice: %w", err)
 	}
 	s.card.AdviceID = id
 	a.emitAdviceReady(ctx, s)
+	a.emitShadowDiffs(ctx, s)
 	return s, nil
 }
 

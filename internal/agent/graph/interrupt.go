@@ -57,6 +57,9 @@ type resumeSnapshot struct {
 	Order            model.WorkOrder       `json:"order"`
 	Ticket           model.ApprovalTicket  `json:"ticket"`
 	InterruptedAt    time.Time             `json:"interrupted_at"`
+	// P2 L6：本 run 使用的压缩状态与本 run 内压缩次数（技术实现 6、7）；未压缩时省略，快照与 P1 相同。
+	CompactionState *model.CompactionState `json:"compaction_state,omitempty"`
+	CompactionCount int                    `json:"compaction_count,omitempty"`
 }
 
 // errNoResumeState 表示 await_approval 被恢复却拿不到可用的 interrupt state（检查点损坏或版本不符）。
@@ -80,7 +83,7 @@ func (a *Agent) awaitApproval(ctx context.Context, s *state) (*state, error) {
 	if err := runner.Alive(ctx); err != nil {
 		return nil, err
 	}
-	snap, err := json.Marshal(a.snapshot(s))
+	snap, err := json.Marshal(compactionSnapshot(ctx, a.snapshot(s)))
 	if err != nil {
 		return nil, fmt.Errorf("await_approval: encode snapshot: %w", err)
 	}
@@ -106,6 +109,7 @@ func (a *Agent) restore(ctx context.Context, rs resumeState) (*state, error) {
 	}
 	s := &state{q: agent.Question{Scope: snap.Scope, FieldID: snap.FieldID, RunID: snap.RunID}, runID: snap.RunID,
 		now: a.cfg.Clock.Now(), card: &snap.Card, order: &snap.Order, ticket: &snap.Ticket}
+	restoreCompaction(ctx, snap)
 	a.emit(ctx, s, model.EventRunResumed, map[string]any{"ticket_id": snap.Pending.TicketID,
 		"order_id": snap.Pending.OrderID, "epoch": runner.Epoch(ctx)})
 	return s, nil

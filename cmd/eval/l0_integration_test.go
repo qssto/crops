@@ -112,7 +112,7 @@ func runArgs(t *testing.T) []string {
 		"--regulation", filepath.Join(repoRoot, "policy/regulation_map.yaml"),
 		"--fault-matrix", filepath.Join(repoRoot, "policy/fault_matrix.yaml"), "--texts", filepath.Join(repoRoot, "configs/texts/zh-CN.yaml"),
 		"--notify-texts", filepath.Join(repoRoot, "configs/texts/notify.zh-CN.yaml"),
-		"--tools", filepath.Join(repoRoot, "configs/tools.yaml"))
+		"--tools", filepath.Join(repoRoot, "configs/tools.yaml"), "--lexicon", filepath.Join(repoRoot, app.DefaultLexiconPath))
 }
 
 // expIDOf 从 run / resume 的 stdout 取 exp_id。

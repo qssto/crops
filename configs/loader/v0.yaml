@@ -1,0 +1,8 @@
+# 知识加载策略 v0（P2 §6.6）：Phase 0 现行口径，enable_loader_v1 关闭（默认）时使用。
+# internal/app/kb_load_test.go 断言它与 knowledge.PhaseZeroSpec() 逐项相同；改这里等于改默认行为，须重建 baseline。
+# limit 8 是 graph 现行上限（路线 Phase 0 建议 ≤ 5，v0 为逐条复现现行结果保留 8）。
+version: v0
+limit: 8
+# 排序键均降序，全部相同时按 kb_id 升序
+order: [authority, specificity]
+must_include: {}

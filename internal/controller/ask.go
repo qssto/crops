@@ -28,10 +28,11 @@ type Asker interface {
 	Ask(ctx context.Context, scope model.Scope, in service.AskInput) (uint64, error)
 }
 
-// askRequest 是 POST /ask 请求体；farm_id 只取路径。
+// askRequest 是 POST /ask 请求体；farm_id 只取路径。prev_run_id 为续接的上一个 run（P2 L6，可省略）。
 type askRequest struct {
-	FieldID uint64 `json:"field_id"`
-	Text    string `json:"text"`
+	FieldID   uint64 `json:"field_id"`
+	Text      string `json:"text"`
+	PrevRunID uint64 `json:"prev_run_id"`
 }
 
 // askResponse 是 202 响应体。
@@ -73,7 +74,8 @@ func AskHandler(svc Asker) gin.HandlerFunc {
 			abort(c, http.StatusBadRequest, "bad body")
 			return
 		}
-		runID, err := svc.Ask(c.Request.Context(), scope, service.AskInput{FieldID: req.FieldID, Text: req.Text})
+		runID, err := svc.Ask(c.Request.Context(), scope, service.AskInput{FieldID: req.FieldID, Text: req.Text,
+			PrevRunID: req.PrevRunID})
 		if errors.Is(err, service.ErrAdviceDisabled) {
 			abort(c, http.StatusForbidden, service.ErrAdviceDisabled.Error()) // P1 L0：本农场 enable_advice 关
 			return

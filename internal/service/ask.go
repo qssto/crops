@@ -66,6 +66,10 @@ type AdviceReader interface {
 type AskInput struct {
 	FieldID uint64
 	Text    string
+	// PrevRunID 是续接的上一个 run（P2 L6，POST /ask 的 prev_run_id；0 为新会话）。
+	PrevRunID uint64
+	// Supersedes 是复检取代的旧 run（P2 L6，只由 RecheckService 填；0 为非取代）。与 PrevRunID 互斥。
+	Supersedes uint64
 }
 
 // RunView 是 GET /runs/{run_id} 的结果：run 状态 + 建议卡（尚未产出时为 nil）。
@@ -84,6 +88,10 @@ type AskDeps struct {
 	Flags   FlagReader
 	Meta    agent.RunMeta
 	Logger  *slog.Logger
+	// Sessions 是会话续接建 run（P2 L6，可空：空时 prev_run_id / 取代一律开新会话，同 P1）；
+	// 只在 enable_compaction 开时使用，SessionIdle 为 compaction.session_idle。
+	Sessions    SessionRunCreator
+	SessionIdle time.Duration
 }
 
 // AskService 是 ask 入口：校验 → enable_advice → 限流 → 建 run(RUNNING) → 异步跑主链路，立即返回 run_id。
@@ -100,6 +108,9 @@ func (s *AskService) Ask(ctx context.Context, scope model.Scope, in AskInput) (u
 	text := strings.TrimSpace(in.Text)
 	if in.FieldID == 0 || text == "" || utf8.RuneCountInString(text) > MaxQuestionRunes {
 		return 0, fmt.Errorf("%w: field_id required, text 1-%d chars", ErrBadInput, MaxQuestionRunes)
+	}
+	if in.PrevRunID != 0 && in.Supersedes != 0 {
+		return 0, fmt.Errorf("%w: prev_run_id and supersedes are exclusive", ErrBadInput)
 	}
 	ok, err := s.d.Fields.Owns(ctx, scope, in.FieldID)
 	if err != nil {
@@ -118,8 +129,7 @@ func (s *AskService) Ask(ctx context.Context, scope model.Scope, in AskInput) (u
 	if !allowed {
 		return 0, fmt.Errorf("service: farm %d: %w", scope.FarmID, ErrRateLimited)
 	}
-	runID, err := s.d.Runs.CreateRun(ctx, model.RunState{TenantID: scope.TenantID, FarmID: scope.FarmID},
-		scope.UserID, in.FieldID, s.d.Meta)
+	runID, err := s.createRun(ctx, scope, in)
 	if err != nil {
 		return 0, fmt.Errorf("service: ask: %w", err)
 	}

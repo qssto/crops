@@ -8,11 +8,13 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 
 	"github.com/redis/go-redis/v9"
 
 	"agri-steward/internal/agent/harness/memory"
 	"agri-steward/internal/agent/harness/policy"
+	"agri-steward/internal/agent/knowledge"
 	"agri-steward/internal/agent/tools/mcp"
 	"agri-steward/internal/agent/tools/mcp/servers/device"
 	"agri-steward/internal/app"
@@ -45,7 +47,11 @@ type infraFlags struct {
 	toolsFile string
 	// notifyTexts 是 notify.send 文案（P1 L5，与生产同一份）。
 	notifyTexts string
-	poolSize    int
+	// loaderDir 是知识加载策略 v0 / v1 配置目录（P2 L5，与生产同一份）。
+	loaderDir string
+	poolSize  int
+	// lexiconFile 是用户口述约束词表（P2 L6 长对话压缩，与生产同一份）。
+	lexiconFile string
 }
 
 func (f *infraFlags) register(fs *flag.FlagSet) {
@@ -63,7 +69,21 @@ func (f *infraFlags) register(fs *flag.FlagSet) {
 	fs.StringVar(&f.faultFile, "fault-matrix", app.DefaultFaultMatrixPath, "故障降级矩阵（与生产同一份，P1 L6）")
 	fs.StringVar(&f.textsFile, "texts", app.DefaultTextsPath, "用户可读文案表（与生产同一份，P1 L6）")
 	fs.StringVar(&f.toolsFile, "tools", defaultToolsFile, "MCP 工具配置（缓存时间窗与生产同一份，P1 L6）")
+	fs.StringVar(&f.loaderDir, "loader", "", "知识加载策略目录（v0.yaml / v1.yaml，与生产同一份，P2 L5）；空则取 --config 同目录下的 loader/")
 	fs.IntVar(&f.poolSize, "pool", 0, "trial schema 槽位数（agri_eval_t_1..n）= trial 并发度；0 = 按 eval.qpm 计算 floor(qpm×0.7/llm_calls_per_trial)")
+	fs.StringVar(&f.lexiconFile, "lexicon", app.DefaultLexiconPath, "用户口述约束词表（与生产同一份，P2 L6）")
+}
+
+// loaderSubdir 是 --loader 留空时相对 --config 所在目录的加载策略目录（默认 configs/app.yaml → configs/loader）。
+const loaderSubdir = "loader"
+
+// resolvedLoaderDir 是加载策略目录：--loader 非空取它，否则取 --config 同目录的 loader/，
+// 使只传绝对 --config 的调用方（集成测试等）不必再传 --loader。
+func (f *infraFlags) resolvedLoaderDir() string {
+	if f.loaderDir != "" {
+		return f.loaderDir
+	}
+	return filepath.Join(filepath.Dir(f.configFile), loaderSubdir)
 }
 
 // poolSize 是槽位数：--pool > 0 时取它，否则按 eval 配置算并发度（槽位数与并发度一致）。
@@ -91,6 +111,10 @@ type infra struct {
 	evalBucket string
 	// getter 读 eval bucket（P2 L7-a：resume 读样本清单 manifest.json）。
 	getter repository.ObjectGetter
+	// quality 读写 L3 夜间对象（metrics.json / nightly/latest.json；不存在返回 model.ErrNotFound，P2-L3）。
+	quality repository.QualityObjects
+	// rawBucket 是 LLM_IO 等原始对象的 bucket（P2 L6：多轮会话样本经 getter 读本次 run 的 prompt）。
+	rawBucket string
 	// model 是实际装配用的模型配置（provider 已强制为桩），L8 写入配置快照。
 	model *config.Model
 	// devices 是设备显式绑定，Runner 据此记录提问农场的设备清单（地块清单读 trial 库）。
@@ -100,6 +124,9 @@ type infra struct {
 	receiptSecret []byte
 	// eval 是评测调度与作废门禁配置（P2 L7-a：并发度、infra_error 作废阈值）。
 	eval config.Eval
+	// seed 是每个 trial 重灌的种子（与 pool 同一实例）；flags 是 --flags / 快照 flags 设置的 P2 开关（P2 第 3 批，见 flags.go）。
+	seed  *seed.Data
+	flags map[string]string
 }
 
 // receiptSecretLen 是评测回执密钥的字节数。
@@ -160,11 +187,23 @@ func (f *infraFlags) open(ctx context.Context, logW io.Writer, ls *loadedSamples
 	if err != nil {
 		return nil, err
 	}
+	kbSnap, err := ls.kb.Open(ctx, knowledge.RefWorktree) // 与 graph 默认 KBRef 同一版本
+	if err != nil {
+		return nil, fmt.Errorf("eval: open knowledge: %w", err)
+	}
+	loaders, err := app.LoadKnowledgeLoaders(f.resolvedLoaderDir(), ls.tx, kbSnap)
+	if err != nil {
+		return nil, err
+	}
 	notifyTexts, err := service.LoadNotifyTexts(f.notifyTexts)
 	if err != nil {
 		return nil, err
 	}
 	devices, err := device.LoadBindings(f.deviceFile)
+	if err != nil {
+		return nil, err
+	}
+	comp, err := app.LoadCompaction(cfg.Compaction, f.lexiconFile) // P2 L6：只在 enable_compaction 开时生效
 	if err != nil {
 		return nil, err
 	}
@@ -178,7 +217,7 @@ func (f *infraFlags) open(ctx context.Context, logW io.Writer, ls *loadedSamples
 		return nil, err
 	}
 	in := &infra{model: mcfg, approvers: [2]env.Identity{first, second}, approversByRole: users.byRole(), devices: devices,
-		eval: cfg.Eval}
+		eval: cfg.Eval, seed: data}
 	if in.receiptSecret, err = newReceiptSecret(); err != nil {
 		return nil, err
 	}
@@ -204,6 +243,8 @@ func (f *infraFlags) open(ctx context.Context, logW io.Writer, ls *loadedSamples
 	}
 	putter := repository.MinIOPutter{Client: mc}
 	in.objects, in.evalBucket, in.getter = putter, cfg.MinIO.BucketEval, repository.MinIOGetter{Client: mc}
+	in.quality = repository.QualityObjects{Client: mc} // P2-L3
+	in.rawBucket = cfg.MinIO.BucketRaw
 	tenantID, farmID := data.Farm.TenantID, data.Farm.FarmID
 	in.question = seedQuestion(tenantID, farmID, users)
 	in.deps = func(ctx context.Context, s *env.Slot, smp *sample.Sample) (app.Deps, error) {
@@ -234,7 +275,7 @@ func (f *infraFlags) open(ctx context.Context, logW io.Writer, ls *loadedSamples
 		if err != nil {
 			return app.Deps{}, err
 		}
-		gc := app.GraphConfig{Model: mcfg, Chat: sampleChat, KB: ls.kb, Taxonomy: ls.tx}
+		gc := app.GraphConfig{Model: mcfg, Chat: sampleChat, KB: ls.kb, Taxonomy: ls.tx, Loaders: loaders}
 		// P1 L3：样本声明 local_orders 时替换 trial 库读取（不声明时读 trial 库，新槽位无本地单）。
 		if len(smp.Fixtures.LocalOrders) > 0 {
 			if gc.LocalOrders, err = env.NewFixtureLocalOrders(smp.Fixtures.LocalOrders); err != nil {
@@ -250,7 +291,8 @@ func (f *infraFlags) open(ctx context.Context, logW io.Writer, ls *loadedSamples
 			// L6：检查点读回走 MinIO；记忆按配置开关注入样本 fixtures.memory（不读 trial 库 episodic_memory）。
 			HITL: app.HITLDeps{Objects: repository.MinIOGetter{Client: mc}, RawBucket: cfg.MinIO.BucketRaw,
 				Memory: memory.Options{Enabled: cfg.Memory.Enabled, EpisodicLimit: cfg.Memory.EpisodicLimit,
-					RuneBudget: cfg.Memory.RuneBudget}, MemorySource: mem}}, nil
+					RuneBudget: cfg.Memory.RuneBudget}, MemorySource: mem},
+			Compaction: comp}, nil
 	}
 	return in, nil
 }

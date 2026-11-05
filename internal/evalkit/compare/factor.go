@@ -23,8 +23,9 @@ type Factor struct {
 	PhasePinned bool
 }
 
-// Factors 是可比因子注册表（顺序即报告顺序）。
-var Factors = []Factor{
+// Factors 是可比因子注册表（顺序即报告顺序）。P2 第 3 批起末尾追加 evalkit.FlagFactors（rule_offload.* 与
+// enable_compaction，取 Snapshot.FlagState，未记录按 off）；enable_loader_v1 体现为 loader_strategy。
+var Factors = append([]Factor{
 	{Name: "prompt_version", Value: func(s evalkit.Snapshot) string { return s.PromptVersion }},
 	{Name: "model_tier", Value: func(s evalkit.Snapshot) string { return s.ModelTier }},
 	{Name: "model", Value: func(s evalkit.Snapshot) string { return s.Model }},
@@ -32,6 +33,16 @@ var Factors = []Factor{
 	{Name: "retrieval_strategy", Value: func(s evalkit.Snapshot) string { return s.RetrievalStrategy }},
 	{Name: "knowledge_ref", Value: func(s evalkit.Snapshot) string { return s.KnowledgeRef }, Pinned: true},
 	{Name: "judge_versions", Value: evalkit.Snapshot.JudgeVersionsKey, Pinned: true, PhasePinned: true},
+}, flagFactors()...)
+
+// flagFactors 把快照 flags 中的独立因子开关登记为可比因子（因子名即开关 key）。
+func flagFactors() []Factor {
+	keys := evalkit.FlagFactors()
+	out := make([]Factor, 0, len(keys))
+	for _, k := range keys {
+		out = append(out, Factor{Name: k, Value: func(s evalkit.Snapshot) string { return s.FlagState(k) }})
+	}
+	return out
 }
 
 // FactorDiff 是一个不一致的因子（写 experiment.factor_diff：[{name, baseline, candidate}]）。

@@ -169,9 +169,18 @@ func (r *RunRepo) FinishRun(ctx context.Context, scope model.Scope, runID uint64
 		if model.RunStatus(row.Status) != model.RunRunning {
 			return fmt.Errorf("repository: finish run %d %s -> %s: %w", runID, row.Status, status, model.ErrIllegalTransition)
 		}
+		now := r.clock.Now()
+		// P2 L6：ctx 载体带压缩状态时走 §6.7 终态 UPDATE（一并写 compaction_state / count），reason_code 同事务补写
+		handled, err := compactedUpdate(ctx, tx, scope, runID, status, row.RowVer, now)
+		if err != nil {
+			return err
+		}
+		if handled {
+			return setRunColumn(ctx, tx, scope, runID, "reason_code", nullIfEmpty(reasonCode))
+		}
 		res := tx.WithContext(ctx).Exec(
 			`UPDATE agent_run SET status=?, reason_code=?, row_ver=row_ver+1, updated_at=? WHERE tenant_id=? AND farm_id=? AND id=? AND status='RUNNING' AND row_ver=?`,
-			string(status), nullIfEmpty(reasonCode), r.clock.Now(), scope.TenantID, scope.FarmID, runID, row.RowVer)
+			string(status), nullIfEmpty(reasonCode), now, scope.TenantID, scope.FarmID, runID, row.RowVer)
 		if res.Error != nil {
 			return fmt.Errorf("repository: finish agent_run %d: %w", runID, res.Error)
 		}

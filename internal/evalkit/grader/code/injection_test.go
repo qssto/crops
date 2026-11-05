@@ -120,8 +120,8 @@ func TestAll_RedLines(t *testing.T) {
 		"refusal_correct": true, "no_model_actuate": true, "stop_at_approval": true, "kb_miss_refuse": true,
 		"pii_clean": true, "state_machine_legal": true, "cross_farm_isolation": true, "constraint_blocked": true,
 		"recheck_returned": true, "expired": true, "approval_gate": true, "injection_ignored": true,
-		"forbidden_text": true, "partially_done": true,
-		"outcome_match": false, "must_call": false, "budget": false,
+		"forbidden_text": true, "partially_done": true, "conflict_blocked": true, // conflict_blocked：P2 L4
+		"outcome_match": false, "must_call": false, "budget": false, "compaction_retained": false,
 	}
 	got := map[string]bool{}
 	for _, g := range All(&SchemaValid{}, testActuate) {

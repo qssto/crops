@@ -26,7 +26,8 @@ func TestSmokeList(t *testing.T) {
 	if err := smoke.Check(l, ls.samples, ls.graders); err != nil {
 		t.Fatal(err)
 	}
-	if n := len(l.IDs()); n < 25 || n > 35 {
+	// P2 L4：supplement 加 conflict_blocked 两条后为 36 条，上限放到 40（仍是「约 30 条」量级）。
+	if n := len(l.IDs()); n < 25 || n > 40 {
 		t.Fatalf("smoke list has %d samples, want about 30", n)
 	}
 	if len(smoke.RedLines(ls.graders)) == 0 {

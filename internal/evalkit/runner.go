@@ -79,6 +79,11 @@ type Trial struct {
 	// P1-L8-A 审查修复：ConstraintChecks 是该 run 作业单的全部约束检查（App.DB 非空且有作业单时，与 Outbox 同条件读取），
 	// recheck_returned 断言 expect.dispatch.recheck_failed_rules 使用，不写入报告与 agri_eval。
 	ConstraintChecks []model.ConstraintCheck
+	// P2 L6：Session 是多轮会话样本的观测（样本声明 fixtures.session 且 App 有库时记录，见 session.go），
+	// compaction_retained 使用，不写入报告与 agri_eval。
+	Session *grader.SessionObs
+	// P2 L5：Load 是知识加载观测（load.go，打分后由样本标注与 Detail 得出），供离线加载指标与 L8 清单；Detail 为空时为 nil。
+	Load *LoadObs
 }
 
 // ToolRecorder 是评测工具接缝的调用记录（env.FixtureMCP 实现）。
@@ -300,6 +305,7 @@ type Runner struct {
 	devices  DeviceLister
 	receipts *ReceiptSteps
 	tokens   TokenCounter
+	raw      *rawObjects // P2 L6：多轮会话样本读 LLM_IO（WithRawObjects）
 }
 
 // FieldLister 列出农场全部地块 id（cross_farm_isolation 判 field_id 归属）。
@@ -453,6 +459,7 @@ func (r *Runner) runTrial(ctx context.Context, s *sample.Sample, index int, kb g
 	}
 	t.Outcome, t.RefuseReason, t.RunID, t.Card = ans.Outcome, ans.RefuseReason, ans.RunID, ans.Card
 	r.grading.grade(ctx, &t, s, ans, kb)
+	t.Load = observeLoad(s, &t, kb)
 	return t
 }
 
@@ -461,6 +468,10 @@ func (r *Runner) ask(ctx context.Context, t *Trial, a *app.App, s *sample.Sample
 	q, err := r.question(ctx, a, s)
 	if err != nil {
 		return agent.Answer{}, fmt.Errorf("question: %w", err)
+	}
+	seeded, err := prepareSession(ctx, a, s, &q) // P2 L6：无 fixtures.session 时不动
+	if err != nil {
+		return agent.Answer{}, fmt.Errorf("session: %w", err)
 	}
 	start := r.now()
 	ans, err := a.Agent.Ask(ctx, q)
@@ -503,7 +514,10 @@ func (r *Runner) ask(ctx context.Context, t *Trial, a *app.App, s *sample.Sample
 	if err := r.recordDevices(ctx, t, q.Scope); err != nil {
 		return ans, err
 	}
-	return ans, recordDetail(ctx, t, a, q.Scope, ans.RunID)
+	if err := recordDetail(ctx, t, a, q.Scope, ans.RunID); err != nil {
+		return ans, err
+	}
+	return ans, r.recordSession(ctx, t, a, q.Scope, seeded, ans.RunID)
 }
 
 // runReceipts 执行样本的回执步骤（未配置 WithReceiptSteps 或样本未声明 fixtures.device.steps 时不动）：

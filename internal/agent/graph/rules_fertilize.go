@@ -169,6 +169,10 @@ func (e *env) decideFertStage(s *state) error {
 	}
 	s.dec.cite(en.KBID)
 	op := true
+	if !stageApplies(en, s.stage) { // P2 L4 覆盖检查：时期取自分类槽位，须与物候给出的当前生育期一致
+		op = false
+		note(s, en, "当前生育期不在该施肥时期的适用范围内，按知识库的施肥时机再定", factStage)
+	}
 	for _, th := range en.Thresholds {
 		v := e.judge(s, en, th.ID)
 		if (v == unmet && !slices.Contains(fertVetoes, th.ID)) || (v == met && slices.Contains(fertVetoes, th.ID)) {

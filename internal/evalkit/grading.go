@@ -94,7 +94,7 @@ func (g grading) grade(ctx context.Context, t *Trial, s *sample.Sample, ans agen
 		Approval: t.Approval, DeviceCalls: t.DeviceCalls, Logs: t.Logs, Stored: t.Stored, OrderTransitions: t.OrderTransitions,
 		Scope: t.Scope, Fields: t.Fields, Devices: t.Devices, ToolArgs: t.ToolArgs, DeviceTargets: t.DeviceTargets,
 		ConstraintBlocked: ans.ConstraintBlocked, Outbox: t.Outbox, WorkDone: t.WorkDone, Events: trialEvents(t),
-		ConstraintChecks: t.ConstraintChecks}
+		ConstraintChecks: t.ConstraintChecks, Session: t.Session}
 	t.Scores = make([]Score, 0, len(g.graders))
 	for _, gr := range g.graders {
 		sc := Score{Name: gr.Name(), RedLine: gr.RedLine()}

@@ -1,7 +1,7 @@
 // cmd/eval 是评测入口：
 //
 //	eval validate [--suites-dir eval/suites] [--taxonomy eval/taxonomy.yaml] [--repo .] [--coverage-targets ...] [--strict-coverage]
-//	eval run --suite regression [--n 3] [--tags L2,protect] [--out eval/out] [--baseline baseline_p0 [--baselines-dir eval/baselines]]
+//	eval run --suite regression [--n 3] [--tags L2,protect] [--out eval/out] [--baseline baseline_p0 [--baselines-dir eval/baselines]] [--flags rule_offload.tank_mix=on]
 //	eval kbdump --suite regression
 //	eval graduate [--apply]
 //	eval baseline freeze --name baseline_p1 --exp 102 [--backfill eval/baselines/baseline_p1_exit.yaml]
@@ -229,6 +229,7 @@ func cmdRun(ctx context.Context, args []string, stdout, stderr io.Writer) (err e
 	mode := fs.String("mode", "", "预设 smoke|nightly|release（固定 suite / n / tags / trigger，见 mode.go）；空 = 按 --suite / --n / --tags")
 	smokeList := fs.String("smoke-list", defaultSmokeList, "--mode smoke 的冒烟清单")
 	budget := fs.Int("token-budget", 0, "累计 token 上限，超出停止派发并置 BUDGET_EXCEEDED；0 = 不限（写 NULL，仅 manual 可用）")
+	flagsArg := fs.String("flags", "", flagsUsage)
 	var inf infraFlags
 	inf.register(fs)
 	var jf judgeFlags
@@ -255,6 +256,10 @@ func cmdRun(ctx context.Context, args []string, stdout, stderr io.Writer) (err e
 		if err := report.ValidateBaselineName(*baseline); err != nil {
 			return err
 		}
+	}
+	runFlags, err := parseEvalFlags(*flagsArg)
+	if err != nil {
+		return err
 	}
 
 	// P2 L2 / L7-a：显式点名 holdout 或 --mode release（全部套件须含 holdout）时才校验读者身份并读入 holdout。
@@ -288,6 +293,9 @@ func cmdRun(ctx context.Context, args []string, stdout, stderr io.Writer) (err e
 	}
 	// baseline 上传后还要写 experiment.report_key，故连接在函数末尾才关。
 	defer func() { err = errors.Join(err, in.close()) }()
+	if err := in.setFlags(runFlags); err != nil {
+		return err
+	}
 	opts.Concurrency = in.pool.Size()
 	exp, id, err := runWithStore(ctx, in, ls, selected, opts, *trigger)
 	if err != nil {
@@ -299,8 +307,13 @@ func cmdRun(ctx context.Context, args []string, stdout, stderr io.Writer) (err e
 		return err
 	}
 	// P2 L2：holdout 明细只进 report/holdout/ 前缀；本地与公开报告里 holdout 只给 ID 与打分器名。
+	full := exp
 	exp, path, err := writeReport(ctx, in.objects, in.evalBucket, *outRoot, exp, stdout)
 	if err != nil {
+		return err
+	}
+	// P2 L3：nightly 写 metrics.json 与下钻页（其他触发方式不写）。
+	if err := nightlyQuality(ctx, in.quality, in.evalBucket, *trigger, ls, &jf, full, exp, stdout); err != nil {
 		return err
 	}
 	fmt.Fprintf(stdout, "eval done: exp_id=%s samples=%d trials=%d quarantined=%d report=%s transcripts=%d bucket=%s status=%s\n",
@@ -357,7 +370,8 @@ func newRunner(in *infra, ls *loadedSamples, now func() time.Time) (*evalkit.Run
 		evalkit.WithQuestion(in.question), evalkit.WithGraders(ls.kb, ls.graders...),
 		evalkit.WithApprover(evalkit.ScriptApproverByRole(in.approvers[0], in.approvers[1], in.approversByRole)), evalkit.WithDevices(in.devices),
 		// P1-L4 合并统一：回执步骤用与 Deps.ReceiptSecret 相同的进程内密钥签名，排空复用 DrainOutbox。
-		evalkit.WithReceiptSteps(evalkit.ReceiptSteps{Secret: in.receiptSecret, Drain: evalkit.DrainStep}))
+		evalkit.WithReceiptSteps(evalkit.ReceiptSteps{Secret: in.receiptSecret, Drain: evalkit.DrainStep}),
+		evalkit.WithRawObjects(in.getter, in.rawBucket)) // P2 L6 多轮会话样本
 }
 
 // experimentLifecycle 是 run 用到的实验状态写入（store.Experiments 实现；单测替换以覆盖失败路径）。
@@ -437,11 +451,11 @@ func snapshot(ctx context.Context, in *infra, ls *loadedSamples, samples []*samp
 	if err != nil {
 		return evalkit.Snapshot{}, err
 	}
-	return evalkit.Snapshot{GitSHA: sha, GitDirty: dirty, PromptVersion: in.model.PromptVersion,
+	return withFlags(evalkit.Snapshot{GitSHA: sha, GitDirty: dirty, PromptVersion: in.model.PromptVersion,
 		ModelTier: in.model.DefaultTier, Model: in.model.Provider,
 		KnowledgeRef: kref, SamplesHash: evalkit.SamplesHash(samples),
 		LoaderStrategy: evalkit.LoaderV0, RetrievalStrategy: evalkit.RetrievalProgressive, JudgeVersions: ls.judgeVersionMap(),
-		Suites: opts.Suites, Tags: recordedTags(opts.Tags), N: opts.N, VoidInfraErrorRate: in.eval.VoidInfraErrorRate}, nil
+		Suites: opts.Suites, Tags: recordedTags(opts.Tags), N: opts.N, VoidInfraErrorRate: in.eval.VoidInfraErrorRate}, in.flags), nil
 }
 
 // recordedTags 是写进快照的样本筛选条件：没有 --tags 时记空表（非 nil），与「快照没记录 tags」（nil，旧实验）区分。

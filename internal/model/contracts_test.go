@@ -16,7 +16,7 @@ import (
 
 const contractsDir = "../../contracts"
 
-// contracts 是五个契约与对应 schema 文件。
+// contracts 是五个核心契约与 P2 L6 compaction_state，及对应 schema 文件。
 var contracts = []struct {
 	file string
 	typ  reflect.Type
@@ -26,6 +26,7 @@ var contracts = []struct {
 	{"citation.schema.json", reflect.TypeOf(model.Citation{})},
 	{"run_state.schema.json", reflect.TypeOf(model.RunState{})},
 	{"approval_ticket.schema.json", reflect.TypeOf(model.ApprovalTicket{})},
+	{"compaction_state.schema.json", reflect.TypeOf(model.CompactionState{})},
 }
 
 var (

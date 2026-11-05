@@ -40,6 +40,13 @@ type Config struct {
 	Alerts  Alerts  `mapstructure:"alerts"`
 	// Eval 是评测调度与作废门禁配置（P2 L7-a，eval.go）；缺省 qpm=5、llm_calls_per_trial=3、void_infra_error_rate=0.05。
 	Eval Eval `mapstructure:"eval"`
+	// Quality 是可信度 rollup / online judge 抽样 / 日报配置（P2 L3，quality.go）；缺省不启用。
+	Quality Quality `mapstructure:"quality"`
+	// Compaction 是长对话压缩配置（P2 L6，compaction.go）；缺省 trigger_tokens=1200（待线上数据）、session_idle=30m、
+	// keep_recent_turns=4、summary_max_tokens=300。
+	Compaction Compaction `mapstructure:"compaction"`
+	// RuleOffload 是规则下沉影子比对配置（P2 L4，rule_offload.go）；缺省 shadow_diff_days=180、purge_every=24h。
+	RuleOffload RuleOffload `mapstructure:"rule_offload"`
 }
 
 // DeviceReceipt 是回执 webhook 的 HMAC 密钥；只从环境变量 / deploy/.env 读，未配置时回执路由不挂载。
@@ -127,6 +134,9 @@ func Load(file, envFile string) (*Config, error) {
 	setAuditDefaults(v)
 	setObserveDefaults(v)
 	setEvalDefaults(v)
+	setQualityDefaults(v)
+	setCompactionDefaults(v)
+	setRuleOffloadDefaults(v) // P2 L4
 	if err := v.ReadInConfig(); err != nil {
 		return nil, fmt.Errorf("config: read %s: %w", file, err)
 	}
@@ -153,7 +163,13 @@ func Load(file, envFile string) (*Config, error) {
 	if err := errors.Join(c.Audit.Validate(), c.Metrics.Validate(), c.Alerts.Validate()); err != nil {
 		return nil, fmt.Errorf("config: %s: %w", file, err)
 	}
-	if err := c.Eval.Validate(); err != nil {
+	if err := errors.Join(c.Eval.Validate(), c.Quality.Validate()); err != nil {
+		return nil, fmt.Errorf("config: %s: %w", file, err)
+	}
+	if err := c.Compaction.Validate(); err != nil {
+		return nil, fmt.Errorf("config: %s: %w", file, err)
+	}
+	if err := c.RuleOffload.Validate(); err != nil { // P2 L4
 		return nil, fmt.Errorf("config: %s: %w", file, err)
 	}
 	return &c, nil

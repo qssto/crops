@@ -54,6 +54,24 @@ func validInstances() map[string]any {
 			InitiatorID: 1001, Snapshot: model.TicketSnapshot{Digest: digest, RawObjectID: 9},
 			Status: model.TicketOpen, ExpiresAt: &t0,
 		},
+		"compaction_state.schema.json": model.CompactionState{
+			CompactionVersion: model.CompactionVersion,
+			Facts: model.CompactionFacts{FieldID: 3, Crop: "rice", PhenologyStage: "分蘖末期",
+				UserConstraints: []model.UserConstraint{{Text: "旁边是鱼塘", TurnStepID: "run-1"}},
+				Orders: []model.SessionOrder{{OrderID: 1, AdviceID: 2, Status: model.OrderCanceled, TicketID: 5,
+					TicketStatus: model.TicketRejected, RejectReasonCode: "PRODUCT", RejectText: "换药"}},
+				VetoedProducts: []model.VetoedProduct{{Product: "吡蚜酮", Source: model.VetoedProductRejected, RefID: 5}},
+				Measured: []model.MeasuredFact{{ToolCallID: 7, ToolName: "weather.now",
+					ResultSummary: json.RawMessage(`{"wind":2.1}`), CollectedAt: t0}},
+				ConfirmedConclusions: []model.ConfirmedConclusion{{AdviceID: 1, Conclusion: "建议施药",
+					Numbers: []model.Number{{Field: "dose", Value: 20, Unit: "g/亩"}}, SelectedProduct: "吡蚜酮",
+					Window: &model.TimeWindow{From: t0, To: t0.Add(time.Hour)}}},
+				CitedKBIDs: []string{"rice/pest/planthopper"}},
+			Summary:               &model.CompactionSummary{Text: "早先讨论了稻飞虱", Tokens: 12, PromptVersion: "deterministic-v1"},
+			SummarizedUntilStepID: "run-1",
+			RawRefs:               []uint64{9},
+			History:               []model.CompactionHistory{{At: t0, TokensBefore: 1500, TokensAfter: 400}},
+		},
 	}
 }
 
@@ -85,6 +103,20 @@ func TestContractSchemas_Instances(t *testing.T) {
 		{name: "citation ok", file: "citation.schema.json"},
 		{name: "run state ok", file: "run_state.schema.json"},
 		{name: "ticket ok", file: "approval_ticket.schema.json"},
+		{name: "compaction state ok", file: "compaction_state.schema.json"},
+		{name: "compaction state missing facts", file: "compaction_state.schema.json", wantErr: true,
+			mutate: func(m map[string]any) { delete(m, "facts") }},
+		{name: "compaction facts unknown property", file: "compaction_state.schema.json", wantErr: true,
+			mutate: func(m map[string]any) { m["facts"].(map[string]any)["mood"] = "x" }},
+		{name: "compaction measured without collected_at", file: "compaction_state.schema.json", wantErr: true,
+			mutate: func(m map[string]any) {
+				delete(m["facts"].(map[string]any)["measured"].([]any)[0].(map[string]any), "collected_at")
+			}},
+		{name: "run state with compaction state ok", file: "run_state.schema.json", mutate: func(m map[string]any) {
+			m["compaction_state"] = toMap(t, valid["compaction_state.schema.json"])
+		}},
+		{name: "run state compaction state not matching schema", file: "run_state.schema.json", wantErr: true,
+			mutate: func(m map[string]any) { m["compaction_state"] = map[string]any{"x": 1} }},
 		{name: "refused advice without citations ok", file: "advice_card.schema.json", mutate: func(m map[string]any) {
 			m["outcome"], m["refuse_reason"], m["citations"] = "REFUSED", "KB_MISS", []any{}
 			delete(m, "advice_type")

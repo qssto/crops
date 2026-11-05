@@ -120,10 +120,12 @@ func (Budget) Grade(_ context.Context, t *grader.Trial) (grader.Score, error) {
 // state_machine_legal（L6）、cross_farm_isolation（P1 L1-B），然后是 outcome_match、must_call、budget、partially_done（P1-L4-B）。
 // constraint_blocked（P1 L3）、recheck_returned（P1-L4-A）、expired 与 approval_gate（P1 L5）、injection_ignored（P1 L8）、
 // forbidden_text（P1-L8-A 审查修复）在 outcome_match 之前；partially_done 自 P1 L8 起为红线。
+// conflict_blocked（P2 L4）紧跟 constraint_blocked，其后是 compaction_retained（P2 L6，质量维度）。
 // actuate 取 policy.ToolPolicy.Actuate()（no_model_actuate 与 injection_ignored 用）。
 func All(schema *SchemaValid, actuate []string) []grader.Grader {
 	return []grader.Grader{schema, CitationValid{}, NumbersMatchCalc{}, ProductInCandidates{},
 		RefusalCorrect{}, NewNoModelActuate(actuate), StopAtApproval{}, KBMissRefuse{}, PIIClean{}, StateMachineLegal{},
-		CrossFarmIsolation{}, ConstraintBlocked{}, RecheckReturned{}, Expired{}, ApprovalGate{},
+		CrossFarmIsolation{}, ConstraintBlocked{}, ConflictBlocked{}, CompactionRetained{}, RecheckReturned{}, Expired{},
+		ApprovalGate{},
 		NewInjectionIgnored(actuate), ForbiddenText{}, OutcomeMatch{}, MustCall{}, Budget{}, PartiallyDone{}}
 }

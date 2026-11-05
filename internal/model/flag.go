@@ -16,6 +16,23 @@ const (
 	FlagEnableRobotDispatch FlagKey = "enable_robot_dispatch"
 )
 
+// P2 质量优化开关（P2 §6.1 L4 / L5 / L6，第 3 批接缝）：一个因子一个开关，默认全关，候选以关闭状态合入（§7.2）。
+const (
+	// FlagRuleOffloadOperationWindow / TankMix / PestPriority 是 L4 规则卸载三项（mode 形态 off / shadow / on）。
+	FlagRuleOffloadOperationWindow FlagKey = "rule_offload.operation_window"
+	FlagRuleOffloadTankMix         FlagKey = "rule_offload.tank_mix"
+	FlagRuleOffloadPestPriority    FlagKey = "rule_offload.pest_priority"
+	// FlagEnableLoaderV1 是 L5 知识加载策略 v1（bool；关 = v0）。
+	FlagEnableLoaderV1 FlagKey = "enable_loader_v1"
+	// FlagEnableCompaction 是 L6 上下文压缩（bool）。
+	FlagEnableCompaction FlagKey = "enable_compaction"
+)
+
+// RuleOffloadFlags 是 L4 规则卸载的三个开关（顺序即报告顺序）。
+func RuleOffloadFlags() []FlagKey {
+	return []FlagKey{FlagRuleOffloadOperationWindow, FlagRuleOffloadTankMix, FlagRuleOffloadPestPriority}
+}
+
 // FlagKind 是注册表声明的 FARM 行值形态。
 type FlagKind string
 
@@ -70,11 +87,16 @@ type FlagSpec struct {
 // FlagRegistry 是 flag_key → FlagSpec；未注册的 key 一律拒绝。
 type FlagRegistry map[FlagKey]FlagSpec
 
-// DefaultFlagRegistry 是 P1 注册的开关，默认全关（P1 §6.1 功能任务 2）。
+// DefaultFlagRegistry 是已注册的开关，默认全关（P1 §6.1 功能任务 2；P2 第 3 批加 L4 / L5 / L6 五项）。
 func DefaultFlagRegistry() FlagRegistry {
 	return FlagRegistry{
-		FlagEnableAdvice:        {Kind: FlagKindBool, Default: FlagModeOff},
-		FlagEnableRobotDispatch: {Kind: FlagKindBool, Default: FlagModeOff},
+		FlagEnableAdvice:               {Kind: FlagKindBool, Default: FlagModeOff},
+		FlagEnableRobotDispatch:        {Kind: FlagKindBool, Default: FlagModeOff},
+		FlagRuleOffloadOperationWindow: {Kind: FlagKindMode, Default: FlagModeOff},
+		FlagRuleOffloadTankMix:         {Kind: FlagKindMode, Default: FlagModeOff},
+		FlagRuleOffloadPestPriority:    {Kind: FlagKindMode, Default: FlagModeOff},
+		FlagEnableLoaderV1:             {Kind: FlagKindBool, Default: FlagModeOff},
+		FlagEnableCompaction:           {Kind: FlagKindBool, Default: FlagModeOff},
 	}
 }
 

@@ -3,7 +3,7 @@
   "$id": "https://agri-steward.local/contracts/v1/run_state.schema.json",
   "x-contract-version": 1,
   "title": "RunState",
-  "description": "一次 Agent 运行的可恢复状态，run_id 为全局追踪主键；compaction_state 预留给 Phase 2。",
+  "description": "一次 Agent 运行的可恢复状态，run_id 为全局追踪主键；compaction_state 自 P2 L6 启用（见 compaction_state.schema.json）。",
   "type": "object",
   "additionalProperties": false,
   "required": ["run_id", "tenant_id", "farm_id", "steps", "completed_step_ids", "created_at"],
@@ -23,7 +23,7 @@
       }
     },
     "context_snapshot": {"type": "object"},
-    "compaction_state": {"type": "object"},
+    "compaction_state": {"$ref": "https://agri-steward.local/contracts/v1/compaction_state.schema.json"},
     "created_at": {"type": "string", "format": "date-time"}
   },
   "$defs": {

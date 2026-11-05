@@ -1,0 +1,97 @@
+id: rice-cap-0004
+version: 1
+suite: capability
+difficulty: hard
+crop: rice
+stage: 分蘖期
+tags: [L4, protect.dosage]
+question: 1号田用吡蚜酮背负式喷雾打稻飞虱，每亩用多少药、兑多少水？整块田要备多少药？
+context:
+  farm: farm-demo-01
+  field: field-001
+  role: operator
+  user: u-op-01
+fixtures:
+  clock: 2026-07-18T07:30:00+08:00
+  mcp:
+    crop.phenology:
+      - match: {field: field-001}
+        return: {stage: 分蘖期, sub_stage: 分蘖末期, expected_harvest: "2026-10-15"}
+    field.profile:
+      - match: {field: field-001}
+        return: {area_mu: 30.0, no_fly_zones: [], adjacent_fields: []}
+    field.pest_survey:
+      - match: {field: field-001}
+        return: {pest: 稻飞虱, density_per_100_hills: 1300, collected_at: "2026-07-17"}
+    weather.forecast:
+      - match: {field: field-001}
+        return: {wind_speed_ms: 2.0, rain_mm_24h: 0, temp_c: 26, collected_at: "2026-07-18T06:30:00+08:00", source: mock-station}
+    field.history:
+      - match: {field: field-001}
+        return: {operations: []}
+  # P2 L6 长会话：十九轮，前几轮已落卡（含药剂与 kb 引用）；自由文本估算约 1870 token（compaction.freeTokens 口径），
+  # 稳超 trigger_tokens 1200，较早轮次的自由文本会进摘要；
+  # 第二轮的河道 / 水源地与第五轮的「别用无人机飞防」须原样留在 facts.user_constraints，已落卡结论须留在 confirmed_conclusions。
+  # 第七轮带两次天气实测（早先那次已被取代，不得进 facts.measured）；第十一轮的吡虫啉作业单已批后被用户中止（CANCELED_BY_USER）：
+  # 该药须进 vetoed_products（USER_CANCELED），其结论不得进 confirmed_conclusions。
+  session:
+    phenology_stage: 分蘖期
+    turns:
+      - question: 这块1号田今年种的是常规中稻，插秧有一个多月了，最近长势还可以，就是叶色有点发黄，我想先问一下是不是缺肥了，要不要追一次肥，追的话用什么肥比较好，大概什么时候追。
+        conclusion: 叶色偏黄先看分蘖与天气，确认缺氮再少量追施分蘖肥（草拟，待专家确认）
+        cite: [rice/fertilization/tillering@v1]
+      - question: 还有个情况要跟你说清楚，1号田西边那条河道通着村里的水源地，平时村里人都从那边取水，所以不管是施肥还是打药，都不能让东西流进河里去，排水口那边尤其要注意，你帮我把这一条记牢。
+      - question: 这两天在田里看到稻飞虱了，基部有不少，工人拍了几丛看了一下，说比上周多，我想先问问用什么药比较对路，登记过的药里面哪个比较合适，对水里的鱼虾影响小一点的优先。
+        conclusion: 虫口接近防治指标时优先选用登记的吡蚜酮，按登记用量施用（草拟，待专家确认）
+        product: 吡蚜酮
+        cite: [rice/pest/planthopper@v1]
+      - question: 吡蚜酮这个药一般多久见效，打一次能管多少天，要是天气一直潮湿的话，飞虱会不会很快又起来，到时候是不是还要再打一次，两次之间要隔多久，你先帮我心里有个数，我好安排工人。
+      - question: 村里有人说可以请无人机来飞，又快又省事，但是我们这块田边上就是河道，我担心飘到水里去，别用无人机飞防，还是让工人背着喷雾器打，这一条你也记住，后面给我算用量就按背负式来算。
+      - question: 背负式喷雾器打的话，一天下来一个工人大概能打多少亩，三十亩的田要安排几个人，几天能打完，中间要是下雨了怎么办，打完药之后多久下雨就不算白打，这些你帮我顺便估一估。
+      - question: 打药那天早上露水比较重，是等露水干了再打，还是趁早上凉快就开始打，下午太阳大的时候能不能打，傍晚打会不会更好一点，我们这边一般是早上和傍晚干活，你看哪个时间段效果最好。
+        measured:
+          - {tool: weather.forecast, superseded: true, result: {wind_speed_ms: 4.5, rain_mm_24h: 6, collected_at: "2026-07-17T18:00:00+08:00", source: mock-station}}
+          - {tool: weather.forecast, result: {wind_speed_ms: 2.0, rain_mm_24h: 0, collected_at: "2026-07-18T06:30:00+08:00", source: mock-station}}
+      - question: 打完药之后剩下的药液和洗喷雾器的水，以前都是直接倒在沟里，今年肯定不能这样了，应该怎么处理才不会流到河里去，空药瓶要收到哪里去，村里有没有统一回收的地方，你帮我理一理。
+      - question: 另外，工人的防护也要讲一下，他们嫌热不爱戴口罩手套，我想给他们讲讲为什么一定要戴，打完药多长时间之内不能进田，田边要不要插个牌子提醒别人，这些你都帮我说清楚一点。
+      - question: 这块田插秧的时候用的是机插秧，行距株距都比较规整，但是有几个角落机器转不过来，是后来人工补的苗，长得比别处晚一点也矮一点，这几个角落以后管理的时候要不要单独对待，追肥和查虫的时候要不要多看几眼。
+      - question: 前些天下了一场大雨，田里的水一下子涨得很高，排了两天才排下去，有几块地方的稻子被泡得有点发白，现在慢慢缓过来了，这种情况会不会让稻子更容易招虫子，后面的管理上要注意哪些地方，你给我提个醒。
+        conclusion: 雨后飞虱易回升，可加一次吡虫啉兼治（草拟，待专家确认）
+        product: 吡虫啉
+        cite: [rice/pest/planthopper@v1]
+        order: {status: CANCELED, cancel_reason: CANCELED_BY_USER}
+      - question: 我看别人家田里挂了一些黄色的板子，说是可以粘虫，我们这块田挂这种板子有没有效果，对稻飞虱管不管用，一亩地要挂多少块，挂多高合适，多久换一次，要是效果一般的话我就先不花这个钱了，你帮我算算划不划算。
+      - question: 今年的稻子品种是去年新换的，种子店说抗病性比以前那个好，但是没说抗不抗虫，我想知道品种对飞虱发生有没有影响，明年选种的时候要看哪些指标，能不能找到对飞虱耐受一点的品种，你先给我讲讲大概的思路就行。
+      - question: 往年这个时候农技站会发一些病虫情报，说今年哪种虫偏重发生，我这几天还没看到今年的通知，你知不知道一般从哪里能看到这些情报，看的时候主要看哪几项内容，对我们这样的小田块有多大参考价值，你帮我说一说。
+      - question: 工人记数的时候用的是纸本子，记得乱七八糟，有时候日期都没写，我想以后让他们按一个固定的表来记，每次查虫口、打药、施肥都记下来，你帮我想想这个表要包括哪几栏，记到什么程度才算够用，方便以后回头查。
+      - question: 田里有几处秧苗长得特别密，是当时插秧的时候没插匀，现在封行之后底下很闷，通风不好，飞虱好像就是从这几处先多起来的，要不要把密的地方稍微疏一疏，还是等晒田的时候一起处理，晒田大概安排在什么时候合适。
+      - question: 前两年这块田收割之后稻桩留得比较高，冬天也没有翻耕，听人说稻桩里会藏越冬的虫子，开春之后虫子就从那里爬出来，今年秋收之后要不要把稻桩处理一下，是翻耕好还是放水泡田好，你给我讲讲这两种做法各有什么好处。
+      - question: 打药用的背负式喷雾器有两台是前年买的，喷头有点堵，喷出来的雾不太匀，有一边多有一边少，这种情况是换个喷头就行还是整台换新的，平时用完之后要怎么保养才能用得久一点，你顺便帮我讲讲日常保养的要点。
+      - question: 好了，前面说的这些你都记着，尤其是河道和水源地的事，还有只用背负式喷雾器，下面我要问具体每亩用多少药、兑多少水了，你算的时候把这些前提都带上，别漏了，谢谢。
+knowledge_ref: WORKTREE
+expect:
+  outcome: ADVICE
+  advice:
+    category: protect
+    advice_type: 作业类
+    conclusion: 虫口达标，吡蚜酮按登记用量施用，亩用药量与总用量由规则层计算（草拟，待专家确认）
+    must_cite: [kb:rice/pest/planthopper@v1, kb:common/operation_window/dosage-dilution@v1]
+    target: planthopper
+    product_in: [pymetrozine-50wg]
+    numbers:
+      - {field: dose_per_mu_min, value: 8, unit: g/亩, precision: 0.1}
+      - {field: dose_per_mu_max, value: 12, unit: g/亩, precision: 0.1}
+      - {field: water_per_mu, value: 30, unit: L/亩, precision: 1}
+      - {field: product_total_min, value: 240, unit: g, precision: 1}
+      - {field: product_total_max, value: 360, unit: g, precision: 1}
+  trajectory:
+    must_call: [field.profile, field.pest_survey]
+    must_not_call: ["device.*"]
+    budget: {max_steps: 14, max_tokens: 10000}
+  compaction:
+    constraints: [1号田西边那条河道通着村里的水源地, 别用无人机飞防]
+    compacted: true
+author: claude-draft
+review_status: pending_expert
+signed_at: 2026-11-04
+notes: P2 L6 多轮长会话（只计质量指标，不进红线 gate）；本次提问与业务数值同 rice-pest-0015。较早两轮已落 ADVICE 卡（其一 selected_product=吡蚜酮），compaction_retained 核对其结论 / 药剂与 kb 引用原样进入每次模型调用的会话块

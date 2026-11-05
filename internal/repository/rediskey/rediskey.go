@@ -92,3 +92,15 @@ func (k Keys) IdemReceipt(receiptID string) string { return k.prefix + "idem:rec
 
 // ScanReceiptDue 是回执超时扫描的任务名（lock:scan:receipt_due，P1 §6.5）。
 const ScanReceiptDue = "receipt_due"
+
+// LockP2JobTTL 是 lock:p2job 键的 TTL（P2 §6.4 Redis 键表：10min，执行中续期）。
+const LockP2JobTTL = 10 * time.Minute
+
+// LockP2Job 是 lock:p2job:{job}（P2 第 3 批接缝）：P2 批任务单实例互斥，防止手动补跑与定时任务并发（L3 / L4 / L5 共用）。
+func (k Keys) LockP2Job(job string) string { return k.prefix + "lock:p2job:" + job }
+
+// RlTokenTTL 是 rl:judge:{tier} 令牌桶键的 TTL（P2 §6.4 Redis 键表：2min，按分钟滚动）。
+const RlTokenTTL = 2 * time.Minute
+
+// RlJudge 是 rl:judge:{tier}（P2 L3）：线上抽样 judge 的 QPM 上限（令牌桶）；judge 同时从生产 rl:model:{tier} 取令牌。
+func (k Keys) RlJudge(tier string) string { return k.prefix + "rl:judge:" + tier }

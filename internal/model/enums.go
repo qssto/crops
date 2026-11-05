@@ -171,12 +171,14 @@ const (
 	RawSnapshot   RawKind = "SNAPSHOT"
 	RawCheckpoint RawKind = "CHECKPOINT"
 	RawExport     RawKind = "EXPORT"
+	// RawCompactedMsgs 是 L6 被压缩的会话原文（P2 §6.7 技术实现 4），compaction_state.raw_refs 指向它。
+	RawCompactedMsgs RawKind = "COMPACTED_MSGS"
 )
 
 // Valid 判断是否为已登记的 kind。
 func (k RawKind) Valid() bool {
 	switch k {
-	case RawLLMIO, RawToolRaw, RawSnapshot, RawCheckpoint, RawExport, RawDeviceCmd, RawReceiptRaw:
+	case RawLLMIO, RawToolRaw, RawSnapshot, RawCheckpoint, RawExport, RawDeviceCmd, RawReceiptRaw, RawCompactedMsgs:
 		return true
 	}
 	return false

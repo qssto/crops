@@ -87,6 +87,9 @@ type flagCacheEntry struct {
 
 var _ agent.DispatchModeSource = (*FlagService)(nil)
 
+// P2 第 3 批：主链路经 graph.Config.Flags 读 L4 / L5 / L6 开关。
+var _ agent.FarmFlagReader = (*FlagService)(nil)
+
 // NewFlagService 校验依赖并构造 FlagService。
 func NewFlagService(d FlagDeps) (*FlagService, error) {
 	if d.Store == nil || d.Tx == nil || d.Audit == nil || d.Pub == nil || d.Clock == nil || d.Logger == nil {

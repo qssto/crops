@@ -162,8 +162,10 @@ var Rules = []Rule{
 
 // systemScopeCallers 是可构造 repository.SystemScope 的文件白名单（扫描、outbox 轮询、回执反查、关停报告）。
 var systemScopeCallers = []string{"internal/service/scan.go", "internal/service/outbox.go",
-	"internal/service/receipt.go",    // P1-L4-B：回执 webhook 反查与回执超时扫描
-	"internal/service/killswitch.go"} // P1-L8-B：关停报告跨农场读 dispatch_attempt（idx_mode_sent，auditctl 只读）
+	"internal/service/receipt.go",     // P1-L4-B：回执 webhook 反查与回执超时扫描
+	"internal/service/killswitch.go",  // P1-L8-B：关停报告跨农场读 dispatch_attempt（idx_mode_sent，auditctl 只读）
+	"internal/service/quality/job.go", // P2-L3：quality-metric-rollup 逐农场汇总与平台汇总行（quality_metric_daily）
+	"internal/app/rule_offload.go"}    // P2-L4：rule_shadow_diff 保留期清理（跨农场列出有过期行的农场，再逐农场逐项删）
 
 // adapterCaller 是唯一可调用设备 Adapter 的业务文件（WorkOrderService.Dispatch）。
 const adapterCaller = "internal/service/workorder_dispatch.go"

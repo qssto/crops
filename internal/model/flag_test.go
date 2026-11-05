@@ -76,15 +76,20 @@ func TestParseFlagValue(t *testing.T) {
 	}
 }
 
-// 注册表：两个 P1 开关均为 bool、默认关。
+// 注册表：P1 两个开关与 P2 的 enable_loader_v1 / enable_compaction 为 bool，rule_offload.* 为 mode，全部默认关。
 func TestDefaultFlagRegistry(t *testing.T) {
 	r := DefaultFlagRegistry()
-	for _, k := range []FlagKey{FlagEnableAdvice, FlagEnableRobotDispatch} {
+	for _, k := range []FlagKey{FlagEnableAdvice, FlagEnableRobotDispatch, FlagEnableLoaderV1, FlagEnableCompaction} {
 		if s, ok := r[k]; !ok || s.Kind != FlagKindBool || s.Default != FlagModeOff {
 			t.Errorf("%s = %+v ok=%t", k, s, ok)
 		}
 	}
-	if len(r) != 2 {
-		t.Errorf("registry has %d keys, want 2", len(r))
+	for _, k := range RuleOffloadFlags() {
+		if s, ok := r[k]; !ok || s.Kind != FlagKindMode || s.Default != FlagModeOff {
+			t.Errorf("%s = %+v ok=%t", k, s, ok)
+		}
+	}
+	if len(r) != 7 {
+		t.Errorf("registry has %d keys, want 7", len(r))
 	}
 }

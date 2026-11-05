@@ -88,7 +88,9 @@ func (s *RecheckService) PreDispatch(ctx context.Context, in PreDispatchInput) (
 	}
 	s.d.Logger.InfoContext(ctx, "order canceled by recheck", "order_id", in.Order.OrderID, "run_id", in.Question.RunID,
 		"detail", res.Detail)
-	runID, err := s.d.Starter.Ask(ctx, in.Question.Scope, AskInput{FieldID: in.Question.FieldID, Text: in.Question.Text})
+	// P2 L6：新 run 取代原 run（enable_compaction 开时接替其会话位置并复制 compaction_state，关时同 P1）
+	runID, err := s.d.Starter.Ask(ctx, in.Question.Scope, AskInput{FieldID: in.Question.FieldID, Text: in.Question.Text,
+		Supersedes: in.Question.RunID})
 	if errors.Is(err, ErrAdviceDisabled) {
 		// 本农场 enable_advice 已关：单照常取消，不生成新建议（P1 §8.1），不算失败。
 		s.d.Logger.InfoContext(ctx, "recheck new run skipped, advice disabled", "order_id", in.Order.OrderID)

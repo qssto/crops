@@ -1,0 +1,24 @@
+# 知识加载策略 v1（P2 §6.6 候选）：enable_loader_v1 按农场打开时使用。
+# 流程：情境过滤与 KB_MISS 判定同 v0 → 先放本问题类型的必加条目（MUST_INCLUDE）→ 其余按 order 排序填到 limit。
+# 必加条目只从情境过滤后的命中里取（不绕过作物 / 区域 / 生育期过滤）；植保与施肥的必加项是红线，
+# 由 internal/app/kb_load_test.go 逐 kb_id 断言，删减须先改测试并说明理由。
+# 启动时对照知识快照校验：每条规则至少匹配一个条目、任一情境必加数 ≤ limit - 1，否则启动失败。
+version: v1
+# 上限 10 = 植保必加安全条目 8 条（下方 must_include.protect）+ 2 个专属名额（作物 / 防治对象条目）。安全条目优先：
+# 路线建议的 ≤ 5 装不下必加条目（任一情境必加数须 ≤ limit - 1，启动校验）；9 时 regression+redteam must_cite 加载
+# 319 / 340，10 为 321 / 340（11、12 不再提高）；cmd/eval regression 上施肥 / 灌溉 / 灾害三类的加载量与上限 8 时相同。
+# 代价：植保问题每次多注入约 2 条知识（提示词 token 增加）。
+limit: 10
+# 排序键均降序：权威等级 → 问题子类匹配（分类器 topic ∈ 条目 topics）→ 专属程度 → 生育期匹配度（限定越窄越前）
+# → 版本新旧；全部相同按 kb_id 升序。topic_match 只参与排序，不参与过滤与 KB_MISS 判定。
+order: [authority, topic_match, specificity, stage_match, version]
+must_include:
+  protect:
+    # 安全条目整份必加（路线：植保类必加 common/safety.md 与 common/operation_window.md）：
+    # phi 安全间隔期、mixing 桶混上限、resistance 抗性轮换、ppe 防护、registration 禁限用 / 登记用量；
+    # spray / uav 作业窗口、dosage-dilution 稀释配比（operation_window/fertilize 属施肥类，情境过滤排除）。
+    - file: common/safety.md
+    - file: common/operation_window.md
+  fertilize:
+    - file: "{crop}/fertilization.md"      # 对应作物 fertilization.md 的公式段（带 formulas 的条目）
+      formulas_only: true

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -31,10 +32,17 @@ func repoSamples(t *testing.T) *loadedSamples {
 	return ls
 }
 
-// TestLoadBackfill_P1Exit 校验 exp 102 的补录：当前样本按 yaml 的 suites 重选后 samples_hash 不变，快照补齐后无空字段。
+// addedAfterP1Exit 是 exp 102 之后新增进 regression / redteam 的样本（P2 L4 评测资产：redteam/tank_mix）。
+// exp 102 的补录已冻结（baseline_p1 指针），本测试按 exp 102 当时的样本集重放补录校验，故先去掉它们。
+var addedAfterP1Exit = []string{"rt-mix-0001", "rt-mix-0002", "rt-mix-0003", "rt-mix-0004", "rt-mix-0005", "rt-mix-0006"}
+
+// TestLoadBackfill_P1Exit 校验 exp 102 的补录：当时的样本按 yaml 的 suites 重选后 samples_hash 不变，快照补齐后无空字段。
 func TestLoadBackfill_P1Exit(t *testing.T) {
 	ctx := t.Context()
 	ls := repoSamples(t)
+	ls.samples = slices.DeleteFunc(slices.Clone(ls.samples), func(s *sample.Sample) bool {
+		return slices.Contains(addedAfterP1Exit, s.ID)
+	})
 	path := filepath.Join(repoRoot, defaultBaselines, p1ExitBaseline)
 	bf, refs, err := loadBackfill(ctx, path, 102, ls.samples, ls.kbContent)
 	if err != nil {

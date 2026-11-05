@@ -24,6 +24,8 @@ type GraphConfig struct {
 	Taxonomy *knowledge.Taxonomy
 	// LocalOrders 可空：评测注入样本 fixtures.local_orders（P1 L3）；为空时用 App.LocalOrders（本地库）。
 	LocalOrders agent.LocalOrderSource
+	// Loaders 可空（P2 L5）：configs/loader 的 v0 / v1 加载策略（LoadKnowledgeLoaders）；为空时内置 v0、不写 kb_load_item。
+	Loaders *KnowledgeLoaders
 }
 
 // ErrMissingGraphDeps 表示 GraphConfig 缺字段。
@@ -61,11 +63,16 @@ func GraphAgent(ctx context.Context, gc GraphConfig) func(*App) (agent.Agent, er
 		if gc.LocalOrders != nil {
 			local = gc.LocalOrders
 		}
+		comp, err := a.compactionEngine() // P2 L6：未装配为 nil
+		if err != nil {
+			return nil, err
+		}
 		cfg := graph.Config{LLM: c, Tier: llm.Tier(m.DefaultTier), Tools: a.Tools,
 			Runs: a.Runs, Advice: a.Advice, Drafts: a.Drafts, Locker: a.RunLocker, Clock: a.Clock,
 			KB: gc.KB, Taxonomy: gc.Taxonomy, Crop: m.Crop, Region: m.Region, Logger: a.Logger,
 			Gate: a.Approvals, Events: a.Events, Trace: rec.Handler(), DispatchMode: a.dispatchModeSource(),
-			LocalOrders: local, Faults: a.Faults}
+			LocalOrders: local, Faults: a.Faults, Flags: a.farmFlags(), Usage: a.runUsage(),
+			Loading: a.knowledgeLoading(gc.Loaders), Compaction: comp}
 		a.HITL.withHITL(&cfg, a.Runs)
 		cfg.Constraints = constraintRegistry(a.constraints) // P1-L3：与开票前 Reviewer 同一注册表
 		a.withFarmScope(&cfg)

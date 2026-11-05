@@ -63,6 +63,24 @@ type Trial struct {
 	// P1-L8-A 审查修复：ConstraintChecks 是该 run 作业单的约束检查（含 PRE_DISPATCH 复检），recheck_returned 断言
 	// expect.dispatch.recheck_failed_rules 使用；Runner 在 App 有库且有作业单时读取，未记录为 nil。
 	ConstraintChecks []model.ConstraintCheck
+	// P2 L6：Session 是多轮会话样本（fixtures.session）的观测，compaction_retained 使用；
+	// 样本未声明 fixtures.session 或 App 无库时为 nil。
+	Session *SessionObs
+}
+
+// SessionObs 是一次多轮会话 trial 的观测（Runner 在归还槽位前读 trial 库与 raw 对象）：
+//   - Enabled：本农场 enable_compaction 开（App 未装配开关时为 false）；
+//   - Linked：本次 run 确实续接到种子会话链（开关关时为 false，与 P1 相同不续接）；
+//   - Source：按种子 run_id 独立查询业务表（不经生产 LoadSession）得到的会话原料：种子链各轮（RUN_STARTED 原文，
+//     其 RunID 即 step 定位用的 turn）与建议卡 / 作业单 / 实测 / kb 引用；
+//   - Superseded：种子链上已被取代的时效实测 tool_call.id（不应出现在 facts 中的过时事实）；
+//   - Prompts：本次 run 每次模型调用最终发送的 user 消息原文（LLM_IO raw 对象，脱敏之后），按调用顺序。
+type SessionObs struct {
+	Enabled    bool
+	Linked     bool
+	Source     model.SessionSource
+	Superseded []uint64
+	Prompts    []string
 }
 
 // RunEvent 是一条 run_event（payload 原样，打分器按事件类型解码）。

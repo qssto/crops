@@ -103,8 +103,9 @@ func TestHoldout_SuitesDirInsideHoldoutDenied(t *testing.T) {
 // 真实 holdout 已挂载（eval/suites/holdout）时：授权读者下补写清单为 0（P2-L1 待办，公开侧 78 格由 holdout 补齐）。
 // 未挂载时跳过；调度方在主仓挂 submodule 后跑。
 func TestHoldout_MountedFillsCoverage(t *testing.T) {
-	if _, err := os.Stat(filepath.Join(repoRoot, defaultDir, "holdout")); err != nil {
-		t.Skipf("holdout submodule not mounted: %v", err)
+	// worktree 里 submodule 只有空目录（未 init）：同样视为未挂载。
+	if entries, err := os.ReadDir(filepath.Join(repoRoot, defaultDir, "holdout")); err != nil || len(entries) == 0 {
+		t.Skipf("holdout submodule not mounted: entries=%d err=%v", len(entries), err)
 	}
 	t.Setenv(envEvalReader, "qa-lead")
 	var stdout, stderr bytes.Buffer

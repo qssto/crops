@@ -67,6 +67,10 @@ func renderSnapshot(ew *errWriter, s evalkit.Snapshot) {
 		ew.printf("| loader_strategy | %s |\n| retrieval_strategy | %s |\n| judge_versions | %s |\n",
 			dash(s.LoaderStrategy), dash(s.RetrievalStrategy), judgeVersionsText(s))
 	}
+	// P2 第 3 批：--flags 显式设置的开关；默认运行没有，不输出（报告与第 3 批前逐字节相同）。
+	if len(s.Flags) > 0 {
+		ew.printf("| flags | %s |\n", flagsText(s))
+	}
 	if len(s.Suites) > 0 {
 		ew.printf("| suites | %s |\n| n | %d |\n", strings.Join(s.Suites, ","), s.N)
 	}
@@ -85,6 +89,17 @@ func judgeVersionsText(s evalkit.Snapshot) string {
 		return k
 	}
 	return "无（未接 judge）"
+}
+
+// flagsText 按 evalkit.FactorFlagKeys 的顺序输出已设置的开关（key=档位，逗号分隔）。
+func flagsText(s evalkit.Snapshot) string {
+	var pairs []string
+	for _, k := range evalkit.FactorFlagKeys() {
+		if v, ok := s.Flags[k]; ok {
+			pairs = append(pairs, k+"="+v)
+		}
+	}
+	return strings.Join(pairs, ",")
 }
 
 // quarantineNote 附在门禁行后：隔离样本未运行，门禁与红线结论不覆盖它们（不能读成「全部通过」）。

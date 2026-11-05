@@ -101,7 +101,11 @@ func (a *App) WorkerLoops() ([]Loop, error) {
 		}
 		loops = append(loops, Loop{Name: fmt.Sprintf("%s#%d", LoopOrderOps, i), Run: run})
 	}
-	return loops, nil
+	p2, err := a.p2WorkerLoops() // P2 第 3 批接缝：L3 / L4 / L5 在各自新文件登记（worker_p2.go）
+	if err != nil {
+		return nil, err
+	}
+	return append(loops, p2...), nil
 }
 
 // StartLoops 为每个任务起一个 goroutine，返回的 wait 阻塞到全部返回（ctx 取消后调用）。

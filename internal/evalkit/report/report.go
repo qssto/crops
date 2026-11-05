@@ -44,6 +44,9 @@ func WriteFile(outRoot string, exp *evalkit.Experiment) (string, error) {
 	if err := os.WriteFile(path, []byte(b.String()), filePerm); err != nil {
 		return "", fmt.Errorf("report: write %s: %w", path, err)
 	}
+	if err := writeLoadGaps(dir, exp); err != nil {
+		return "", err
+	}
 	return path, nil
 }
 
@@ -140,6 +143,7 @@ func Render(w io.Writer, exp *evalkit.Experiment) error {
 	renderScores(ew, r)
 	renderSuites(ew, r, exp)
 	renderIssues(ew, r)
+	renderLoad(ew, exp.Trials)
 
 	ew.printf("## 按 tag 分组\n\n")
 	ew.printf("| tag | 样本 | trial | ADVICE | REFUSED | error | 与期望一致 | 平均延迟 |\n")

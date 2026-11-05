@@ -109,6 +109,23 @@ func TestAskHandler(t *testing.T) {
 	}
 }
 
+// P2 L6：prev_run_id 原样透传给 service；supersedes 不可由请求体设置（只由复检填）。
+func TestAskHandler_PrevRunID(t *testing.T) {
+	e := newTestEnv(t)
+	asker := &fakeAsker{}
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/farms/1/ask",
+		strings.NewReader(`{"field_id":3,"text":"那还要不要再打一次","prev_run_id":41,"supersedes":9}`))
+	req.Header.Set("Authorization", e.bearer(t, 1001, 1))
+	rec := httptest.NewRecorder()
+	NewRouter(e.guard, asker).ServeHTTP(rec, req)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d; body=%s", rec.Code, rec.Body.String())
+	}
+	if asker.gotIn.PrevRunID != 41 || asker.gotIn.Supersedes != 0 {
+		t.Fatalf("in = %+v, want prev_run_id 41 and no supersedes", asker.gotIn)
+	}
+}
+
 func TestRequestID_Generated(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()

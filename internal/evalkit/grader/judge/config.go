@@ -2,48 +2,44 @@ package judge
 
 import (
 	"bytes"
-	"crypto/sha256"
-	"encoding/hex"
-	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
-	"slices"
 
 	"gopkg.in/yaml.v3"
+
+	qjudge "agri-steward/internal/service/quality/judge"
 )
 
-// 三个维度（路线 §6.3 功能任务 1）。
+// 三个维度（路线 §6.3 功能任务 1），定义在 service/quality/judge（P2 L3 下沉，离线与线上同一份）。
 const (
-	DimFactConsistency    = "fact_consistency"
-	DimConclusionMatch    = "conclusion_match"
-	DimExplanationQuality = "explanation_quality"
+	DimFactConsistency    = qjudge.DimFactConsistency
+	DimConclusionMatch    = qjudge.DimConclusionMatch
+	DimExplanationQuality = qjudge.DimExplanationQuality
 )
 
 // Dimensions 是全部 judge 维度（报告与校准按此顺序）。
-var Dimensions = []string{DimFactConsistency, DimConclusionMatch, DimExplanationQuality}
+var Dimensions = qjudge.Dimensions
 
 // 评分标准文件（eval/judges/<维度>/ 下）。
 const (
-	PromptFile    = "prompt.md"
-	RubricFile    = "rubric.md"
-	RecordingsDir = "recordings"
+	PromptFile    = qjudge.PromptFile
+	RubricFile    = qjudge.RubricFile
+	RecordingsDir = qjudge.RecordingsDir
 	// DefaultConfig 是 judge 模型配置文件（与智能体 configs/model.yaml 分开）。
 	DefaultConfig = "eval/judges/judge.yaml"
 	// DefaultDir 是 judge 提示词 / 评分标准 / 录制的根目录。
-	DefaultDir = "eval/judges"
+	DefaultDir = qjudge.DefaultDir
 	// ModelReplay 是录制回放客户端（不访问模型服务；待真实模型）。
-	ModelReplay = "replay"
+	ModelReplay = qjudge.ModelReplay
 	// versionLen 是 review_task.judge_version 列宽。
-	versionLen = 32
-	hashLen    = 16
+	versionLen = qjudge.VersionLen
 )
 
 var (
 	// ErrUnknownDim 表示维度不在 Dimensions 内。
-	ErrUnknownDim = errors.New("judge: unknown dimension")
+	ErrUnknownDim = qjudge.ErrUnknownDim
 	// ErrBadConfig 表示 judge 配置缺项或取值不支持。
-	ErrBadConfig = errors.New("judge: bad config")
+	ErrBadConfig = qjudge.ErrBadConfig
 )
 
 // Config 是 judge 模型配置（eval.judge.model / eval.judge.model_tier）。model 现只支持 replay；
@@ -82,46 +78,10 @@ func LoadConfig(path string) (Config, error) {
 }
 
 // CheckDim 报告 dim 是否为已知维度。
-func CheckDim(dim string) error {
-	if !slices.Contains(Dimensions, dim) {
-		return fmt.Errorf("%w: %q", ErrUnknownDim, dim)
-	}
-	return nil
-}
+func CheckDim(dim string) error { return qjudge.CheckDim(dim) }
 
-// Version 是 dim 的 judge 版本：sha256(prompt.md ‖ 0 ‖ rubric.md) 前 16 位 + "-" + 模型档位（≤ 32 字符，写 review_task.judge_version
-// 与快照 judge_versions）。提示词、评分标准或档位任一变更，版本即变。
-func Version(dir, dim, tier string) (string, error) {
-	if err := CheckDim(dim); err != nil {
-		return "", err
-	}
-	h := sha256.New()
-	for i, name := range []string{PromptFile, RubricFile} {
-		b, err := os.ReadFile(filepath.Join(dir, dim, name))
-		if err != nil {
-			return "", fmt.Errorf("judge: %s: %w", dim, err)
-		}
-		if i > 0 {
-			h.Write([]byte{0})
-		}
-		h.Write(b)
-	}
-	v := hex.EncodeToString(h.Sum(nil))[:hashLen] + "-" + tier
-	if len(v) > versionLen {
-		return "", fmt.Errorf("%w: judge version %q longer than %d (shorten model_tier)", ErrBadConfig, v, versionLen)
-	}
-	return v, nil
-}
+// Version 是 dim 的 judge 版本，见 qjudge.Version（≤ 32 字符，写 review_task.judge_version 与快照 judge_versions）。
+func Version(dir, dim, tier string) (string, error) { return qjudge.Version(dir, dim, tier) }
 
 // Versions 是全部维度的 judge 版本（快照 judge_versions 的取值）。
-func Versions(dir, tier string) (map[string]string, error) {
-	out := make(map[string]string, len(Dimensions))
-	for _, d := range Dimensions {
-		v, err := Version(dir, d, tier)
-		if err != nil {
-			return nil, err
-		}
-		out[d] = v
-	}
-	return out, nil
-}
+func Versions(dir, tier string) (map[string]string, error) { return qjudge.Versions(dir, tier) }

@@ -20,7 +20,8 @@ func sampleIndex(m reduce.QualityMetric, trials []evalkit.Trial, paired map[stri
 
 // metricResult 在配对交集上算一个指标：样本级值配对差（candidate − baseline）的 bootstrap 区间与结论。
 func metricResult(m reduce.QualityMetric, in Input, paired map[string]bool, seed uint64) MetricResult {
-	res := MetricResult{Name: m.Name(), Title: m.Title(), LowerIsBetter: m.LowerIsBetter(), Pending: m.Pending()}
+	res := MetricResult{Name: m.Name(), Title: m.Title(), LowerIsBetter: m.LowerIsBetter(), Pending: m.Pending(),
+		NotGating: m.Judge()}
 	if res.Pending != "" {
 		res.Verdict = VerdictPending
 		return res

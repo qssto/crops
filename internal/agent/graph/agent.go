@@ -19,6 +19,7 @@ import (
 	"agri-steward/internal/agent/guardrail/constraint"
 	harnesscb "agri-steward/internal/agent/harness/callbacks"
 	"agri-steward/internal/agent/harness/checkpoint"
+	"agri-steward/internal/agent/harness/compaction"
 	"agri-steward/internal/agent/harness/policy"
 	"agri-steward/internal/agent/harness/runner"
 	"agri-steward/internal/agent/knowledge"
@@ -75,8 +76,19 @@ type Config struct {
 	LocalOrders agent.LocalOrderSource
 	Constraints *constraint.Registry
 
+	// P2 第 3 批接缝，可空（空时 P2 开关一律按关，行为同 P1）：L4 rule_offload.*、L5 enable_loader_v1、
+	// L6 enable_compaction 只经 agent.FlagModeOf / agent.FlagOn 读取。
+	Flags agent.FarmFlagReader
+	// P2 第 3 批接缝，可空：agent_run P2 列写入（L5 SetLoaderStrategy、L6 AddTokens），写失败只记日志不让 run 失败。
+	Usage agent.RunUsageStore
+
 	RenewEvery  time.Duration // 租约续期间隔，0 取 runner 默认
 	OrderWindow time.Duration // 建议作业窗口长度，0 取 24h
+
+	// P2 L6 长对话压缩，可空（空时不组装会话块，行为同 P1）；非空时仍只在 enable_compaction 开时生效。
+	Compaction *compaction.Engine
+	// P2 L5，可空：知识加载策略（v0 / v1）与 kb_load_item 写入；空时 v0 = knowledge.PhaseZeroSpec、不写明细。
+	Loading *KnowledgeLoading
 }
 
 // Agent 是主链路实现（agent.Agent）。
@@ -209,6 +221,7 @@ func (a *Agent) Ask(ctx context.Context, q agent.Question) (agent.Answer, error)
 		runID = id
 	}
 	var final *state
+	ctx = a.withCompaction(ctx) // P2 L6：FinishRun（外层 ctx）与检查点（图内 ctx）共用一个压缩载体
 	out, err := a.run.Run(ctx, q.Scope, runID, func(rctx context.Context, cb callbacks.Handler) (out runner.Outcome, err error) {
 		defer recoverOutcome(&out, &err)
 		rctx = harnesscb.WithRun(rctx, harnesscb.Run{Scope: q.Scope, RunID: runID})
@@ -262,6 +275,7 @@ func (a *Agent) Resume(ctx context.Context, scope model.Scope, runID uint64) (ag
 		return agent.Answer{RunID: runID}, fmt.Errorf("graph: resume run %d: no checkpoint: %w", runID, agent.ErrNotResumable)
 	}
 	var final *state
+	ctx = a.withCompaction(ctx) // P2 L6：restore 把检查点里的压缩状态放回载体，终态 UPDATE 一并写入
 	_, err := a.run.Resume(ctx, scope, agent.ResumeRequest{RunID: runID, GraphVersion: GraphVersion},
 		func(rctx context.Context, cb callbacks.Handler) (out runner.Outcome, err error) {
 			defer recoverOutcome(&out, &err)

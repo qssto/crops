@@ -34,10 +34,35 @@ type LLMCallPayload struct {
 	Error            string `json:"error,omitempty"`
 }
 
-// KBLoadedPayload 是 KB_LOADED。
+// KBLoadedPayload 是 KB_LOADED。P2 L5 只追加字段（audit 按 KBRef 投影，rundetail 原样透传）。
 type KBLoadedPayload struct {
 	KBRef   string   `json:"kb_ref,omitempty"`
 	Entries []string `json:"entries"` // kb_id@version
+
+	// P2 L5 加载埋点：问题类型（一级 taxonomy code）、情境维度、逐条选入原因与名次、策略版本、run 内第几次加载。
+	QuestionType string          `json:"question_type,omitempty"`
+	Situation    *KBSituation    `json:"situation,omitempty"`
+	Items        []KBLoadedEntry `json:"items,omitempty"` // 与 Entries 同序
+	Strategy     string          `json:"strategy,omitempty"`
+	LoadSeq      int             `json:"load_seq"`
+}
+
+// KBSituation 是 KB_LOADED 的情境维度（作物 / 生育期 / 区域 / 子类 / 防治对象 / 排序子类；空值省略）。
+type KBSituation struct {
+	Crop   string `json:"crop"`
+	Stage  string `json:"stage,omitempty"`
+	Region string `json:"region"`
+	Topic  string `json:"topic,omitempty"`
+	Target string `json:"target,omitempty"`
+
+	RankTopic string `json:"rank_topic,omitempty"` // 分类器子类：只参与 v1 排序（topic_match），不参与过滤
+}
+
+// KBLoadedEntry 是 KB_LOADED 的一条加载结果：kb:<kb_id>@<version>、选入原因（MUST_INCLUDE / RANKED / COMMON）、名次。
+type KBLoadedEntry struct {
+	Ref        string `json:"ref"`
+	PickReason string `json:"pick_reason"`
+	Rank       int    `json:"rank"`
 }
 
 // AdviceReadyPayload 是 ADVICE_READY（投影为 VALIDATE / OK）。

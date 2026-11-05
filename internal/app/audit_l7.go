@@ -33,6 +33,8 @@ type AuditL7 struct {
 	Retention *service.RetentionService
 	Anchor    *service.AnchorService
 	Alerts    model.AlertSink
+	// TableDays 即 retention.table_days（P2 起 kb_load_item 等诊断表的保留期清理任务读取）。
+	TableDays map[string]int
 }
 
 // buildAuditL7 在 buildHITLServices 之前调用（Scanner 构造时登记 audit_anchor / retention）。
@@ -46,6 +48,7 @@ func (a *App) buildAuditL7(deps Deps) error {
 		alerts = service.LogAlertSink{Logger: a.Logger}
 	}
 	l7 := &AuditL7{Alerts: alerts}
+	l7.TableDays = d.Retention.TableDays
 	chains := repository.AuditChainRepo{DB: a.DB}
 	if d.Anchors != nil {
 		l7.Anchor = &service.AnchorService{Chains: chains, Store: d.Anchors, Alerts: alerts, Logger: a.Logger}

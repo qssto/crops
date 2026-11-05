@@ -41,6 +41,7 @@ var Declared = map[string]func(s *sample.Sample) bool{
 	"forbidden_text":    func(s *sample.Sample) bool { return s.Expect.MustNotContain != nil },
 	"partially_done":    func(s *sample.Sample) bool { return s.Expect.WorkDone != nil },
 	"degraded_matrix":   func(s *sample.Sample) bool { return len(s.Expect.Degraded) > 0 },
+	"conflict_blocked":  func(s *sample.Sample) bool { return s.Expect.Conflict != nil }, // P2 L4
 }
 
 // declaresFault 报告样本 fixtures.mcp 是否注入了故障。

@@ -86,6 +86,12 @@ type Deps struct {
 	Alerts  model.AlertSink
 	// AlertsConfig 是告警扫描配置（configs/app.yaml 的 alerts 段；零值取 config.DefaultAlerts）。
 	AlertsConfig config.Alerts
+	// Quality 是 P2-L3 可信度日报依赖（见 quality.go；零值不起 quality-daily 任务）。
+	Quality QualityDeps
+	// Compaction 是 P2 L6 长对话压缩（compaction_l6.go，LoadCompaction；零值不装配，行为同 P1）。
+	Compaction CompactionDeps
+	// RuleOffload 是规则下沉影子比对配置（P2 L4，configs/app.yaml 的 rule_offload 段；零值取 config.DefaultRuleOffload）。
+	RuleOffload config.RuleOffload
 }
 
 // metaer 是能报告自身版本信息的主链路（graph.Agent）。
@@ -164,6 +170,12 @@ type App struct {
 	AlertList *service.AlertService
 	metrics   *service.MetricsObserver
 	alerts    config.Alerts
+	// quality 即 Deps.Quality（P2-L3，buildQualityLoops 读）。
+	quality QualityDeps
+	// compaction 即 Deps.Compaction：GraphAgent 构造压缩引擎、ask 入口挂会话续接（见 compaction_l6.go）。
+	compaction CompactionDeps
+	// ruleOffload 即 Deps.RuleOffload（P2 L4 rule_shadow_diff 保留期清理，rule_offload.go）。
+	ruleOffload config.RuleOffload
 }
 
 // 缺依赖时返回的错误。
@@ -248,9 +260,12 @@ func Build(deps Deps) (*App, error) {
 		Observer:     deps.Metrics,
 		metrics:      deps.Metrics,
 		alerts:       deps.AlertsConfig,
+		quality:      deps.Quality,
+		ruleOffload:  deps.RuleOffload, // P2 L4
 	}
 	a.constraints = deps.Constraints
 	a.Faults = deps.Faults
+	a.compaction = deps.Compaction
 	if err := a.buildAlertList(); err != nil {
 		return nil, err
 	}
@@ -274,11 +289,13 @@ func Build(deps Deps) (*App, error) {
 	if m, ok := a.Agent.(metaer); ok && meta == (agent.RunMeta{}) {
 		meta = m.Meta()
 	}
-	a.Ask = service.NewAskService(service.AskDeps{
+	askDeps := service.AskDeps{
 		Fields:  repository.FieldScope{DB: deps.DB},
 		Limiter: repository.NewAskLimiter(deps.Redis, deps.Keys, AskPerMinute),
 		Runs:    runs, Advice: advice, Agent: a.Agent, Meta: meta, Logger: deps.Logger, Flags: a.Flags,
-	})
+	}
+	a.withSessions(&askDeps) // P2 L6
+	a.Ask = service.NewAskService(askDeps)
 	if err := a.buildAuditL7(deps); err != nil {
 		return nil, err
 	}

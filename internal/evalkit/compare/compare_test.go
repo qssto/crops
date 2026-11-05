@@ -170,6 +170,66 @@ func TestRun_SingleFactorRegression(t *testing.T) {
 	}
 }
 
+// judgeTrials：引用覆盖全过（进门禁），fact_consistency 按 judge 分给出（未校准，不进门禁）。
+func judgeTrials(judgeScore float64, ids ...string) []evalkit.Trial {
+	var out []evalkit.Trial
+	for _, id := range ids {
+		for i := range 2 {
+			out = append(out, evalkit.Trial{SampleID: id, SampleVersion: 1, TrialIndex: i, Scores: []evalkit.Score{
+				{Name: "citation_valid", RedLine: true, Pass: true, Value: 1},
+				{Name: "fact_consistency", Pass: judgeScore == 3, Value: judgeScore}}})
+		}
+	}
+	return out
+}
+
+// P2-L3 修复 P1-1：只有 judge 指标显著下降时，整体不为退化、单因子结论可放行，报告标「不进门禁」。
+func TestRun_JudgeOnlyRegression_NotGating(t *testing.T) {
+	ids := []string{"a", "b", "c", "d", "e"}
+	paired := make([]string, 0, len(ids))
+	for _, id := range ids {
+		paired = append(paired, id+"@1")
+	}
+	cs := snap()
+	cs.PromptVersion = "v2"
+	r, err := Run(Input{Mode: ModeFactor, Baseline: Side{Done: true, ID: 1, Snapshot: snap(), Trials: judgeTrials(3, ids...)},
+		Candidate: Side{Done: true, ID: 2, Snapshot: cs, Trials: judgeTrials(1, ids...)}, Paired: paired, Seed: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fc MetricResult
+	for _, m := range r.Metrics {
+		if m.Name == "fact_consistency" {
+			fc = m
+		}
+	}
+	if fc.Verdict != VerdictRegressed || !fc.NotGating {
+		t.Fatalf("fact_consistency = %+v, want 退化 and not gating", fc)
+	}
+	if r.Overall == VerdictRegressed || r.Conclusion != ConclusionNoSig || !r.Releasable() {
+		t.Fatalf("overall = %s conclusion = %s releasable = %t, judge metric must not gate", r.Overall, r.Conclusion, r.Releasable())
+	}
+	var b strings.Builder
+	if err := Render(&b, r); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(b.String(), "| 退化"+notGatingNote+" |") {
+		t.Fatalf("report must mark judge verdict not gating:\n%s", b.String())
+	}
+	// 只有 judge 指标适用：没有进门禁的指标，失败关闭。
+	only := func(v float64) []evalkit.Trial {
+		tr := judgeTrials(v, ids...)
+		for i := range tr {
+			tr[i].Scores = tr[i].Scores[1:]
+		}
+		return tr
+	}
+	if _, err := Run(Input{Mode: ModeFactor, Baseline: Side{Done: true, ID: 1, Snapshot: snap(), Trials: only(3)},
+		Candidate: Side{Done: true, ID: 2, Snapshot: cs, Trials: only(1)}, Paired: paired, Seed: 1}); !errors.Is(err, ErrNoMetric) {
+		t.Fatalf("judge-only err = %v, want ErrNoMetric", err)
+	}
+}
+
 func TestRun_IntersectionAndExcluded(t *testing.T) {
 	b := trials(1, map[string]bool{"a": true, "b": true, "only-b": true})
 	c := trials(1, map[string]bool{"a": true, "b": false})
@@ -190,7 +250,7 @@ func TestRun_IntersectionAndExcluded(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, want := range []string{"配对样本（(sample_id, sample_version) 交集）：2", "被排除样本：2", "a@2（仅 candidate）",
-		"only-b@1（仅 baseline）", "seed 3", "未接入（L2/L3）"} {
+		"only-b@1（仅 baseline）", "seed 3", "事实一致率（fact_consistency） | - | - | - | - | 无适用样本"} {
 		if !strings.Contains(sb.String(), want) {
 			t.Errorf("report missing %q", want)
 		}
@@ -264,9 +324,10 @@ func TestAA_KnownAnswer(t *testing.T) {
 	if c := byName["citation_coverage"]; c.Threshold != nil || c.Note != "无适用样本" {
 		t.Fatalf("citation = %+v", c)
 	}
+	// judge 指标已接入（P2-L3）：无 judge 打分 → 无适用样本、null。
 	for _, name := range []string{"fact_consistency", "hallucination_rate"} {
-		if m := byName[name]; m.Threshold != nil || !strings.Contains(m.Note, "L2") {
-			t.Fatalf("judge metric %s must be null pending L2: %+v", name, m)
+		if m := byName[name]; m.Threshold != nil || m.Note != "无适用样本" {
+			t.Fatalf("judge metric %s without judge scores must be null: %+v", name, m)
 		}
 	}
 	// 只有一对：两次相同 → 阈值 0（stub 下的情形）。
@@ -410,8 +471,8 @@ func crashed(id string, from, n int) []evalkit.Trial {
 	return out
 }
 
-// TestRun_ErrorTrials_FourOfFiveCrash：candidate 一个样本 5 次中 4 次 infra_error、1 次通过 → 红线按失败、结论 INCOMPLETE、
-// 不可放行，报告列出受影响样本。
+// TestRun_ErrorTrials_FourOfFiveCrash：candidate 一个样本 5 次中 4 次 infra_error、1 次通过 → infra_error 不进分母
+// （P2-L3 口径表，取代 P2-L0 的「红线按失败」），样本值取通过的 1 次；结论仍 INCOMPLETE、不可放行，报告列出受影响样本。
 func TestRun_ErrorTrials_FourOfFiveCrash(t *testing.T) {
 	ids := map[string]bool{"b": true, "c": true, "d": true}
 	base := append(trials(5, ids), trials(5, map[string]bool{"a": false})...)
@@ -428,8 +489,8 @@ func TestRun_ErrorTrials_FourOfFiveCrash(t *testing.T) {
 	if got := r.ErrorSamples[sideCandidate]; len(got) != 1 || got[0] != "a@1" {
 		t.Fatalf("candidate error samples = %v", got)
 	}
-	if m := r.Metrics[0]; m.Samples != 4 || m.CandidateMean != 0.75 {
-		t.Fatalf("citation metric = %+v (crashed trials must count as failures)", m)
+	if m := r.Metrics[0]; m.Samples != 4 || m.CandidateMean != 1 {
+		t.Fatalf("citation metric = %+v (infra_error trials must not enter the denominator)", m)
 	}
 	var b strings.Builder
 	if err := Render(&b, r); err != nil {
@@ -442,8 +503,8 @@ func TestRun_ErrorTrials_FourOfFiveCrash(t *testing.T) {
 	}
 }
 
-// TestRun_ErrorTrials_AllCrash：candidate 10 个样本 5 次全部 infra_error → 样本不从配对里消失（红线按失败计 0），
-// 结论不可放行（退化优先于不完整），10 个样本都列为受影响。
+// TestRun_ErrorTrials_AllCrash：candidate 10 个样本 5 次全部 infra_error → infra_error 不进分母（P2-L3 口径表），
+// candidate 无适用样本，compare 失败关闭（ErrNoMetric，不出结论、不写 factor_diff，不可放行）。
 func TestRun_ErrorTrials_AllCrash(t *testing.T) {
 	pass := map[string]bool{}
 	var cand []evalkit.Trial
@@ -456,17 +517,8 @@ func TestRun_ErrorTrials_AllCrash(t *testing.T) {
 	}
 	r, err := Run(Input{Mode: ModeFactor, Baseline: done(1, snap(), trials(5, pass)), Candidate: done(2, snap(), cand),
 		Paired: pairs, Seed: 1})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if r.Releasable() || r.Conclusion != ConclusionRegressed {
-		t.Fatalf("conclusion = %s releasable = %t", r.Conclusion, r.Releasable())
-	}
-	if m := r.Metrics[0]; m.Samples != 10 || m.CandidateMean != 0 {
-		t.Fatalf("citation metric = %+v, all-crash samples must stay paired", m)
-	}
-	if n := len(r.ErrorSamples[sideCandidate]); n != 10 || !r.Incomplete() {
-		t.Fatalf("error samples = %d", n)
+	if !errors.Is(err, ErrNoMetric) || r != nil {
+		t.Fatalf("all-crash candidate = %+v, %v; want ErrNoMetric (fail closed)", r, err)
 	}
 }
 

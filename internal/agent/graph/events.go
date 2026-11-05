@@ -46,12 +46,8 @@ func (a *Agent) emitRunStarted(ctx context.Context, s *state) {
 		model.RunStartedPayload{FieldID: s.q.FieldID, Question: pii.Mask(s.q.Text)})
 }
 
-// emitKBLoaded 发 KB_LOADED：知识版本与命中条目（kb_id@version）。
-func (a *Agent) emitKBLoaded(ctx context.Context, s *state) {
-	p := model.KBLoadedPayload{KBRef: a.cfg.KBRef, Entries: make([]string, 0, len(s.hits))}
-	for _, h := range s.hits {
-		p.Entries = append(p.Entries, h.Ref())
-	}
+// emitKBLoaded 发 KB_LOADED：知识版本与命中条目（kb_id@version）；P2 L5 起 payload 由 kbLoadedPayload 组装（只加字段）。
+func (a *Agent) emitKBLoaded(ctx context.Context, s *state, p model.KBLoadedPayload) {
 	a.emitAs(ctx, s, model.RunEvent{Type: model.EventKBLoaded, Actor: model.ActorAgent, StepID: NodeKnowledge}, p)
 }
 

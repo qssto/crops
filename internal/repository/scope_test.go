@@ -39,6 +39,15 @@ func scopeRequiredCalls() map[string]func(model.Scope) error {
 			_, err := AlertRepo{}.ListAlerts(ctx, s, []string{"ALERT.x"}, now, now, AlertCursor{}, 1)
 			return err
 		},
+		// P2 L4：影子行与建议卡同事务写入、影子期差异率。
+		"AdviceRepo.SaveAdviceWithShadow": func(s model.Scope) error {
+			_, err := (&AdviceRepo{}).SaveAdviceWithShadow(ctx, s, model.AdviceCard{}, []model.RuleShadowDiff{{}})
+			return err
+		},
+		"RuleShadowDiffRepo.DiffRates": func(s model.Scope) error {
+			_, err := RuleShadowDiffRepo{}.DiffRates(ctx, s, time.Time{})
+			return err
+		},
 		"AdviceRepo.SaveAdvice": func(s model.Scope) error {
 			_, err := (&AdviceRepo{}).SaveAdvice(ctx, s, model.AdviceCard{})
 			return err
@@ -99,8 +108,31 @@ func scopeRequiredCalls() map[string]func(model.Scope) error {
 		},
 		"RunRepo.DraftOrdersTx": func(s model.Scope) error { _, err := (&RunRepo{}).DraftOrdersTx(ctx, nil, s, 1); return err },
 		"RunRepo.RecheckEpoch":  func(s model.Scope) error { _, err := (&RunRepo{}).RecheckEpoch(ctx, s, 1); return err },
-		"SummaryRepo.ByRun":     func(s model.Scope) error { _, err := SummaryRepo{}.ByRun(ctx, nil, s, 1); return err },
-		"ToolCallRepo.FindOK":   func(s model.Scope) error { _, _, err := (&ToolCallRepo{}).FindOK(ctx, s, "k"); return err },
+		"KBLoadItemRepo.ReplaceKBLoadItems": func(s model.Scope) error {
+			return KBLoadItemRepo{}.ReplaceKBLoadItems(ctx, s, []model.KBLoadItem{{RunID: 1}})
+		},
+		"KBLoadItemRepo.ListKBLoadItems": func(s model.Scope) error { _, err := KBLoadItemRepo{}.ListKBLoadItems(ctx, s, 1); return err },
+		"KBLoadItemRepo.OnlineLoadPrecision": func(s model.Scope) error {
+			_, _, err := KBLoadItemRepo{}.OnlineLoadPrecision(ctx, s, time.Time{}, time.Time{})
+			return err
+		},
+		"KBLoadItemRepo.PurgeKBLoadItems": func(s model.Scope) error {
+			_, err := KBLoadItemRepo{}.PurgeKBLoadItems(ctx, s, time.Time{})
+			return err
+		},
+		"RunRepo.SetLoaderStrategy": func(s model.Scope) error {
+			return (&RunRepo{}).SetLoaderStrategy(ctx, s, 1, model.LoaderStrategyV1)
+		},
+		"RunRepo.AddTokens":   func(s model.Scope) error { return (&RunRepo{}).AddTokens(ctx, s, 1, 1, 1) },
+		"RunRepo.Usage":       func(s model.Scope) error { _, err := (&RunRepo{}).Usage(ctx, s, 1); return err },
+		"RunRepo.LoadSession": func(s model.Scope) error { _, err := (&RunRepo{}).LoadSession(ctx, s, 1); return err },
+		"RunRepo.CompactionRate": func(s model.Scope) error {
+			_, err := (&RunRepo{}).CompactionRate(ctx, s, now, now)
+			return err
+		},
+		"RunRepo.CompactedRawIDs": func(s model.Scope) error { _, err := (&RunRepo{}).CompactedRawIDs(ctx, s, 1); return err },
+		"SummaryRepo.ByRun":       func(s model.Scope) error { _, err := SummaryRepo{}.ByRun(ctx, nil, s, 1); return err },
+		"ToolCallRepo.FindOK":     func(s model.Scope) error { _, _, err := (&ToolCallRepo{}).FindOK(ctx, s, "k"); return err },
 		"WorkOrderRepo.TransitionsByRun": func(s model.Scope) error {
 			_, err := WorkOrderRepo{}.TransitionsByRun(ctx, nil, s, 1)
 			return err
@@ -261,6 +293,11 @@ func scopeRequiredCalls() map[string]func(model.Scope) error {
 			_, err := (&RunRepo{}).CreateRun(ctx, model.RunState{TenantID: s.TenantID, FarmID: s.FarmID}, 1, 1, agent.RunMeta{})
 			return err
 		},
+		"RunRepo.CreateRunLinked": func(s model.Scope) error {
+			_, _, err := (&RunRepo{}).CreateRunLinked(ctx, model.RunState{TenantID: s.TenantID, FarmID: s.FarmID}, 1, 1,
+				agent.RunMeta{}, model.RunLink{})
+			return err
+		},
 		"WorkOrderRepo.InsertTransition": func(s model.Scope) error {
 			return WorkOrderRepo{}.InsertTransition(ctx, nil, model.OrderTransition{Ref: model.OrderRef{TenantID: s.TenantID, FarmID: s.FarmID, OrderID: 1}})
 		},
@@ -362,6 +399,37 @@ func scopeRequiredCalls() map[string]func(model.Scope) error {
 			_, err := RetentionRepo{}.MarkDeletedTx(ctx, nil, RawRef{TenantID: s.TenantID, FarmID: s.FarmID, ID: 1}, now)
 			return err
 		},
+		// P2-L3：线上 rollup / 抽样 judge / 专家回写（单农场）。
+		"QualityRepo.AdviceOutcomeCounts": func(s model.Scope) error {
+			_, err := QualityRepo{}.AdviceOutcomeCounts(ctx, s, now, now)
+			return err
+		},
+		"QualityRepo.CitedAdviceCount": func(s model.Scope) error { _, err := QualityRepo{}.CitedAdviceCount(ctx, s, now, now); return err },
+		"QualityRepo.AdviceRuns": func(s model.Scope) error {
+			_, err := QualityRepo{}.AdviceRuns(ctx, s, now, now, RunsRefused, 1)
+			return err
+		},
+		"QualityRepo.AdviceCategories": func(s model.Scope) error { _, err := QualityRepo{}.AdviceCategories(ctx, s, now, now); return err },
+		"QualityRepo.SampleAdvice": func(s model.Scope) error {
+			_, err := QualityRepo{}.SampleAdvice(ctx, s, "protect", now, now, "salt", 1)
+			return err
+		},
+		"QualityRepo.RunKnowledgeRef": func(s model.Scope) error { _, err := QualityRepo{}.RunKnowledgeRef(ctx, s, 1); return err },
+		"QualityRepo.InsertJudgeResult": func(s model.Scope) error {
+			_, err := QualityRepo{}.InsertJudgeResult(ctx, s, model.OnlineJudgeResult{TenantID: s.TenantID, FarmID: s.FarmID}, now)
+			return err
+		},
+		"QualityRepo.JudgeResults": func(s model.Scope) error {
+			_, err := QualityRepo{}.JudgeResults(ctx, s, "2026-11-03", "fact_consistency")
+			return err
+		},
+		"QualityRepo.FarmJudgeTally": func(s model.Scope) error {
+			_, err := QualityRepo{}.FarmJudgeTally(ctx, s, "2026-11-03", "fact_consistency", "v", 3)
+			return err
+		},
+		"QualityRepo.ReviewJudgeResult": func(s model.Scope) error {
+			return QualityRepo{}.ReviewJudgeResult(ctx, s, 1, 0, 3, 9, now)
+		},
 	}
 }
 
@@ -421,12 +489,22 @@ func TestSystemScopeRequired(t *testing.T) {
 		},
 		"DeviceReceiptRepo.DueAttempts": func() error { _, err := DeviceReceiptRepo{}.DueAttempts(ctx, zero, now); return err },
 		// P1-L7-A：保留期扫描与锚点读链头。
+		"KBLoadItemRepo.KBLoadFarms": func() error {
+			_, err := KBLoadItemRepo{}.KBLoadFarms(ctx, zero, now)
+			return err
+		},
 		"RetentionRepo.ListExpired": func() error {
 			_, err := RetentionRepo{}.ListExpired(ctx, zero, now, RetentionCursor{}, 10)
 			return err
 		},
 		"RetentionRepo.Referenced": func() error { _, err := RetentionRepo{}.Referenced(ctx, zero, []uint64{1}); return err },
-		"AuditChainRepo.Heads":     func() error { _, err := AuditChainRepo{}.Heads(ctx, zero); return err },
+		// P2 L4：rule_shadow_diff 保留期清理。
+		"RuleShadowDiffRepo.ShadowFarms": func() error { _, err := RuleShadowDiffRepo{}.ShadowFarms(ctx, zero, now); return err },
+		"RuleShadowDiffRepo.PurgeBatch": func() error {
+			_, err := RuleShadowDiffRepo{}.PurgeBatch(ctx, zero, FarmRef{TenantID: 1, FarmID: 1}, model.RuleItemTankMix, now)
+			return err
+		},
+		"AuditChainRepo.Heads": func() error { _, err := AuditChainRepo{}.Heads(ctx, zero); return err },
 		// P1 L7-B
 		"AlertRepo.AdviceWithoutCitation": func() error {
 			_, err := AlertRepo{}.AdviceWithoutCitation(ctx, zero, now, now)
@@ -437,6 +515,18 @@ func TestSystemScopeRequired(t *testing.T) {
 		// P1-L8-B：关停报告跨农场读 dispatch_attempt
 		"KillSwitchRepo.RealSentAfter": func() error { _, _, err := KillSwitchRepo{}.RealSentAfter(ctx, zero, now, nil); return err },
 		"KillSwitchRepo.RealReadAfter": func() error { _, err := KillSwitchRepo{}.RealReadAfter(ctx, zero, now, nil); return err },
+		// P2-L3：quality-metric-rollup 跨农场读写 quality_metric_daily / online_judge_result。
+		"QualityRepo.FarmTimezones": func() error { _, err := QualityRepo{}.FarmTimezones(ctx, zero); return err },
+		"QualityRepo.UpsertDaily":   func() error { return QualityRepo{}.UpsertDaily(ctx, zero, nil, now) },
+		"QualityRepo.DailyRows":     func() error { _, err := QualityRepo{}.DailyRows(ctx, zero, 0, 0, "2026-11-03"); return err },
+		"QualityRepo.OnlineFarmTotals": func() error {
+			_, err := QualityRepo{}.OnlineFarmTotals(ctx, zero, "2026-11-03")
+			return err
+		},
+		"QualityRepo.PlatformJudgeTally": func() error {
+			_, err := QualityRepo{}.PlatformJudgeTally(ctx, zero, "2026-11-03", "fact_consistency", "v", 3)
+			return err
+		},
 	}
 	for name, call := range calls {
 		t.Run(name, func(t *testing.T) {

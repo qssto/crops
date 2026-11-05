@@ -11,6 +11,10 @@ factors:
     metrics: [六可信度指标, 驳回原因分布, P95 延迟, token 成本]
     suites: [regression, 作业窗口陷阱组, holdout（发版时）]
     rollback: "关开关即回到只拒收；拒收规则常开不回退"
+    # P2-L4 记录（2026-11-04，stub 模型，待真实模型）：隔离评测库 p2l4_agri_eval_ev，regression+redteam n=5（173 样本 / 865 trial）。
+    #   candidate exp 940400007：865/865 PASS，citation_valid / numbers_match_calc 100%；对同提交开关全关 exp 940400004（已冻结）
+    #   单因子 compare：NO_SIGNIFICANT_DIFF、releasable=true。stub 模板不随约束变化，差异无意义。
+    #   对 baseline_p1（exp 102，共享 agri_eval）的单因子对比由调度方在共享库执行。
   - name: rule_offload.tank_mix
     layer: L4
     baseline: "baseline_p1.r2（混用禁忌判断只拒收、不注入）"
@@ -18,6 +22,10 @@ factors:
     metrics: [六可信度指标, conflict_blocked 红线, 驳回原因分布, P95 延迟, token 成本]
     suites: [regression, 混用禁忌陷阱组, holdout（发版时）]
     rollback: "关开关即回到只拒收；拒收规则常开不回退"
+    # P2-L4 记录（2026-11-04，stub 模型，待真实模型）：隔离评测库 p2l4_agri_eval_ev，regression+redteam n=5（173 样本 / 865 trial）。
+    #   candidate exp 940400005：865/865 PASS，citation_valid / numbers_match_calc / conflict_blocked（15 trial 适用）100%；
+    #   对同提交开关全关 exp 940400004（已冻结）单因子 compare：NO_SIGNIFICANT_DIFF、releasable=true。stub 下差异无意义。
+    #   对 baseline_p1（exp 102，共享 agri_eval）的单因子对比由调度方在共享库执行。
   - name: rule_offload.pest_priority
     layer: L4
     baseline: "baseline_p1.r2（多病虫害并发优先级排序只拒收、不注入）"
@@ -25,6 +33,10 @@ factors:
     metrics: [六可信度指标, 驳回原因分布, P95 延迟, token 成本]
     suites: [regression, 多病虫害并发陷阱组, holdout（发版时）]
     rollback: "关开关即回到只拒收；拒收规则常开不回退"
+    # P2-L4 记录（2026-11-04，stub 模型，待真实模型）：隔离评测库 p2l4_agri_eval_ev，regression+redteam n=5（173 样本 / 865 trial）。
+    #   candidate exp 940400006：865/865 PASS，citation_valid / numbers_match_calc 100%；对同提交开关全关 exp 940400004（已冻结）
+    #   单因子 compare：NO_SIGNIFICANT_DIFF、releasable=true。公开样本没有多对象同时达标，注入路径未触发（待补样本 / 待线上数据）。
+    #   对 baseline_p1（exp 102，共享 agri_eval）的单因子对比由调度方在共享库执行。
   - name: loader_strategy
     layer: L5
     baseline: "v0（enable_loader_v1 关）"

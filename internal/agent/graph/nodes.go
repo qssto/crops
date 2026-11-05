@@ -19,15 +19,17 @@ import (
 // argFieldID 是工具入参里的地块键（MCP 网关与 FixtureMCP 一致）。
 const argFieldID = "field_id"
 
-// knowledgeLimit 是 load_knowledge 截断条数。
+// knowledgeLimit 是 P1 load_knowledge 截断条数。P2 L5 起截断由加载策略的 Limit 决定，
+// v0（knowledge.PhaseZeroSpec）须等于它（loader_strategy_test 断言）。
 const knowledgeLimit = 8
 
 // callLLM 调用模型：成功返回 true；模型不可用（llm 重试后仍超时 / 5xx / 连接错误 / 限流）返回 false 且不报错，
 // 由调用节点走降级分支；回复内容不合规（llm.ErrBadReply）不算不可用，直接拒答 VALIDATION_FAILED 并返回 false；
 // ctx 已取消（含租约丢失）时返回错误，run 以失败收尾。
 func (a *Agent) callLLM(ctx context.Context, s *state, task llm.Task, in, out any) (bool, error) {
-	u, err := a.cfg.LLM.Do(ctx, a.cfg.Tier, task, in, out)
+	u, err := a.cfg.LLM.Do(ctx, a.cfg.Tier, task, a.llmInput(ctx, s, task, in), out) // P2 L6：上下文组装入口
 	s.usage.Add(u)
+	a.addTokens(ctx, s, u) // P2 L6：agent_run token 累计
 	if err == nil {
 		return true, nil
 	}
@@ -142,18 +144,15 @@ func (a *Agent) loadKnowledge(ctx context.Context, s *state) (*state, error) {
 	if s.stopped() {
 		return s, nil
 	}
-	sit := knowledge.Situation{Crop: s.env.crop, Region: s.env.region, Category: s.cls.Category, Target: s.cls.Target}
+	sit := knowledge.Situation{Crop: s.env.crop, Region: s.env.region, Category: s.cls.Category, Target: s.cls.Target,
+		RankTopic: s.cls.Topic}
 	if slices.Contains(knowledge.Stages, s.stage) {
 		sit.Stage = s.stage
 	}
-	hits, err := knowledge.Select(s.env.snap, s.env.tx, sit, knowledgeLimit)
-	if errors.Is(err, knowledge.ErrKBMiss) && sit.Stage == "" && sit.Target != "" {
-		// 生育期未知（本问未调物候工具）时，按防治对象条目自身的适用期加载；阈值仍由规则层按实测生育期判定。
-		if en, terr := s.env.targetEntry(sit.Target); terr == nil && len(en.Stage) > 0 && en.Stage[0] != knowledge.Wildcard {
-			sit.Stage = en.Stage[0]
-			hits, err = knowledge.Select(s.env.snap, s.env.tx, sit, knowledgeLimit)
-		}
-	}
+	st := a.loaderStrategy(ctx, s)
+	a.warnUnmatchedRules(ctx, s, st, s.cls.Category)
+	// 生育期未知（本问未调物候工具）时，selectKnowledge 按防治对象条目自身的适用期重选；阈值仍由规则层按实测生育期判定。
+	sit, picks, err := a.selectKnowledge(s, st, sit)
 	if errors.Is(err, knowledge.ErrKBMiss) {
 		s.refuseWith(RefuseKBMiss, err.Error())
 		return s, nil
@@ -161,8 +160,8 @@ func (a *Agent) loadKnowledge(ctx context.Context, s *state) (*state, error) {
 	if err != nil {
 		return s, fmt.Errorf("load knowledge: %w", err)
 	}
-	s.hits = hits
-	a.emitKBLoaded(ctx, s)
+	s.hits = knowledge.Entries(picks)
+	a.recordKnowledgeLoad(ctx, s, st, sit, picks)
 	return s, nil
 }
 
@@ -240,10 +239,13 @@ func (a *Agent) explain(ctx context.Context, s *state) (*state, error) {
 	for _, r := range s.dec.Reasons {
 		in.Reasons = append(in.Reasons, noDigits(r.Brief))
 	}
-	in.Reasons = append(in.Reasons, a.memoryHints(ctx, s)...) // L6 记忆注入（开关关闭为空）
+	s.history = a.memoryHints(ctx, s)
+	in.Reasons = append(in.Reasons, s.history...) // L6 记忆注入（开关关闭为空）
 	for i, n := range s.numbers {
 		in.Numbers = append(in.Numbers, llm.NumberSlot{Placeholder: placeholder(i), Field: n.Field, Label: noDigits(n.Label)})
 	}
+	s.offload = &offloadRun{modes: a.offloadModes(ctx, s)} // P2 L4：on 注入、shadow 输出后比对、off 只拒收
+	in.Constraints = a.offloadConstraints(s)
 	if !s.degraded {
 		var out llm.ExplainOutput
 		ok, err := a.callLLM(ctx, s, llm.TaskExplain, in, &out)
@@ -252,7 +254,7 @@ func (a *Agent) explain(ctx context.Context, s *state) (*state, error) {
 		}
 		if ok {
 			s.conclusion, s.modelWhy = out.Conclusion, out.Reasons
-			return s, nil
+			return s, a.shadowCompare(s)
 		}
 		if s.stopped() {
 			return s, nil // 回复不合规：已拒答 VALIDATION_FAILED

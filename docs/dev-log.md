@@ -1007,3 +1007,106 @@
 - holdout submodule 已挂载（指针 3464e86，`.gitmodules` url 为本地路径）：`TestHoldout_PublicHistoryClean` 实跑通过；`AS_EVAL_READER=qa-lead validate --holdout` 计 613 条、补写清单 0；非名单读者被拒。
 - 共享评测库经确认执行 `make migrate-eval`（agri_eval 2 → 4：0003_experiment_gate、0004_review_task）；迁移前的实验 107 因缺 `void_reason` 列置 FAILED，记录保留。
 - 验证：go build / vet（含 `-tags integration`）/ `go test ./...` 通过；`-race`（cmd/eval、evalkit、config）通过；`AS_TEST_NS=p2b2m make test-integration` 44 个包通过；service / repository `-p 1 -race` 通过；`make eval SUITE=regression,redteam N=5` → 实验 108（170 样本、850 trial、DONE，未作废，红线 pass^3 = 100%），`eval-compare baseline_p1 → 108 --fail-on-unreleasable` 结论 NO_SIGNIFICANT_DIFF、releasable=true；`make eval MODE=smoke TOKEN_BUDGET=1000000` → 实验 109（34 样本、102 trial、DONE）。
+
+## P2-L3 · 可信度指标口径、metrics.json、线上 rollup 与抽样 judge、日报（2026-11-04）
+
+- 口径表 `docs/p2/可信度指标口径表.md`（离线六指标 + 线上代理口径）。`reduce`：trial 归为不适用 / 计入 / infra_error / grader_error / UNKNOWN；fact_consistency、hallucination_rate 接 L2 judge（互斥不互补）；infra_error 不进分母单独计数；UNKNOWN 分子分母同剔，占比 > 10% 不可判；grader_error 整指标作废。红线按样本 Wilson，非红线按样本 bootstrap 1000 次（seed 20260101）。已知答案单测：pass^3(5,4)=0.4、Wilson 8/10。
+- judge 公共部分（材料、evidence 校验、录制回放、版本哈希）下沉 `internal/service/quality/judge`，evalkit 打分器包装复用；L2 judge 单测原样通过，另加 golden 测试锁 judge_versions。Wilson / Holm 放 `service/quality/stat`，reduce 复用。
+- 夜间（只 `trigger=nightly`）：`{exp}/metrics.json`（all + category / difficulty / 陷阱组切片）、`nightly/latest.json`、下钻页 `{exp}/report.html`（锚点 `sample-{id}` 列 run_id）。有 grader_error 不写 metrics.json，latest.json 记 void，日报显示「本期作废」。
+- worker 任务 `quality-daily`（`registerP2Loops("P2-L3")`，`quality.enabled` 缺省 false）：先取锁 `lock:p2job:online-judge-sample` 逐农场按时区抽样（每 category 定额，`CRC32(CONCAT(id, salt))`），先 `rl:model:{tier}` 再 `rl:judge:{tier}`，judge 出错或令牌耗尽该农场当日「未评」；再取锁 `lock:p2job:quality-metric-rollup` 写农场行与平台行（`tenant_id=0, farm_id=0`，由库内农场行重算，同键覆盖）、导入日报日的 OFFLINE 行、出日报 `report/daily/{yyyymmdd}.html` 并推摘要。不写 run_event。
+- 日报：离线 / 线上两栏，点估计、区间、对 `baseline_p1.r2` 差值（judge 未校准不做差、线上差值标参考）；切片 Holm 校正后显著变差才标红；离线单元格链 `{exp}/report.html#sample-{id}`，线上链 `/runs/{run_id}`；只含 ID 与聚合值。
+- 专家回写：`quality.Reviewer`（分数 1-3、专家号非 0）+ 乐观锁 SQL，冲突返回 `ErrJudgeRowConflict`；无 controller（待专家）。
+- 偏离：`online_judge_result.category` 放宽为 varchar(16)（同 advice_card）；线上数值准确率用 VALIDATION_FAILED 拒收占比代理；钉钉为 `RecordingNotifier`（只记日志，待运行）；judge 只有录制回放（无录制即 UNKNOWN，待真实模型）。
+- 合成数据人工对账（待线上数据）：`TestQualityJob_RollupRerun_Integration` 两农场 12 张卡（含一张 11-02 15:59:59Z 窗口外卡）。手算农场 1 引用 5/6、数值 6/7、拒答 2/8、事实 4/4；农场 2 为 2/2、2/3、1/3、2/2；平台 7/8、8/10、3/11、6/6（抽样估计），与库内行逐项一致；补跑行数与取值不变、judge 不重复调用。
+- 集成测试（`AS_TEST_NS=p2l3` 已过）：`TestQualityJob_RollupRerun_Integration`、`TestQualitySampleAdvice_Reproducible_Integration`、`TestQualityJudgeResult_DuplicateAndReview_Integration`、`TestQualityTokenBucket_Integration`。
+- 待办：连续 5 个工作日日报（待运行）；真实 judge 模型与专家评审页；钉钉通道；`baseline_experiment_id` 待基线实验写过 metrics.json 后配置；`make eval` 写共享 agri_eval，本层未跑，「报告不变」由代码路径与单测保证。
+- 评审修复（相对 ab7e0a7）：
+  - P1-1：compare 的 judge 指标（`MetricResult.NotGating`）不进 `overall()` 与适用计数，报告标「未校准，不进门禁」；只有 judge 指标适用时 `ErrNoMetric`（失败关闭）。
+  - P1-2：门禁终态非 DONE 的 nightly 按本期作废（不写 metrics.json，latest.json 记 void 与原因）。选「写 void」而不是「不更新 latest」：后者会让日报继续显示上一期的数。latest.json 写前读当前指针，按 `started_at`（同刻按 `experiment_id`）比较，旧的不覆盖新的；不用评审建议的 `finished_at`，因为 resume 会把它改成补跑时刻。读指针失败返回错误、不盲写。
+  - P1-3：单农场时区非法记 slog 警告并跳过该农场；「已完成」改为 eval 桶推送标记 `report/daily/{yyyymmdd}.sent.json`。Tick 见标记即跳过；rollup 锁内推送前复查，补跑只重写日报不重推；推送成功后写标记，写标记失败下周期可能重推一次（至少一次）。
+  - P2-1：抽样取到 `rl:model` 令牌而 `rl:judge` 被拒或出错时退还 model 令牌（`TokenBucket.Refund`，同一 Lua 脚本加 1 且不超过容量）。
+- 评审待办（只记录，未改）：令牌桶 60s 内最多放出约 2× 上限（满桶 + 匀速补充）；主链 `llm.New`（`internal/app/agent.go:55`）没接 Limiter，`rl:model` 共享额度目前只是名义；`repository/quality.go:114` upsert 多更新了 `is_estimate` / `experiment_id` 列；`offline.go:79` / `rollup.go:102` 重跑时口径变化（切片或指标消失）会留旧行；`judge/evidence.go:69` 的 Fold 与他处重复实现。
+
+## P2-L6 · 长对话压缩（2026-11-04）
+
+- 契约与登记：`contracts/compaction_state.schema.json`（run_state 引用）+ model 类型；RawKind `COMPACTED_MSGS` 与保留期；`configs/app.yaml` 新增 `compaction` 段（trigger_tokens 1200 / session_idle 30m / keep_recent_turns 4 / summary_max_tokens 300，**均待线上数据评审**）；约束词表 `policy/user_constraint_lexicon.yaml`。
+- `internal/agent/harness/compaction`：从业务表原料确定性提取白名单 facts（地块、作物 / 物候期、约束原句及轮次、工单与审批状态、驳回药剂、时效实测、已落卡结论、kb 引用）；保留最近 4 轮原文，更早轮次交轻量档压成摘要；最终 prompt 上逐字段断言（取值与业务表重读值比对），任一不符放弃压缩、发 `COMPACTION_FAILED`、用完整上下文继续（失败关闭），通过发 `COMPACTION_APPLIED`（前后 token 数）；被压缩原文经 RawStore 写 `COMPACTED_MSGS`，state 只存 raw id。红线用例先写应失败测试。
+- 触发口径偏离：按会话块中可压缩部分（摘要 + 原文轮次）估算 token 判触发，白名单 facts 不计入，否则 facts 本身超阈值后每轮重复触发，与「压缩后估算值回落」矛盾。`agent_run.prompt_tokens` 只做成本统计。
+- 主链路：graph `callLLM` 组装会话块（任务 input 末尾 `session` 键），token 累计；检查点 payload 与 `agent_run.compaction_state` 同事务写入，终态 UPDATE 一并写；resume 以检查点为准，版本不识别按无压缩。
+- 会话续接：ask 入口 `prev_run_id`（同 tenant / farm / field / user、终态、updated_at 在 session_idle 内；不满足开新会话）与 resume 产生的 superseded 新 run 在 INSERT 同事务复制 compaction_state；**只在 `enable_compaction` 开时续接**，关时 prev_run_id 忽略、行为与 P1 一致。
+- 评测接缝（commit 33f8dbf、8763e4a）：样本 `fixtures.session` 播种前序轮次（run + RUN_STARTED + 建议卡 + kb 引用），经生产 `AskService.CreateRun` 建续接 run；trial 记录会话观测（开关、是否续接、业务表重读原料、各次 LLM_IO 的 user 消息）。
+- 评测资产（单独提交 2a977a7）：capability 新增 rice-cap-0003（14 轮）/ 0004（10 轮），`expect.compaction.constraints` 列约束原句；打分器 `compaction_retained` 按 (prompt × 须保留项) 计保留率，100% 才通过。**非红线**（路线：多轮样本只计质量指标，不进红线 gate），故 smoke.yaml 不变（公共规则 7 只约束红线打分器）。`cmd/eval/main_test.go` 样本数 535 → 537。
+- 关闭不变证据（worktree 隔离库 `p2l6_agri_eval_it`，regression n=1，桩模型）：实验 900000000（基线 e8d4b82）、900000001（33f8dbf 关）、900000002（33f8dbf 开）归一化报告只差延迟列，samples_hash 均为 `9650280d…e36f1`；资产提交后 900000006（关）与 900000001 相比只多一行 `compaction_retained 无适用样本`，samples_hash 不变。小规模 capability（rice-cap-0001/0003/0004）：900000004（关）compaction_retained 无适用样本，900000005（开）适用 2、通过率 1.00，两次 samples_hash 同为 `990975c4…3757`；rice-cap-0001 在开关两侧同样 refuse_reason DATA_MISSING ≠ KB_MISS，与本批无关。
+- 集成测试（`AS_TEST_NS=p2l6`）：repository `TestCreateRunLinked_Session_Integration`、`TestCreateRunLinked_Supersede_Integration`、`TestCompactionStatePersisted_Integration`、`TestLoadSession_Integration`、`TestCompactionRateAndRawIDs_Integration`；app `TestCompaction_RestartResume_Integration`（续接 → 压缩 → 中断 → 新 App 续跑，已完成步骤零重复）。
+- 待办：阈值待线上数据；压缩前后 token 成本对比与长会话结论一致性待真实模型（桩模型 token 为 0）；`enable_compaction` 离线达标后按农场灰度。
+- 风险：facts 里的数字与 explain prompt 的数字规则需真实模型观察；PII 脱敏改写白名单原文时打分器会判丢失（修复轮后断言改为对脱敏值比对，见下）；compaction_count 按 run 计，不跨会话累加；隔离库实验号（9000000xx）的 transcript 写进共享评测桶 agri-steward-eval，键按实验号区分，其他 NS 用同号会互相覆盖；（修复轮已在 rice-cap-0003 / 0004 播种工单 / 驳回药剂 / 时效实测，见下）。
+
+### P2-L6 修复轮（只读评审 f272881 后，2026-11-05）
+
+- P1-1 断言失败回退：用重读值重建 facts 再发完整上下文，不再发首读事实；断言测试覆盖「首读后工单取消 / 票驳回」。
+- P1-2 / P1-3 过时结论与否决来源：`SessionOrder` 带 `advice_id`，作业单 REJECTED / CANCELED 对应的建议卡不进 `confirmed_conclusions`；`vetoed_products` 两个来源：最新票 REJECTED + PRODUCT（`REJECTED_ORDER`，ref=票 id）与 `work_order_transition` 终态 CANCELED 且 reason_code=`CANCELED_BY_USER`（`USER_CANCELED`，ref=单 id）。用户否决有业务表可读，无偏差登记。
+- P1-5 PII：Engine 注入 `Mask`（生产为 `pii.Mask`），每次读出会话原料后先对自由文本脱敏（`rejection_reason.reason_text` 落库时未脱敏），会话块、`compaction_state`、检查点只含脱敏值，断言也对脱敏值比对；`COMPACTION_FAILED` reason 经 `pii.Mask` 后发出。
+- P2 总量硬上限：facts 计入组装后估算，`compaction.max_block_tokens` 6000 为硬上限；超出发 `COMPACTION_FAILED{kind:TRIMMED}`，按既定顺序裁非白名单内容（先最早原文轮次，仍超再去摘要；只剩 facts 仍超时在 reason 注明，白名单照发），白名单 facts 不裁。摘要加 `compaction.summary_timeout` 10s，超时走 `COMPACTION_FAILED{kind:FALLBACK}` 回退。均**待线上数据评审**。
+- P2 会话链 32 层截断：截断时发 `COMPACTION_FAILED{kind:SESSION_TRUNCATED}`；否决 / 约束按 field + user 从业务表汇总，不依赖链深。未新增事件类型（kind 区分 FALLBACK / TRIMMED / SESSION_TRUNCATED）。
+- P2 token 累计：`graph.addTokens` 不受 `enable_compaction` 控制，flag 关时也会累计 `agent_run.prompt_tokens / completion_tokens`（简报既定行为）。P1 只在 `LLM_CALL_END` payload 与 tracer 日志记 token，没有 agent_run 列；L6 写入的是同一组值，只做成本统计，不影响决策与报告。桩模型 usage 为 0 时不写。
+- P2 评测：rice-cap-0003 / 0004 加长到 20 / 19 轮，自由文本估算 1918 / 1874 token（阈值 1200），`expect.compaction.compacted: true`；0003 播种 PRODUCT 驳回的噻虫嗪单与一新一旧虫口实测，0004 播种用户中止的吡虫啉单与一新一旧天气实测。`env.SeedSession` 写 work_order / approval_ticket / rejection_reason / work_order_transition / tool_call；真值改由 `env.ReadSessionTruth` 独立 SQL 读取（不复用生产 `LoadSession`，集成测试核对两者一致）。`compaction_retained` 要求 compacted 样本有 `COMPACTION_APPLIED`、无 FALLBACK 失败、每条 prompt 带摘要；已否决 / 取消单的结论、已取代实测出现在 facts 即扣分；实测摘要 JSON 按取值比较（prompt 按 Go map 重编码键序与 MySQL JSON 列不同）。
+- repository：`sessionOrders` 取消原因子查询改为显式 `tenant_id=? AND farm_id=?`（`TestSQL_ScopePrefix`）。
+- 证据（`p2l6_agri_eval_it`，桩模型，n=1）：regression 900000007（关）/ 900000008（开）131 通过；capability 900000012（关）compaction_retained 无适用样本，900000013（开）适用 2、通过率 1.00；transcript 中 rice-cap-0003 run 21 `COMPACTION_APPLIED{tokens_before:2649, tokens_after:1354}`，rice-cap-0004 run 20 `COMPACTION_APPLIED{tokens_before:2588, tokens_after:1343}`，无 COMPACTION_FAILED。
+- P3 已改：`decodeState` 解码失败记 `slog.Warn` 并按无状态处理。
+- 待办（P3 未改）：Deterministic 摘要器保头截尾，长会话里中段信息先丢；resume supersede 取 `old.prev_run_id`，被替代 run 上的取消单不再出现在新 run 会话里；同一 prev 并发两问会形成会话分叉；crop / stage 仍取自建议卡，未改读 field_profile。
+
+## P2-L5 · 知识加载策略：版本化必加 / 排序 / 截断、加载明细与指标（2026-11-04）
+
+- 策略：`knowledge.Strategy`（`strategy.go`）按 `configs/loader/{v0,v1}.yaml` 构造（`config.LoadLoaderStrategies`，Viper UnmarshalExact，缺文件 / 未知字段 / 非法 order 键启动失败）。v0 = Phase 0 现行 Select（limit 8，order [authority, specificity]，app 测试断言与 `PhaseZeroSpec()` 逐项相同）；v1 = 植保必加 common/safety/phi + operation_window spray / uav、施肥必加 `{crop}/fertilization.md` 公式段，order [authority, topic_match, specificity, stage_match, version]，limit 8。必加只从情境过滤后的命中里取，红线由 `TestLoadKnowledgeLoaders_V1RedLines` 断言。
+- 选择：graph 加载节点按 `enable_loader_v1`（`agent.FlagOn`，读失败 / v1 未装配回落 v0）选策略；runner 内写 `agent_run.loader_strategy` 与 kb_load_item，下发前复检（runner 外）不写。KB_LOADED 加 `strategy` / `situation`（含 rank_topic）/ `items`（pick_reason、rank）/ `load_seq`。
+- limit 偏离路线（≤ 5 未采用）：桩模型 regression + redteam 的 must_cite 加载数 v0 317/340；v1 limit 5 / 6 / 7 / 8 = 306 / 309 / 317 / 320。limit 7 在 cmd/eval 只跑 regression 时植保少 1 条（174 vs 175/187），定 8。
+- 迁移 0015_kb_load_item（定版 SQL）；`retention.table_days.kb_load_item: 180`，`service.KBLoadRetention` 按农场分批删（每批 5000）。
+- **给 L3**：线上加载精度 `repository.KBLoadItemRepo.OnlineLoadPrecision(ctx, scope, from, to) (float64, bool, error)`，指标名 `repository.MetricOnlineLoadPrecision = "kb_load_precision"`（RANKED 被引用 / RANKED，排除 MUST_INCLUDE / COMMON；无 RANKED 时 ok=false）。离线指标在 `reduce.LoadMetrics`：`kb_load_hit_rate`、`kb_load_precision`、`kb_load_irrelevant_rate`（越低越好），不在 QualityMetrics。
+- 评测资产（单独提交 7689768）：报告「## 知识加载指标」按问题类型切片 + 合计；报告同目录 `kb_load_gaps.json` 给 **L8**：`kb_miss[] {sample_id, question_type, topic, trials}`、`low_hit[] {topic, hit{Num,Den}, hit_rate, missing[], samples[], strategy[]}`（命中率 < 0.9 的 topic）。无加载观测时不写，holdout 脱敏副本不带观测。
+- `cmd/eval --loader` 默认留空，取 `--config` 同目录 `loader/`。
+- 桩模型全量 regression（131 样本 n=1，开关关 → 开）：命中率 175/187 → 177/187，精度 108/363（29.75%）→ 99/303（32.67%），植保精度 35.0% → 50.0%；无关注入率两边 0%（情境过滤已按作物 / 生育期 / 类型筛）。全部 PASS。
+- 开关关闭不变：base e8d4b82 与 6118ab6 各跑 35 样本，报告除 exp_id / git_sha / 时间 / 延迟外一致，samples_hash `be5ee974…` 相同，loader_strategy v0。
+- 集成测试：`TestKBLoadItemRepo_Integration`、`TestRun_LoaderV1Report_Integration`（`AS_TEST_NS=p2l5b`）。
+- 待办：v1 对 baseline_p1 的比较待真实模型；§6.6 第 1 条 20 样本人工核对待专家（以已知答案单测与全量回归数代替）；`make eval` 待调度方主仓跑。
+
+### P2-L5 评审修复（2026-11-04）
+
+- **P0 安全必加补全**：v1 植保必加改为整份 `common/safety.md` + `common/operation_window.md`（按文件规则，情境过滤后取），植保情境下 8 条安全条目（phi、mixing、resistance、ppe、registration、spray、uav、dosage-dilution）全部必加。原 v1 因排序键 version 把 v2 uav 提前、topic_match 挤掉 mixing / dosage-dilution / ppe / registration。`TestLoadKnowledgeLoaders_V1RedLines` 改为逐 kb_id 断言；`TestLoadKnowledgeLoaders_V1KeepsV0SafetyEntries` 遍历全部植保情境，v0 能加载的安全条目 v1 一条不丢（旧 v1.yaml 下丢 mixing 19、ppe 4、registration 2、dosage-dilution 1 次）。
+- **v1 上限 8 → 10（偏离路线，安全优先）**：必加 8 条 + 2 个专属名额；≤ 5 装不下必加。桩模型 regression + redteam must_cite 加载数 v0 317/340，v1 limit 9 / 10 = 319 / 321，11 / 12 不再增加；施肥 / 灌溉 / 灾害加载与 limit 8 相同。代价是植保每问约多 2 条条目的提示词 token。`knowledge.MaxLimit = 12`。
+- **P1-1 必加超上限**：`Strategy.Select` 必加条目数 > Limit-1 时返回 `knowledge.ErrMustIncludeOverLimit`；最后一个名额留给 RANKED 专属条目（必加之外尚无专属条目时）。启动时 `Strategy.Check(snap)` 对快照各情境算最大必加数，超了 `LoadKnowledgeLoaders` 失败。
+- **P1-2 规则拼错**：`Check` 要求每条必加规则在装配快照里至少匹配一个本类别条目（`UnmatchedRules`），拼错 kb_id / 文件名、跨类别规则启动失败；v1 缺 protect / fertilize 规则、空 v1.yaml、空 must_include 拒绝。运行时 load_knowledge 对当次快照再算一次，有未匹配规则打 `slog.Warn`（不报错）。
+- **P2 resume 明细混杂**：`InsertKBLoadItems` 改为 `ReplaceKBLoadItems`，同一事务删 (tenant, farm, run_id, load_seq) 旧行再整批插，resume 换策略只留最后一次。
+- **P2 清理任务列农场**：`KBLoadFarms` 改 `SELECT tenant_id, farm_id FROM kb_load_item GROUP BY tenant_id, farm_id HAVING MIN(created_at) < ?`，ANALYZE 后 EXPLAIN 为 idx_scope_time「Using index for group-by」（集成测试断言；依赖表统计，新表未统计时为全索引扫描）。
+- **P3**：首次执行取 v0 不写 `agent_run.loader_strategy`（列默认 v0）；v1 照写；resume 总写，覆盖中断前的 v1。
+- 桩模型全量 regression（131 样本 n=1）：开关关命中率 175/187（93.58%）、精度 108/363（29.75%）；开关开（limit 10）命中率 178/187（95.19%）、精度 99/301（32.89%）、无关注入率 0/752。植保 113/113、精度 51.09%（v0 110/113、35.04%）；施肥精度 26.03%（v0 30.00%，公式段必加所致，修复前已存在）；灌溉 / 灾害不变。citation_valid 1.00（131/131）。
+- 开关关闭不变：修复后与修复前开关关报告除时间 / exp_id / git_sha / 并行工具顺序外一致，samples_hash `9650280d…` 相同，loader_strategy v0。
+- 集成测试 NS 改用 `AS_TEST_NS=p2l5c`（repository、internal/agent/...、cmd/eval，`-p 1`）。
+
+## P2-L4 · 规则与模型职责再切分：作业窗口 / 混用禁忌 / 多病虫害优先级下沉（2026-11-04）
+
+- 清单与覆盖检查：`docs/p2/L4-待下沉清单.md`。证据为样本问题文本 + exp 102 transcript（无线上 run，全部标待线上数据）。覆盖检查发现两处绕过并先写应失败测试再修（`bd2d620`）：施肥时期与当前生育期不符仍出作业类结论；模型原文推荐候选外药剂。PHI 无绕过（`phi_interval` 闸门拦截）。
+- 规则（`internal/agent/calc`）：`Window`（`op-window-v1`）、`TankMix` / `ForbiddenPartners`（`tank-mix-v1`，作用机理分组 + 碱性 × 遇碱分解 + 氰氟草酯 × 激素类）、`PestPriority`（`pest-prio-v1`）。`output_validator` 三项拒收常开、不读开关（`guardrail/offload.go`）。
+- 注入（`graph/rules_offload*.go`，nodes.go 只改 choose / explain 入参组装）：off 不注入且 explain 入参逐字节同 P1（`constraints` omitempty）；shadow 不注入，用 `guardrail.CheckRules` 比对后与建议卡同事务写 `rule_shadow_diff`（`ON DUPLICATE KEY UPDATE id = id`，拒答 advice_id=0），发 `RULE_SHADOW_DIFF`；on 注入 explain。开关读失败按 off。
+- 差异率与清理：`RuleShadowDiffRepo.DiffRates` / `PurgeBatch` 照抄 §6.5 SQL；`configs/app.yaml` 新增 `rule_offload` 段（180 天 / 24h），`registerP2Loops("P2-L4")` 登记清理任务，`lock:p2job:rule-shadow-purge` 单实例互斥。archtest SystemScope 白名单追加 `internal/app/rule_offload.go`。
+- 评测资产（单独提交 `a30815a`）：`conflict_blocked` 红线打分器（按 kind 分派，复用 `guardrail.TankMixConflict`，供 P3 L5 加 kind）、`expect.conflict` + `conflict_shape` 校验、`redteam/tank_mix` 3 条（rt-mix-0001..0003，claude-draft / pending_expert）、smoke 补 2 条（清单上限 35 → 40）；validate 535 → 538；L0 回填测试排除 P1 出口后新增样本。
+- 开关全关回归（资产提交前 `cc22557`）：exp 940400001，170 样本 850 trial 全 PASS，samples_hash `4af24c28…a688` 与 exp 102 / 108 相同；报告与 exp 108 相比，去掉时间字段与并行工具调用顺序后只差 exp_id 与 git_sha。
+- 资产提交上（`22d6f8b`，隔离库 `p2l4_agri_eval_ev`）：全关 exp 940400004（173 样本 865 trial 全 PASS，samples_hash `d12f2247…45ee`，conflict_blocked 15 trial 适用 100%）；tank_mix / pest_priority / operation_window = on 分别为 exp 940400005 / 006 / 007，均 865/865 PASS、红线 100%，对 940400004 单因子 compare 均 NO_SIGNIFICANT_DIFF（stub，待真实模型）；三项 shadow 跑 redteam n=1（exp 940400003）42/42 PASS。记录见 `eval/gates/factors.yaml`。
+- 集成测试（`AS_TEST_NS=p2l4c` 已过）：`TestAdviceRepo_SaveAdviceWithShadow_Integration`、`TestRuleShadowDiffRepo_RatesAndPurge_Integration`。
+- 待办：线上 run 回查驳回原因补证据、shadow 差异率阈值与切 on 条件（待线上数据）；对 baseline_p1 的单因子对比在共享库执行、真实模型接入后 explain 提示词说明 `constraints` 并升 prompt_version（待真实模型）；分组表 / 窗口阈值 / 优先级口径与 3 条样本（待专家）；pest_priority 缺多对象同时达标的公开样本。
+
+### P2-L4 评审修复（只读评审 f3441e6 后，2026-11-05；子 agent 中途因 API 错误退出，本节由调度方补记）
+
+- 药名词表归一化（`fee7595`）：NFKC + 去空白与零宽字符（`NormalizeText`），`NewLexicon / Canonical / Find` 统一归一化，新增 `Prefix` 供否定作用域链接药名。
+- 否定作用域与绕过（`6d81488`）：下沉项与原文药名校验改为分句内否定作用域（`claim.go`）；混配跨卡片合并判定；窗口补齐日期解析；单字用药动词算推荐，无候选时拒收任何推荐药剂；历史豁免只认注入记忆；打分器把 `selected_product` 登记 id 映射为通用名；词表按快照缓存。
+- 清理任务列农场（`b11757e`）：`ShadowFarms` 改 `GROUP BY tenant_id, farm_id HAVING MIN(created_at) < ?`；SystemScope 提为包级变量。
+- 评测资产（`97348d8`、`ba4549a`）：redteam/tank_mix 补审查绕过写法 rt-mix-0004（目的从句「以避免」）/ 0005（无混配词「加…同时喷施」）/ 0006（跨分句「…，建议一桶打」）；0005 / 0006 问句补「混着用 / 能不能混」，让桩模型分到安全类意图。validate 538 → 541（与 L6 合并后 543），l0 `addedAfterP1Exit` = rt-mix-0001..0006。
+- 误报修复（`6eeb27a`）：「…中选用 / 任选其一 / 选用其一 / 或」多选一与「轮换 / 交替使用」的列举不计入同桶（主仓 N=5 发现 holdout 一条多选一建议被判混配）。
+- 证据（隔离库 `p2l4_agri_eval_ev`，桩模型）：ba4549a 全关 exp 4 regression + redteam N=5 880/880 PASS；tank_mix / pest_priority / operation_window = on 各跑 redteam N=5（exp 5 / 6 / 7）均 45/45 PASS。6eeb27a 上 exp 2 为 870/880（rt-mix-0005 / 0006 未分到安全意图，ba4549a 修正）。集成：repository / app 与 `cmd/eval`（`-timeout 30m`，NS p2l4c）在 ba4549a 通过。
+
+### 第 3 批（P2-L3 / L4 / L5 / L6）调度方合并验证（2026-11-05）
+
+- 合并：`p2-b3-merge` = `p2-b3-base` e8d4b82 + p2-l3 e7cb8b8 + p2-l6 e1399be + p2-l5 1806dbf + p2-l4 ba4549a。冲突在 `configs/app.yaml`（quality / compaction / rule_offload 段）、`internal/app/app.go` Deps、`internal/config/config.go` 各 setXxxDefaults、`sample/rules.go` 与 `sample.go`（Compaction / Conflict）、`trajectory.go` 红线打分器表、`archtest` SystemScope 白名单、dev-log，均两边保留；`cmd/eval/main_test.go` 样本数改为 543。
+- 期间 MySQL 数据目录损坏后重建：按迁移建表再 IMPORT TABLESPACE 导入旧 .ibd，共享库数据全量恢复（agri_eval experiment 109 行、trial 13715 行）；隔离测试库全部丢弃，各层在新库重跑验证。
+- 测试：`go build / vet / vet -tags integration / test ./...`、`go test -race ./...` 通过；`AS_TEST_NS=p2b3v` 全量集成 `-p 1 -timeout 40m` 通过；service / repository `-tags integration -race -p 1` 通过。
+- 评测（共享 agri_eval）：`make eval SUITE=regression,redteam N=5` → exp 110（c576ee1）176 样本 / 880 trial 全 PASS，grader_error 0、infra_error 0，红线 pass^k 样本均值 1.0000，flaky 无，隔离 6 个（rice-rcpt-*）未运行；`compare --baseline baseline_p1 --candidate 110 --fail-on-unreleasable` → 配对 170 / 排除 6、`NO_SIGNIFICANT_DIFF`、可放行。`make eval MODE=smoke TOKEN_BUDGET=1000000` → exp 111，36 样本 108 trial 全 PASS。所有 P2 开关缺省关。
+- 偏离路线：L5 v1 加载上限 10（路线 ≤ 5，安全必加 8 条装不下）。业务迁移 0012-0015 未对共享 agri_steward 执行（待用户批准）。

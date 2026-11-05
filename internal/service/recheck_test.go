@@ -98,7 +98,7 @@ func TestRecheckService_PreDispatch(t *testing.T) {
 			if tt.wantErr == nil && got.NewRunID != tt.wantRun {
 				t.Errorf("new run = %d, want %d", got.NewRunID, tt.wantRun)
 			}
-			if tt.wantRun != 0 && (len(starter.inputs) != 1 || starter.inputs[0] != (AskInput{FieldID: 3, Text: q.Text})) {
+			if tt.wantRun != 0 && (len(starter.inputs) != 1 || starter.inputs[0] != (AskInput{FieldID: 3, Text: q.Text, Supersedes: q.RunID})) {
 				t.Errorf("reask inputs = %+v", starter.inputs)
 			}
 		})

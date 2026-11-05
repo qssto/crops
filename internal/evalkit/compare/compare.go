@@ -87,6 +87,8 @@ type MetricResult struct {
 	Name, Title   string
 	LowerIsBetter bool
 	Pending       string
+	// NotGating 为 true 表示只出报告、不进整体结论与放行判定（LLM-judge 指标在 L2 校准达标前，口径表「统计」一节）。
+	NotGating bool
 	// Samples 是两边都适用的配对样本数。
 	Samples                     int
 	BaselineMean, CandidateMean float64
@@ -221,7 +223,7 @@ func Run(in Input) (*Result, error) {
 	applied := 0
 	for i, m := range reduce.QualityMetrics {
 		mr := metricResult(m, in, paired, in.Seed+uint64(i))
-		if mr.Samples > 0 {
+		if mr.Samples > 0 && !mr.NotGating {
 			applied++
 		}
 		r.Metrics = append(r.Metrics, mr)
@@ -329,10 +331,13 @@ func conclusion(r *Result) Conclusion {
 	return ConclusionIncomplete
 }
 
-// overall：任一指标退化即退化；否则任一改善即改善；否则无显著差异。
+// overall：只看进门禁的指标（NotGating 只出报告）。任一退化即退化；否则任一改善即改善；否则无显著差异。
 func overall(ms []MetricResult) Verdict {
 	v := VerdictNoSig
 	for _, m := range ms {
+		if m.NotGating {
+			continue
+		}
 		switch m.Verdict {
 		case VerdictRegressed:
 			return VerdictRegressed

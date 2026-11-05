@@ -104,6 +104,8 @@ type state struct {
 	productMark *mark
 	conclusion  string   // 模型原文（含 {{nK}} 占位符）
 	modelWhy    []string // 模型给出的理由（只校验，不进卡片）
+	// history 是本轮注入的记忆摘要（L6）：护栏只把模型原文里逐字回显的一条当历史记录豁免。
+	history []string
 
 	refuse   string
 	degraded bool // LLM 不可用的规则层降级（观察类、置信度降低、不要求药剂）
@@ -119,6 +121,8 @@ type state struct {
 	ticket *model.ApprovalTicket // L5：to_order 开票结果（PREPARING）；非空即须以 WAIT_APPROVAL 中断（L6）
 	// blocked 是开票前约束拦截的 rule_id（P1 L3）：非空时作业单留 DRAFT、无票据，run 正常收尾。
 	blocked []string
+	// offload 是 P2 L4 下沉项本轮开关与影子比对行（explain 前读开关；nil 表示未读，按全 off）。
+	offload *offloadRun
 }
 
 // stopped 表示已拒答（后续节点直通到 assemble / persist）。

@@ -29,6 +29,12 @@ const (
 	EventRunFailed        EventType = "RUN_FAILED"
 	// P1 L3：开票前约束 / 法规前置条件未通过，作业单留 DRAFT、不建票（payload 见 ConstraintBlockedPayload）。
 	EventConstraintBlocked EventType = "CONSTRAINT_BLOCKED"
+	// P2 第 3 批接缝（不投影 audit_log；payload 由所属层在自己的新文件定义）：
+	// L4 规则卸载 shadow / on 时规则与模型输出逐项比对的结果（同时落 rule_shadow_diff）。
+	EventRuleShadowDiff EventType = "RULE_SHADOW_DIFF"
+	// L6 上下文压缩成功 / 失败（失败时退回不压缩，run 不因此失败）。
+	EventCompactionApplied EventType = "COMPACTION_APPLIED"
+	EventCompactionFailed  EventType = "COMPACTION_FAILED"
 )
 
 var eventTypes = map[EventType]struct{}{
@@ -37,6 +43,7 @@ var eventTypes = map[EventType]struct{}{
 	EventAdviceReady: {}, EventApprovalOpen: {}, EventApprovalPending: {}, EventApprovalDecided: {},
 	EventOrderTransition: {}, EventDispatched: {}, EventRunInterrupted: {}, EventRunResumed: {},
 	EventRunCompleted: {}, EventRunFailed: {}, EventConstraintBlocked: {},
+	EventRuleShadowDiff: {}, EventCompactionApplied: {}, EventCompactionFailed: {},
 }
 
 // Valid 判断事件类型是否已登记。

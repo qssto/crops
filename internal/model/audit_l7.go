@@ -12,7 +12,8 @@ var ErrRawExpired = errors.New("原文已过保留期")
 
 // RawKinds 返回全部已登记的 raw_object.kind（retention 配置须逐个声明天数）。
 func RawKinds() []RawKind {
-	return []RawKind{RawLLMIO, RawToolRaw, RawSnapshot, RawCheckpoint, RawExport, RawDeviceCmd, RawReceiptRaw}
+	return []RawKind{RawLLMIO, RawToolRaw, RawSnapshot, RawCheckpoint, RawExport, RawDeviceCmd, RawReceiptRaw,
+		RawCompactedMsgs}
 }
 
 // 审计导出（outbox topic audit.export）的状态，写在 outbox.payload.state。

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"strconv"
+	"time"
 
 	"github.com/minio/minio-go/v7"
 	"gorm.io/gorm"
@@ -120,15 +121,8 @@ func (r *CheckpointRepo) Set(ctx context.Context, checkpointID string, payload [
 			t.Scope.TenantID, t.Scope.FarmID, t.RunID, seq, inline, rawID, len(payload), now).Error; err != nil {
 			return fmt.Errorf("repository: insert run_checkpoint run %d seq %d: %w", t.RunID, seq, err)
 		}
-		upd := tx.WithContext(ctx).Exec(
-			`UPDATE agent_run SET status='INTERRUPTED', interrupt_type=?, row_ver=row_ver+1, updated_at=?
- WHERE tenant_id=? AND farm_id=? AND id=? AND status='RUNNING' AND row_ver=?`,
-			string(t.Interrupt), now, t.Scope.TenantID, t.Scope.FarmID, t.RunID, run.RowVer)
-		if upd.Error != nil {
-			return fmt.Errorf("repository: interrupt agent_run %d: %w", t.RunID, upd.Error)
-		}
-		if upd.RowsAffected == 0 {
-			return fmt.Errorf("repository: agent_run %d row_ver %d: %w", t.RunID, run.RowVer, model.ErrConcurrentUpdate)
+		if err := r.interruptRun(ctx, tx, t, run.RowVer, now); err != nil {
+			return err
 		}
 		// 只保留最近 checkpointKeep 份（文档未给 SQL，按 uk_run_seq 前缀删除）
 		if err := tx.WithContext(ctx).Exec(
@@ -138,6 +132,29 @@ func (r *CheckpointRepo) Set(ctx context.Context, checkpointID string, payload [
 		}
 		return nil
 	})
+}
+
+// interruptRun 把 RUNNING 置为 INTERRUPTED（row_ver 守卫）。P2 L6：ctx 载体带压缩状态时走 §6.7 中断 UPDATE
+// （一并写 compaction_state / count），interrupt_type 同事务补写；否则 SQL 与 P1 相同。
+func (r *CheckpointRepo) interruptRun(ctx context.Context, tx *gorm.DB, t agent.CheckpointTarget, rowVer int, now time.Time) error {
+	handled, err := compactedUpdate(ctx, tx, t.Scope, t.RunID, model.RunInterrupted, rowVer, now)
+	if err != nil {
+		return err
+	}
+	if handled {
+		return setRunColumn(ctx, tx, t.Scope, t.RunID, "interrupt_type", string(t.Interrupt))
+	}
+	upd := tx.WithContext(ctx).Exec(
+		`UPDATE agent_run SET status='INTERRUPTED', interrupt_type=?, row_ver=row_ver+1, updated_at=?
+ WHERE tenant_id=? AND farm_id=? AND id=? AND status='RUNNING' AND row_ver=?`,
+		string(t.Interrupt), now, t.Scope.TenantID, t.Scope.FarmID, t.RunID, rowVer)
+	if upd.Error != nil {
+		return fmt.Errorf("repository: interrupt agent_run %d: %w", t.RunID, upd.Error)
+	}
+	if upd.RowsAffected == 0 {
+		return fmt.Errorf("repository: agent_run %d row_ver %d: %w", t.RunID, rowVer, model.ErrConcurrentUpdate)
+	}
+	return nil
 }
 
 // spill 决定 payload 入库方式：≤ 上限原样入库；超限先写 MinIO（raw_object.kind=CHECKPOINT），库内只存 raw_object_id。

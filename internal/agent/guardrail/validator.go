@@ -66,6 +66,51 @@ type Input struct {
 	// RequireProduct：施药作业类且非降级时必须选定药剂。
 	RequireProduct bool
 	KB             Knowledge
+	// Rules 是规则层对 P2 L4 下沉项的结论（nil 不校验）；拒收不受 rule_offload.* 开关影响（offload.go）。
+	Rules *RuleOutputs
+	// Mentions 是模型原文药名的规则输入（P2 L4 覆盖检查，nil 不校验）：规则层无药剂候选时 Allowed 为空，
+	// 原文肯定推荐任何药剂都拒收。
+	Mentions *ProductMentions
+	// History 是本轮注入的记忆摘要：ModelText 里与其中一条逐字相同（归一化后）的一条是回显，不算本次主张；
+	// 模型自己写的「历史记录：…」照常校验。
+	History []string
+}
+
+// ProductMentions：模型原文肯定地推荐的药剂（分句含不被否定的推荐 / 混配 / 作业用语与药名）必须在 Allowed
+// （规则层候选的通用名）内。
+type ProductMentions struct {
+	Lexicon calc.Lexicon
+	Allowed []string
+}
+
+// recommendPattern 是推荐 / 使用用语（不含「用过」这类陈述既往用药的写法）。
+const recommendPattern = `建议|推荐|改用|换用|选用|可用|可以用|可选|施用|使用|喷施`
+
+var (
+	recommendWords = regexp.MustCompile(recommendPattern)
+	// claimWords 是药名推荐主张的用语：推荐、混配、作业用语、单字用药动词（「明天喷吡虫啉」「打一遍吡虫啉」）与
+	// 单字「防 / 治」（「吡虫啉防飞虱」）。
+	claimWords = regexp.MustCompile(recommendPattern + `|` + mixPattern + `|` + actionPattern + `|` + singleVerbs + `|防|治`)
+)
+
+// mentions：卡片药剂字段之外，模型原文也不得推荐规则层候选之外的药剂。否定只作用于其直接修饰的药名 / 用语
+// （claim.go），只陈述既往用药、以否定评价结尾、注入记忆的回显不算推荐。
+func mentions(in Input) *Violation {
+	m := in.Mentions
+	if m == nil {
+		return nil
+	}
+	for _, c := range parseClauses(in.ModelText, in.History, lexiconLinker(m.Lexicon)) {
+		if c.history || c.affirmed(claimWords) == nil || c.pastOnly() {
+			continue
+		}
+		for _, p := range c.mentions(m.Lexicon) {
+			if !slices.Contains(m.Allowed, p.Canonical) {
+				return violation(CheckProduct, "model text recommends %s outside candidates (%q)", p.Canonical, c.text)
+			}
+		}
+	}
+	return nil
 }
 
 // OutputValidator 构造后只读，并发安全。
@@ -106,8 +151,8 @@ func New() (*OutputValidator, error) {
 	return &OutputValidator{card: sch}, nil
 }
 
-// Validate 按 schema → 引用 → 数值 → 药剂 顺序校验，返回第一处不合规；nil 表示通过。
-// 拒答卡只做 schema 校验。
+// Validate 按 schema → 引用 → 数值 → 药剂 → 下沉项（P2 L4）→ 原文药名（P2 L4 覆盖检查）顺序校验，返回第一处不合规；
+// nil 表示通过。原文药名排在下沉项之后：建议禁忌混用时报告 tank_mix。拒答卡只做 schema 校验。
 func (v *OutputValidator) Validate(in Input) *Violation {
 	if in.Card == nil {
 		return violation(CheckSchema, "no advice card")
@@ -118,7 +163,7 @@ func (v *OutputValidator) Validate(in Input) *Violation {
 	if in.Card.Outcome != model.OutcomeAdvice {
 		return nil
 	}
-	for _, check := range []func(Input) *Violation{citations, numbers, product} {
+	for _, check := range []func(Input) *Violation{citations, numbers, product, offload, mentions} {
 		if p := check(in); p != nil {
 			return p
 		}

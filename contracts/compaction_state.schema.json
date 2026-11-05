@@ -1,0 +1,142 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agri-steward.local/contracts/v1/compaction_state.schema.json",
+  "x-contract-version": 1,
+  "title": "CompactionState",
+  "description": "P2 L6 长对话压缩状态（RunState.compaction_state / agent_run.compaction_state）：facts 为代码提取的白名单，不交模型改写；summary 只压缩更早的自由文本；raw_refs 只存 raw_object.id（kind=COMPACTED_MSGS）。",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["compaction_version", "facts"],
+  "properties": {
+    "compaction_version": {"type": "integer", "minimum": 1},
+    "facts": {"$ref": "#/$defs/facts"},
+    "summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["text", "tokens", "prompt_version"],
+      "properties": {
+        "text": {"type": "string"},
+        "tokens": {"type": "integer", "minimum": 0},
+        "prompt_version": {"type": "string", "minLength": 1}
+      }
+    },
+    "summarized_until_step_id": {"type": "string", "minLength": 1, "maxLength": 48},
+    "raw_refs": {"type": "array", "items": {"type": "integer", "minimum": 1}},
+    "history": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["at", "tokens_before", "tokens_after"],
+        "properties": {
+          "at": {"type": "string", "format": "date-time"},
+          "tokens_before": {"type": "integer", "minimum": 0},
+          "tokens_after": {"type": "integer", "minimum": 0}
+        }
+      }
+    }
+  },
+  "$defs": {
+    "facts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["field_id"],
+      "properties": {
+        "field_id": {"type": "integer", "minimum": 1},
+        "crop": {"type": "string"},
+        "phenology_stage": {"type": "string"},
+        "user_constraints": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["text", "turn_step_id"],
+            "properties": {
+              "text": {"type": "string", "minLength": 1},
+              "turn_step_id": {"type": "string", "minLength": 1, "maxLength": 48}
+            }
+          }
+        },
+        "orders": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["order_id", "status"],
+            "properties": {
+              "order_id": {"type": "integer", "minimum": 1},
+              "advice_id": {"type": "integer", "minimum": 1},
+              "status": {"type": "string", "minLength": 1},
+              "ticket_id": {"type": "integer", "minimum": 1},
+              "ticket_status": {"enum": ["PREPARING", "OPEN", "APPROVED", "REJECTED", "EXPIRED", "SUPERSEDED"]},
+              "reject_reason_code": {"type": "string", "maxLength": 16},
+              "reject_text": {"type": "string", "maxLength": 512}
+            }
+          }
+        },
+        "vetoed_products": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["product", "source", "ref_id"],
+            "properties": {
+              "product": {"type": "string", "minLength": 1},
+              "source": {"type": "string", "minLength": 1},
+              "ref_id": {"type": "integer", "minimum": 1}
+            }
+          }
+        },
+        "measured": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["tool_call_id", "tool_name", "result_summary", "collected_at"],
+            "properties": {
+              "tool_call_id": {"type": "integer", "minimum": 1},
+              "tool_name": {"type": "string", "minLength": 1},
+              "result_summary": {},
+              "collected_at": {"type": "string", "format": "date-time"}
+            }
+          }
+        },
+        "confirmed_conclusions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["advice_id", "conclusion"],
+            "properties": {
+              "advice_id": {"type": "integer", "minimum": 1},
+              "conclusion": {"type": "string", "minLength": 1},
+              "numbers": {"type": "array", "items": {"$ref": "#/$defs/number"}},
+              "selected_product": {"type": "string"},
+              "window": {"$ref": "#/$defs/time_window"}
+            }
+          }
+        },
+        "cited_kb_ids": {"type": "array", "items": {"type": "string", "minLength": 1}, "uniqueItems": true}
+      }
+    },
+    "number": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["field", "value", "unit"],
+      "properties": {
+        "field": {"type": "string", "minLength": 1},
+        "value": {"type": "number"},
+        "unit": {"type": "string", "minLength": 1}
+      }
+    },
+    "time_window": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["from", "to"],
+      "properties": {
+        "from": {"type": "string", "format": "date-time"},
+        "to": {"type": "string", "format": "date-time"}
+      }
+    }
+  }
+}

@@ -50,9 +50,11 @@ retention:
     EXPORT: 30
     DEVICE_CMD: 1095
     RECEIPT_RAW: 1095
+    COMPACTED_MSGS: 180   # P2-L6 被压缩的会话原文，与 LLM_IO 同期（待法务确认）
   table_days:
     audit_log: 1095
     run_event: 365
+    kb_load_item: 180 # P2 L5：知识加载明细（诊断数据），worker kb-load-retention 逐农场 DELETE ... LIMIT 5000 清理
 # 审计（P1-L7）：每日锚点 bucket（cmd/migrate up 建桶并开 object lock COMPLIANCE，天数「待法务确认」）与审计导出区间上限。
 audit:
   anchor_bucket: agri-steward-audit-anchor
@@ -76,3 +78,36 @@ eval:
   qpm: 5
   llm_calls_per_trial: 3
   void_infra_error_rate: 0.05
+# P2 L3 可信度指标：线上 rollup（quality-metric-rollup）、online judge 抽样（online-judge-sample）、日报
+# （agri-steward-eval/report/daily/{yyyymmdd}.html）。enabled=false 时 worker 不起任务（行为不变）。
+quality:
+  enabled: false
+  interval: 1h
+  sample_per_category: 5
+  sample_salt: p2l3
+  judge_tier: standard
+  judge_qpm: 6
+  judges_dir: eval/judges
+  baseline_name: baseline_p1.r2
+  baseline_experiment_id: 0   # baseline_p1.r2 冻结后填 exp id；0 时日报差值列为「—」
+  report_timezone: Asia/Shanghai
+
+# 长对话压缩（P2-L6，§6.7）：enable_compaction 开时上下文组装估算 token 超过 trigger_tokens 即压缩更早的轮次，
+# 保留最近 keep_recent_turns 轮原文，摘要 ≤ summary_max_tokens；prev_run_id 续接要求上一 run 在 session_idle 内结束。
+# max_block_tokens 是整个会话块（含白名单 facts）的估算 token 硬上限，超出时先丢最早的原文轮次、再丢摘要，facts 不裁；
+# summary_timeout 是单次摘要调用超时，超时放弃压缩（COMPACTION_FAILED）。
+# trigger_tokens / max_block_tokens / summary_timeout 为草拟值「待线上数据」（P0-P1 无线上 token 分布，评审记录模板见 docs/dev-log.md P2-L6 节）。
+# AS_COMPACTION_TRIGGER_TOKENS 等覆盖。
+compaction:
+  trigger_tokens: 1200
+  session_idle: 30m
+  keep_recent_turns: 4
+  summary_max_tokens: 300
+  max_block_tokens: 6000
+  summary_timeout: 10s
+
+# 规则下沉影子比对（P2-L4）：rule_shadow_diff 保留天数（§6.5 缺省 180，worker 按农场逐项 DELETE … LIMIT 5000 清理）
+# 与清理周期；AS_RULE_OFFLOAD_SHADOW_DIFF_DAYS / AS_RULE_OFFLOAD_PURGE_EVERY 覆盖。
+rule_offload:
+  shadow_diff_days: 180
+  purge_every: 24h

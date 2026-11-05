@@ -3,6 +3,7 @@ package app
 import (
 	"fmt"
 
+	"agri-steward/internal/agent"
 	"agri-steward/internal/repository"
 	"agri-steward/internal/service"
 )
@@ -21,4 +22,13 @@ func (a *App) buildFlags() error {
 	}
 	a.Flags = svc
 	return nil
+}
+
+// farmFlags 是主链路读 P2 开关的接缝（graph.Config.Flags）；Flags 未装配时返回 nil 接口（不是带空指针的接口），
+// 主链路按关执行。
+func (a *App) farmFlags() agent.FarmFlagReader {
+	if a.Flags == nil {
+		return nil
+	}
+	return a.Flags
 }

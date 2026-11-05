@@ -68,6 +68,9 @@ type Fixtures struct {
 	Dispatch *DispatchFixture `yaml:"dispatch,omitempty"`
 	// Model 声明模型桩故障（P1 L6）：列出的任务每次调用都返回错误（重试后判 LLM 不可用）。
 	Model *ModelFixture `yaml:"model,omitempty"`
+	// Session 声明本次提问之前的多轮会话（P2 L6，见 session.go）：Runner 先把各轮写成 trial 库里已结束的 run 链，
+	// 再按生产路径带 prev_run_id 建本次 run（enable_compaction 关时与 P1 相同，不续接）。
+	Session *SessionFixture `yaml:"session,omitempty"`
 }
 
 // ModelFixture 是模型桩故障：Unavailable 取 classify / choose / explain 或 all（全部任务不可用）。
@@ -195,6 +198,10 @@ type Expect struct {
 	Injection []string `yaml:"injection,omitempty"`
 	// MustNotContain 声明输出卡片不得出现的文本（P1-L8-A 审查修复，forbidden_text 使用，见 forbidden.go）。不写表示不检查。
 	MustNotContain *ForbiddenExpect `yaml:"must_not_contain,omitempty"`
+	// Compaction 声明长对话压缩须保留的用户约束原句（P2 L6，compaction_retained 使用，见 session.go）；须随 fixtures.session。
+	Compaction *CompactionExpect `yaml:"compaction,omitempty"`
+	// Conflict 断言方案冲突必拦（P2 L4，conflict_blocked 使用，见 conflict.go）；不写表示不检查。
+	Conflict *ConflictExpect `yaml:"conflict,omitempty"`
 }
 
 // ForbiddenExpect 是输出禁止文本：Values 是问题 / 工具返回里诱导的编造数值（「30克」「翻倍」，按中文数字与倍数词归一后

@@ -33,6 +33,8 @@ type Flags struct {
 	// P1 L6：故障降级矩阵与用户文案表（启动期交叉校验，缺码 / 缺文案 / 缺告警即退出）。
 	FaultMatrix, Texts string
 	NotifyTexts        string
+	// P2 L6：用户口述约束词表（长对话压缩白名单 user_constraints）。
+	Lexicon string
 }
 
 // RegisterFlags 在 fs 上登记参数（缺省值与 P0 cmd/server 一致）。
@@ -52,6 +54,7 @@ func RegisterFlags(fs *flag.FlagSet) *Flags {
 	fs.StringVar(&f.FaultMatrix, "fault-matrix", app.DefaultFaultMatrixPath, "故障降级矩阵（P1 L6，故障码 → 行为 / 文案 key / 告警）")
 	fs.StringVar(&f.Texts, "texts", app.DefaultTextsPath, "用户可读文案表（P1 L6，故障矩阵的 text_key 须在表内）")
 	fs.StringVar(&f.NotifyTexts, "notify-texts", "configs/texts/notify.zh-CN.yaml", "通知文案（P1 L5，缺任一通知类型即启动失败）")
+	fs.StringVar(&f.Lexicon, "lexicon", app.DefaultLexiconPath, "用户口述约束词表（P2 L6 长对话压缩白名单）")
 	return f
 }
 
@@ -97,6 +100,16 @@ func Open(ctx context.Context, f *Flags) (_ *Process, err error) {
 		return nil, err
 	}
 	tx, err := knowledge.LoadTaxonomy(f.Taxonomy)
+	if err != nil {
+		return nil, err
+	}
+	// P2 L5：知识加载策略 v0 / v1，对照主链路所用知识版本校验必加规则（缺失或非法即启动失败）
+	kb := knowledge.NewStore(knowledge.NewRepoReader(f.Repo)) // 主链路、P2-L3 线上 judge 与 P2-L5 加载策略共用
+	kbSnap, err := kb.Open(ctx, knowledge.RefWorktree)
+	if err != nil {
+		return nil, fmt.Errorf("boot: open knowledge: %w", err)
+	}
+	loaders, err := app.LoadKnowledgeLoaders(filepath.Join(f.Repo, app.DefaultLoaderDir), tx, kbSnap)
 	if err != nil {
 		return nil, err
 	}
@@ -174,14 +187,19 @@ func Open(ctx context.Context, f *Flags) (_ *Process, err error) {
 	if err != nil {
 		return nil, err
 	}
+	comp, err := app.LoadCompaction(cfg.Compaction, f.Lexicon) // P2 L6：词表缺失 / 非法即启动失败
+	if err != nil {
+		return nil, err
+	}
 	a, err := app.Build(app.Deps{Clock: clk, Logger: logger, DB: db, Redis: rdb, Keys: keys, RawStore: raw,
 		NewAgent: app.GraphAgent(ctx, app.GraphConfig{Model: mcfg, Chat: chat, Taxonomy: tx,
-			KB: knowledge.NewStore(knowledge.NewRepoReader(f.Repo))}),
+			KB: kb, Loaders: loaders}),
 		Tools: tools, Risk: risk, Constraints: constraints, Permissions: grants, Devices: devices, Env: cfg.Env,
 		Dispatch:      cfg.Dispatch,
 		Metrics:       obs,    // P1 L7-B
 		Alerts:        alerts, // P1 L7-B
 		AlertsConfig:  cfg.Alerts,
+		RuleOffload:   cfg.RuleOffload,                  // P2 L4：rule_shadow_diff 保留期
 		Faults:        faults,                           // P1 L6
 		Approval:      cfg.Approval,                     // P1 L5：驳回导出跨度上限
 		NotifyTexts:   notifyTexts,                      // P1 L5：notify.send 文案
@@ -194,7 +212,10 @@ func Open(ctx context.Context, f *Flags) (_ *Process, err error) {
 				RuneBudget: cfg.Memory.RuneBudget}},
 		L7: app.AuditL7Deps{Retention: cfg.Retention, Audit: cfg.Audit, // P1 L7：导出 / 保留期 / 锚点
 			Objects: repository.MinIORemover{Client: mc}, RawBucket: cfg.MinIO.BucketRaw,
-			Anchors: repository.MinIOAnchorStore{Client: mc, Bucket: cfg.Audit.AnchorBucket}}})
+			Anchors: repository.MinIOAnchorStore{Client: mc, Bucket: cfg.Audit.AnchorBucket}},
+		Quality: app.QualityDeps{Config: cfg.Quality, Model: mcfg, KB: kb, Repo: f.Repo, // P2-L3：可信度日报（缺省不启用）
+			Objects: repository.QualityObjects{Client: mc}, Bucket: cfg.MinIO.BucketEval},
+		Compaction: comp}) // P2 L6
 	if err != nil {
 		return nil, err
 	}

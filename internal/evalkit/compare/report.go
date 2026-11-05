@@ -89,6 +89,7 @@ func (r *Result) renderPairing(b *strings.Builder) {
 
 func (r *Result) renderMetrics(b *strings.Builder) {
 	b.WriteString("## 质量指标\n\n")
+	b.WriteString("标「" + notGatingNote + "」的是 LLM-judge 指标：L2 校准达标前只出报告，不进整体结论与门禁。\n\n")
 	ref := r.ReferenceID != 0
 	if ref {
 		fmt.Fprintf(b, "第三列为参考实验 exp %d：知识侧 = reference − baseline，agent 侧 = candidate − reference（只出报告不判定）。\n\n", r.ReferenceID)
@@ -99,8 +100,12 @@ func (r *Result) renderMetrics(b *strings.Builder) {
 	var flaky []string
 	for _, m := range r.Metrics {
 		name := m.Title + "（" + m.Name + "）"
+		verdict := string(m.Verdict)
+		if m.NotGating {
+			verdict += notGatingNote
+		}
 		if m.Pending != "" || m.Samples == 0 {
-			note := string(m.Verdict)
+			note := verdict
 			if m.Pending != "" {
 				note = m.Pending
 			}
@@ -113,9 +118,9 @@ func (r *Result) renderMetrics(b *strings.Builder) {
 		}
 		if ref {
 			fmt.Fprintf(b, "| %s | %d | %.3f | %.3f | %.3f | %s | %s | %s | %s |\n", name, m.Samples, m.BaselineMean,
-				m.ReferenceMean, m.CandidateMean, ivText(m.Diff), ivPtr(m.Knowledge), ivPtr(m.Agent), m.Verdict)
+				m.ReferenceMean, m.CandidateMean, ivText(m.Diff), ivPtr(m.Knowledge), ivPtr(m.Agent), verdict)
 		} else {
-			fmt.Fprintf(b, "| %s | %d | %.3f | %.3f | %s | %s |\n", name, m.Samples, m.BaselineMean, m.CandidateMean, ivText(m.Diff), m.Verdict)
+			fmt.Fprintf(b, "| %s | %d | %.3f | %.3f | %s | %s |\n", name, m.Samples, m.BaselineMean, m.CandidateMean, ivText(m.Diff), verdict)
 		}
 		for _, k := range m.Flaky {
 			flaky = append(flaky, m.Name+":"+k)
@@ -123,6 +128,9 @@ func (r *Result) renderMetrics(b *strings.Builder) {
 	}
 	fmt.Fprintf(b, "\nflaky 配对样本（照样本级值参与，红线按失败）：%d%s\n", len(flaky), listInline(flaky))
 }
+
+// notGatingNote 标在 judge 指标结论后（not gating）。
+const notGatingNote = "（未校准，不进门禁）"
 
 func ivText(iv Interval) string { return fmt.Sprintf("%+.3f [%+.3f, %+.3f]", iv.Mean, iv.Low, iv.High) }
 

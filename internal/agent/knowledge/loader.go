@@ -26,6 +26,9 @@ type Situation struct {
 	Category string // 一级 taxonomy code；Topic 非空时可省略（由 Topic 推出）
 	Topic    string // 子类 taxonomy code，可空
 	Target   string // 防治对象 id，可空；非空时植保条目只保留同 target 的
+
+	// RankTopic 是分类器给出的问题子类（P2 L5），可空：只参与加载策略排序（topic_match），不参与过滤与 KB_MISS 判定。
+	RankTopic string
 }
 
 // Loader 是渐进式加载器（progressive_loader）：过滤 → authority_level 排序 → 截断。
@@ -67,9 +70,22 @@ func (l *Loader) Load(ctx context.Context, ref string, tx *Taxonomy, sit Situati
 
 // Select 是 Load 的纯函数部分：在给定快照上过滤、排序、截断。
 func Select(snap *Snapshot, tx *Taxonomy, sit Situation, limit int) ([]*Entry, error) {
-	sit, err := resolveSituation(tx, sit)
+	sit, hits, err := filterHits(snap, tx, sit)
 	if err != nil {
 		return nil, err
+	}
+	sort.SliceStable(hits, func(i, j int) bool { return hits[i].less(hits[j], sit) })
+	if len(hits) > limit {
+		hits = hits[:limit]
+	}
+	return hits, nil
+}
+
+// filterHits 是 Select 与 Strategy.Select 共用的过滤与 KB_MISS 判定：返回解析后的情境与按 kb_id 升序的命中。
+func filterHits(snap *Snapshot, tx *Taxonomy, sit Situation) (Situation, []*Entry, error) {
+	sit, err := resolveSituation(tx, sit)
+	if err != nil {
+		return sit, nil, err
 	}
 	var hits []*Entry
 	anchored := false
@@ -81,13 +97,9 @@ func Select(snap *Snapshot, tx *Taxonomy, sit Situation, limit int) ([]*Entry, e
 	}
 	// 只命中通用条目（crop="*"，如作业窗口、PHI）不足以回答：无作物 / 防治对象专属知识即 KB_MISS
 	if !anchored {
-		return nil, fmt.Errorf("%w: %s (%d generic hits, no crop/target-specific entry)", ErrKBMiss, sit, len(hits))
+		return sit, nil, fmt.Errorf("%w: %s (%d generic hits, no crop/target-specific entry)", ErrKBMiss, sit, len(hits))
 	}
-	sort.SliceStable(hits, func(i, j int) bool { return hits[i].less(hits[j], sit) })
-	if len(hits) > limit {
-		hits = hits[:limit]
-	}
-	return hits, nil
+	return sit, hits, nil
 }
 
 // resolveSituation 校验情境并由 Topic 推出 Category；未知 code 视为调用方错误而非 KB_MISS。

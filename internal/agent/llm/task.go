@@ -121,6 +121,8 @@ type ExplainInput struct {
 	Reasons    []string     `json:"reasons"`  // 规则层依据摘要（无数字）
 	Product    string       `json:"product,omitempty"`
 	Numbers    []NumberSlot `json:"numbers,omitempty"`
+	// Constraints 是 P2 L4 开关 on 时注入的下沉项规则结论；off / shadow 为空（不进 JSON，入参逐字节同 P1）。
+	Constraints *RuleConstraints `json:"constraints,omitempty"`
 }
 
 // ExplainOutput 是 explain 的回复；数字只能以 {{nK}} 占位符出现。
